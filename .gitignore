@@ -1,0 +1,11 @@
+.gradle/
+build/
+out/
+.kagent/
+local.properties
+
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+*.log
+*.tmp
