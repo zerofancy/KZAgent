@@ -1,0 +1,534 @@
+package com.kzagent.kagent.desktop
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.AlertDialog
+import androidx.compose.material.Button
+import androidx.compose.material.CircularProgressIndicator
+import androidx.compose.material.Divider
+import androidx.compose.material.MaterialTheme
+import androidx.compose.material.OutlinedTextField
+import androidx.compose.material.Surface
+import androidx.compose.material.Text
+import androidx.compose.material.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.awt.ComposePanel
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.kzagent.kagent.AgentRuntime
+import com.kzagent.kagent.AgentRuntimeFactory
+import com.kzagent.kagent.agent.AgentObserver
+import com.kzagent.kagent.config.SecretRedactor
+import com.kzagent.kagent.llm.AgentMessage
+import com.kzagent.kagent.tools.ApprovalPolicy
+import com.kzagent.kagent.tools.ToolResult
+import java.awt.BorderLayout
+import java.awt.Dimension
+import java.awt.EventQueue
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardOpenOption
+import java.time.OffsetDateTime
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.swing.JFileChooser
+import javax.swing.JFrame
+import javax.swing.JLabel
+import javax.swing.JPanel
+import javax.swing.SwingUtilities
+import javax.swing.Timer
+import javax.swing.WindowConstants
+import kotlin.coroutines.resume
+import kotlin.system.exitProcess
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+
+fun runDesktopApp() {
+    System.setProperty("apple.awt.application.name", "KZAgent")
+    System.setProperty("apple.awt.UIElement", "false")
+    Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
+        desktopLog("uncaught exception: ${throwable.message ?: throwable}", throwable)
+    }
+    desktopLog("starting Swing host")
+    val closed = CountDownLatch(1)
+    val initialized = CountDownLatch(1)
+    val windowShown = AtomicBoolean(false)
+    var startupFailure: Throwable? = null
+    startPackagedAppFallbackWatchdog(windowShown)
+    SwingUtilities.invokeLater {
+        try {
+            desktopLog("creating JFrame")
+            val loadingPanel = JPanel(BorderLayout()).apply {
+                add(JLabel("KZAgent loading..."), BorderLayout.CENTER)
+            }
+            val frame = JFrame("KZAgent").apply {
+                defaultCloseOperation = WindowConstants.DISPOSE_ON_CLOSE
+                minimumSize = Dimension(880, 600)
+                preferredSize = Dimension(1120, 760)
+                contentPane.layout = BorderLayout()
+                contentPane.add(loadingPanel, BorderLayout.CENTER)
+                addWindowListener(object : java.awt.event.WindowAdapter() {
+                    override fun windowClosed(e: java.awt.event.WindowEvent) {
+                        closed.countDown()
+                    }
+                })
+                pack()
+            }
+            desktopLog("JFrame created")
+            showWindowInForeground(frame)
+            windowShown.set(true)
+            desktopLog("JFrame visible")
+            Timer(1_200) {
+                frame.isAlwaysOnTop = false
+            }.apply {
+                isRepeats = false
+                start()
+            }
+            desktopLog("creating ComposePanel")
+            val panel = ComposePanel().apply {
+                setContent {
+                    KZAgentDesktopApp(initialWorkspace = Path.of("").toAbsolutePath().normalize())
+                }
+            }
+            desktopLog("ComposePanel created")
+            frame.contentPane.removeAll()
+            frame.contentPane.add(panel, BorderLayout.CENTER)
+            frame.contentPane.revalidate()
+            frame.contentPane.repaint()
+        } catch (throwable: Throwable) {
+            val message = throwable.message ?: throwable::class.qualifiedName ?: throwable.toString()
+            desktopLog("direct window failed: $message", throwable)
+            if (!openPackagedAppFallback("direct window failed")) {
+                startupFailure = throwable
+                closed.countDown()
+            }
+        } finally {
+            initialized.countDown()
+        }
+    }
+    initialized.await()
+    startupFailure?.let { throw it }
+    closed.await()
+    desktopLog("closed")
+}
+
+private fun startPackagedAppFallbackWatchdog(windowShown: AtomicBoolean) {
+    if (System.getProperty("kzagent.allowOpenFallback") != "true") return
+    Thread {
+        Thread.sleep(5_000)
+        if (windowShown.get()) return@Thread
+        openPackagedAppFallback("window was not shown")
+    }.apply {
+        isDaemon = true
+        name = "kzagent-open-app-fallback"
+        start()
+    }
+}
+
+private fun openPackagedAppFallback(reason: String): Boolean {
+    if (System.getProperty("kzagent.allowOpenFallback") != "true") return false
+    val appPath = Path.of(
+        System.getProperty("kzagent.packagedAppPath")
+            ?: "build/compose/binaries/main/app/KZAgent.app",
+    ).toAbsolutePath().normalize()
+    if (!Files.exists(appPath)) {
+        desktopLog("$reason, and packaged app was not found at $appPath")
+        return false
+    }
+    return runCatching {
+        val launcherPath = appPath.resolve("Contents/MacOS/KZAgent")
+        val command = if (Files.isExecutable(launcherPath)) {
+            listOf(launcherPath.toString())
+        } else {
+            listOf("open", "-n", appPath.toString())
+        }
+        desktopLog("$reason; launching packaged app: ${command.joinToString(" ")}")
+        ProcessBuilder(command)
+            .directory(Path.of("").toAbsolutePath().normalize().toFile())
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.appendTo(desktopLogPath().toFile()))
+            .start()
+        exitProcess(0)
+    }.getOrElse {
+        desktopLog("failed to open packaged app: ${it.message ?: it}", it)
+        false
+    }
+}
+
+private fun desktopLog(message: String, throwable: Throwable? = null) {
+    val line = "${OffsetDateTime.now()} KZAgent desktop: $message"
+    println(line)
+    val logPath = desktopLogPath()
+    runCatching {
+        logPath.parent?.let(Files::createDirectories)
+        Files.writeString(
+            logPath,
+            buildString {
+                appendLine(line)
+                if (throwable != null) {
+                    appendLine(throwable.stackTraceToString())
+                }
+            },
+            StandardOpenOption.CREATE,
+            StandardOpenOption.APPEND,
+        )
+    }
+}
+
+private fun desktopLogPath(): Path =
+    System.getProperty("kzagent.logPath")?.let(Path::of)
+        ?: Path.of(System.getProperty("user.home"), ".kzagent", "desktop.log")
+
+private fun showWindowInForeground(window: java.awt.Window) {
+    window.minimumSize = Dimension(880, 600)
+    window.setLocationRelativeTo(null)
+    window.isAlwaysOnTop = true
+    window.isVisible = true
+    window.toFront()
+    window.requestFocus()
+    requestMacForeground()
+    EventQueue.invokeLater {
+        window.toFront()
+        window.requestFocus()
+        window.requestFocusInWindow()
+        requestMacForeground()
+    }
+}
+
+private fun requestMacForeground() {
+    runCatching {
+        val applicationClass = Class.forName("com.apple.eawt.Application")
+        val application = applicationClass.getMethod("getApplication").invoke(null)
+        applicationClass
+            .getMethod("requestForeground", Boolean::class.javaPrimitiveType)
+            .invoke(application, true)
+    }
+}
+
+@Composable
+private fun KZAgentDesktopApp(initialWorkspace: Path) {
+    var workspace by remember { mutableStateOf(initialWorkspace) }
+    var runtime by remember { mutableStateOf<AgentRuntime?>(null) }
+    var conversationHistory by remember { mutableStateOf<List<AgentMessage>>(emptyList()) }
+    var messages by remember { mutableStateOf<List<DisplayMessage>>(emptyList()) }
+    var input by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf("正在加载工作区...") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var isBusy by remember { mutableStateOf(false) }
+    var pendingApproval by remember { mutableStateOf<PendingApproval?>(null) }
+    val scope = rememberCoroutineScope()
+
+    val approvalPolicy = ApprovalPolicy { action, details ->
+        suspendCancellableCoroutine { continuation ->
+            pendingApproval = PendingApproval(action, details) { allowed ->
+                pendingApproval = null
+                if (continuation.isActive) {
+                    continuation.resume(allowed)
+                }
+            }
+        }
+    }
+    val observer = object : AgentObserver {
+        override suspend fun onModelRequest(turn: Int) {
+            status = "请求模型（第 ${turn} 轮）..."
+        }
+
+        override suspend fun onToolCall(name: String) {
+            status = if (name == "run_command") {
+                "等待命令审批..."
+            } else {
+                "执行工具：$name"
+            }
+        }
+
+        override suspend fun onToolResult(name: String, result: ToolResult) {
+            status = if (result.isError) {
+                "工具返回错误：$name"
+            } else {
+                "工具完成：$name"
+            }
+        }
+    }
+
+    LaunchedEffect(workspace) {
+        runtime = null
+        error = null
+        status = "正在加载工作区..."
+        val loadedHistory = runCatching {
+            com.kzagent.kagent.agent.SessionReader(workspace).loadLatestHistory().orEmpty()
+        }.getOrDefault(emptyList())
+        conversationHistory = loadedHistory
+        messages = loadedHistory.toDisplayMessages()
+        runCatching {
+            AgentRuntimeFactory.create(workspace, approvalPolicy, observer)
+        }.onSuccess {
+            runtime = it
+            status = "就绪"
+        }.onFailure {
+            error = SecretRedactor.redact(it.message ?: it.toString())
+            status = "配置不可用"
+        }
+    }
+
+    MaterialTheme {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
+                Header(
+                    workspace = workspace,
+                    status = status,
+                    isBusy = isBusy,
+                    onChooseWorkspace = {
+                        chooseWorkspace(workspace)?.let { workspace = it }
+                    },
+                )
+                Spacer(Modifier.height(12.dp))
+                error?.let {
+                    ErrorBanner(it)
+                    Spacer(Modifier.height(12.dp))
+                }
+                MessageList(messages, modifier = Modifier.weight(1f).fillMaxWidth())
+                Spacer(Modifier.height(12.dp))
+                Composer(
+                    input = input,
+                    enabled = !isBusy && runtime != null,
+                    onInputChange = { input = it },
+                    onSend = {
+                        val prompt = input.trim()
+                        if (prompt.isEmpty()) return@Composer
+                        val currentRuntime = runtime ?: return@Composer
+                        input = ""
+                        isBusy = true
+                        error = null
+                        status = "准备发送..."
+                        messages = messages + DisplayMessage("user", prompt)
+                        scope.launch {
+                            runCatching {
+                                currentRuntime.agent.runConversation(prompt, conversationHistory)
+                            }.onSuccess { result ->
+                                conversationHistory = result.history
+                                messages = result.history.toDisplayMessages()
+                                status = "就绪"
+                            }.onFailure {
+                                error = SecretRedactor.redact(it.message ?: it.toString())
+                                status = "请求失败"
+                            }
+                            isBusy = false
+                        }
+                    },
+                )
+            }
+        }
+    }
+
+    pendingApproval?.let { approval ->
+        ApprovalDialog(approval)
+    }
+}
+
+@Composable
+private fun Header(
+    workspace: Path,
+    status: String,
+    isBusy: Boolean,
+    onChooseWorkspace: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("KZAgent", style = MaterialTheme.typography.h5, fontWeight = FontWeight.SemiBold)
+            Text(
+                workspace.toString(),
+                style = MaterialTheme.typography.body2,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.68f),
+                maxLines = 1,
+            )
+        }
+        Spacer(Modifier.width(16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (isBusy) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(status, style = MaterialTheme.typography.body2)
+            Spacer(Modifier.width(12.dp))
+            Button(onClick = onChooseWorkspace, enabled = !isBusy) {
+                Text("切换工作区")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ErrorBanner(message: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFFFEBEE))
+            .padding(12.dp),
+    ) {
+        Text(
+            text = message,
+            color = Color(0xFFB71C1C),
+            style = MaterialTheme.typography.body2,
+        )
+    }
+}
+
+@Composable
+private fun MessageList(messages: List<DisplayMessage>, modifier: Modifier = Modifier) {
+    val scrollState = rememberScrollState()
+    LaunchedEffect(messages.size) {
+        scrollState.animateScrollTo(scrollState.maxValue)
+    }
+    Column(
+        modifier = modifier
+            .background(Color(0xFFF7F7F8))
+            .padding(16.dp)
+            .verticalScroll(scrollState),
+    ) {
+        if (messages.isEmpty()) {
+            Text(
+                "暂无会话",
+                style = MaterialTheme.typography.body1,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
+            )
+        } else {
+            messages.forEachIndexed { index, message ->
+                MessageRow(message)
+                if (index != messages.lastIndex) {
+                    Spacer(Modifier.height(12.dp))
+                    Divider()
+                    Spacer(Modifier.height(12.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageRow(message: DisplayMessage) {
+    val title = if (message.role == "user") "You" else "Assistant"
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.subtitle2)
+        Spacer(Modifier.height(6.dp))
+        SelectionContainer {
+            Text(message.content, style = MaterialTheme.typography.body1)
+        }
+    }
+}
+
+@Composable
+private fun Composer(
+    input: String,
+    enabled: Boolean,
+    onInputChange: (String) -> Unit,
+    onSend: () -> Unit,
+) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+        OutlinedTextField(
+            value = input,
+            onValueChange = onInputChange,
+            enabled = enabled,
+            modifier = Modifier.weight(1f).heightIn(min = 88.dp, max = 160.dp),
+            label = { Text("输入问题") },
+            maxLines = 6,
+        )
+        Spacer(Modifier.width(12.dp))
+        Button(
+            onClick = onSend,
+            enabled = enabled && input.isNotBlank(),
+            modifier = Modifier.height(56.dp),
+        ) {
+            Text("发送")
+        }
+    }
+}
+
+@Composable
+private fun ApprovalDialog(approval: PendingApproval) {
+    AlertDialog(
+        onDismissRequest = { approval.complete(false) },
+        title = { Text("命令执行审批") },
+        text = {
+            Column(modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                Text(approval.action, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                SelectionContainer {
+                    Text(approval.details, style = MaterialTheme.typography.body2)
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { approval.complete(true) }) {
+                Text("允许")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { approval.complete(false) }) {
+                Text("拒绝")
+            }
+        },
+    )
+}
+
+private fun chooseWorkspace(current: Path): Path? {
+    val chooser = JFileChooser(current.toFile())
+    chooser.fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+    chooser.dialogTitle = "选择 KZAgent 工作区"
+    return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+        chooser.selectedFile.toPath().toAbsolutePath().normalize()
+    } else {
+        null
+    }
+}
+
+private fun List<AgentMessage>.toDisplayMessages(): List<DisplayMessage> {
+    return mapNotNull { message ->
+        when (message) {
+            is AgentMessage.User -> DisplayMessage("user", message.content)
+            is AgentMessage.Assistant -> message.content
+                ?.takeIf { it.isNotBlank() }
+                ?.let { DisplayMessage("assistant", it) }
+            is AgentMessage.System,
+            is AgentMessage.Tool,
+            -> null
+        }
+    }
+}
+
+private data class DisplayMessage(
+    val role: String,
+    val content: String,
+)
+
+private data class PendingApproval(
+    val action: String,
+    val details: String,
+    val complete: (Boolean) -> Unit,
+)

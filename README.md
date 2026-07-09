@@ -1,6 +1,6 @@
 # KZAgent — Kotlin AI Coding Agent (MVP)
 
-**KZAgent** 是一个用 **Kotlin/JVM** 构建的轻量级 AI 编程助手 CLI 工具。它通过调用 **DeepSeek API**（兼容 OpenAI 格式）的推理能力，结合一组本地文件操作和命令执行工具，在终端中实现类似 Cursor / Claude Code 的代码辅助体验。
+**KZAgent** 是一个用 **Kotlin/JVM + Compose Desktop** 构建的轻量级 AI 编程助手。它通过调用 **DeepSeek API**（兼容 OpenAI 格式）的推理能力，结合一组本地文件操作和命令执行工具，提供桌面聊天界面，并保留 `ask` / `chat` 命令行模式。
 
 ---
 
@@ -21,9 +21,9 @@
 
 ## 项目概述
 
-KZAgent 是一个**最小化可行产品（MVP）**，核心思想是让大语言模型（LLM）通过工具调用（Tool Calling）与本地开发环境交互：
+KZAgent 的核心思想是让大语言模型（LLM）通过工具调用（Tool Calling）与本地开发环境交互：
 
-1. **用户提问** → CLI 将问题发送给 DeepSeek 模型
+1. **用户提问** → 桌面端或 CLI 将问题发送给 DeepSeek 模型
 2. **模型推理** → 模型决定直接回答或调用工具
 3. **工具执行** → Agent 在本地执行模型选择的工具（读文件、搜索、编辑等）
 4. **结果反馈** → 工具执行结果返回给模型，继续推理
@@ -53,7 +53,12 @@ export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 
 ### 2. 运行
 
+项目使用 Gradle 9.1 和 JVM 17+。如果系统默认 Java 不是 17+，请先设置 `JAVA_HOME`。
+
 ```bash
+# 启动桌面应用
+./gradlew run
+
 # 单次提问
 ./gradlew run --args="ask \"列出当前项目文件\""
 
@@ -68,9 +73,25 @@ export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 
 ## 使用方式
 
+### 桌面应用
+
+无参数运行会启动桌面窗口：
+
+```bash
+./gradlew run
+```
+
+桌面端支持：
+
+- 默认使用启动目录作为工作区，并可切换目录
+- 加载最新 `.kagent/sessions/` 历史用于续聊
+- 在状态栏显示模型请求、工具执行和审批状态
+- 当模型请求执行 `run_command` 时，通过弹窗审批
+- 配置仍从工作区 `local.properties` 或 `DEEPSEEK_API_KEY` 读取
+
 ### `ask` — 单次提问模式
 
-执行一次提问，模型经过多轮工具调用后给出最终答案，然后退出。
+执行一次提问，模型经过多轮工具调用后只输出最终答案，然后退出。
 
 ```bash
 ./gradlew run --args="ask \"搜索所有包含 TODO 的文件\""
@@ -132,6 +153,7 @@ Chat ended.
 | **DeepSeekClient** | `llm/DeepSeekClient.kt` | 调用 DeepSeek Chat Completions API |
 | **SessionWriter** | `agent/SessionWriter.kt` | 将会话记录写入 `.kagent/sessions/` |
 | **SessionReader** | `agent/SessionReader.kt` | 从磁盘读取历史会话，支持断点续聊 |
+| **DesktopApp** | `desktop/DesktopApp.kt` | Compose Desktop 桌面聊天界面 |
 | **AppConfigLoader** | `config/AppConfig.kt` | 从 `local.properties` / 环境变量加载配置 |
 | **LocalTools** | `tools/LocalTools.kt` | 5 个本地工具的注册与实现 |
 | **PathGuard** | `tools/PathGuard.kt` | 路径安全守卫，防止逃逸出工作区 |
@@ -216,6 +238,10 @@ src/main/kotlin/com/kzagent/kagent/
 │   └── SessionWriter.kt    # 会话历史写入
 ├── cli/
 │   └── Main.kt             # 入口：ask / chat 命令
+├── desktop/
+│   └── DesktopApp.kt       # 桌面应用 UI 与审批弹窗
+├── Main.kt                 # 根入口：无参数桌面；有参数 CLI
+├── AgentRuntimeFactory.kt  # 共享运行时创建
 ├── config/
 │   └── AppConfig.kt        # 配置加载与密钥脱敏
 ├── llm/
@@ -252,7 +278,8 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx    # 优先级高于 local.properties
 
 | 技术 | 用途 |
 |------|------|
-| **Kotlin 1.9.25** + **JVM 11+** | 开发语言与运行时 |
+| **Kotlin 2.4.0** + **JVM 17+** | 开发语言与运行时 |
+| **Compose Desktop 1.11.1** | 桌面应用 UI 与原生打包 |
 | **Gradle** | 构建工具 |
 | **kotlinx-coroutines** | 异步编程（协程） |
 | **kotlinx-serialization** | JSON 序列化/反序列化 |
@@ -279,4 +306,3 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx    # 优先级高于 local.properties
 ## License
 
 本项目为 MVP 阶段的开源工具。
-
