@@ -53,6 +53,7 @@ import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.time.OffsetDateTime
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JFileChooser
 import javax.swing.JFrame
@@ -73,6 +74,9 @@ fun runDesktopApp() {
         desktopLog("uncaught exception: ${throwable.message ?: throwable}", throwable)
     }
     desktopLog("starting Swing host")
+    if (openPackagedAppBeforeAwt()) {
+        exitProcess(0)
+    }
     val closed = CountDownLatch(1)
     val initialized = CountDownLatch(1)
     val windowShown = AtomicBoolean(false)
@@ -148,25 +152,45 @@ private fun startPackagedAppFallbackWatchdog(windowShown: AtomicBoolean) {
     }
 }
 
+private fun openPackagedAppBeforeAwt(): Boolean {
+    if (System.getProperty("kzagent.allowOpenFallback") != "true") return false
+    val appPath = packagedAppPath()
+    if (!Files.exists(appPath)) {
+        desktopLog("packaged app fallback requested, but packaged app was not found at $appPath")
+        return false
+    }
+    return runCatching {
+        desktopLog("opening packaged app via LaunchServices before AWT: $appPath")
+        val process = ProcessBuilder("open", "-n", "-a", appPath.toString())
+            .directory(Path.of("").toAbsolutePath().normalize().toFile())
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.appendTo(desktopLogPath().toFile()))
+            .start()
+        if (!process.waitFor(5, TimeUnit.SECONDS)) {
+            desktopLog("LaunchServices open did not exit within 5 seconds")
+            return false
+        }
+        if (process.exitValue() != 0) {
+            desktopLog("LaunchServices open failed with exit code ${process.exitValue()}")
+            return false
+        }
+        true
+    }.getOrElse {
+        desktopLog("failed to open packaged app before AWT: ${it.message ?: it}", it)
+        false
+    }
+}
+
 private fun openPackagedAppFallback(reason: String): Boolean {
     if (System.getProperty("kzagent.allowOpenFallback") != "true") return false
-    val appPath = Path.of(
-        System.getProperty("kzagent.packagedAppPath")
-            ?: "build/compose/binaries/main/app/KZAgent.app",
-    ).toAbsolutePath().normalize()
+    val appPath = packagedAppPath()
     if (!Files.exists(appPath)) {
         desktopLog("$reason, and packaged app was not found at $appPath")
         return false
     }
     return runCatching {
-        val launcherPath = appPath.resolve("Contents/MacOS/KZAgent")
-        val command = if (Files.isExecutable(launcherPath)) {
-            listOf(launcherPath.toString())
-        } else {
-            listOf("open", "-n", appPath.toString())
-        }
-        desktopLog("$reason; launching packaged app: ${command.joinToString(" ")}")
-        ProcessBuilder(command)
+        desktopLog("$reason; opening packaged app via LaunchServices: $appPath")
+        ProcessBuilder("open", "-n", "-a", appPath.toString())
             .directory(Path.of("").toAbsolutePath().normalize().toFile())
             .redirectErrorStream(true)
             .redirectOutput(ProcessBuilder.Redirect.appendTo(desktopLogPath().toFile()))
@@ -177,6 +201,12 @@ private fun openPackagedAppFallback(reason: String): Boolean {
         false
     }
 }
+
+private fun packagedAppPath(): Path =
+    Path.of(
+        System.getProperty("kzagent.packagedAppPath")
+            ?: "build/compose/binaries/main/app/KZAgent.app",
+    ).toAbsolutePath().normalize()
 
 private fun desktopLog(message: String, throwable: Throwable? = null) {
     val line = "${OffsetDateTime.now()} KZAgent desktop: $message"

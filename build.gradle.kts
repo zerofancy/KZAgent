@@ -1,4 +1,5 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.gradle.api.tasks.StopExecutionException
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -10,6 +11,8 @@ plugins {
 
 group = "com.kzagent"
 version = "0.1.0"
+
+fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
 
 kotlin {
     jvmToolchain(17)
@@ -70,6 +73,21 @@ tasks.withType<JavaExec>().configureEach {
             setExecutable(jbrLauncher.get().executablePath.asFile.absolutePath)
             if (System.getProperty("os.name").lowercase().contains("mac") && !jvmArgs.orEmpty().contains("-XstartOnFirstThread")) {
                 jvmArgs("-XstartOnFirstThread")
+            }
+        }
+        doFirst {
+            val packagedApp = layout.buildDirectory.dir("compose/binaries/main/app/KZAgent.app").get().asFile
+            if (args.isEmpty() && packagedApp.exists()) {
+                val desktopLog = layout.buildDirectory.file("kzagent-desktop.log").get().asFile
+                println("Opening desktop app: ${packagedApp.absolutePath}")
+                providers.exec {
+                    commandLine(
+                        "sh",
+                        "-lc",
+                        "(sleep 0.5; /usr/bin/open -n -a ${shellQuote(packagedApp.absolutePath)} >> ${shellQuote(desktopLog.absolutePath)} 2>&1) >/dev/null 2>&1 &",
+                    )
+                }.result.get().assertNormalExitValue()
+                throw StopExecutionException("Opened desktop app bundle")
             }
         }
         standardInput = System.`in`
