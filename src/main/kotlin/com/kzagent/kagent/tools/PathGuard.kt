@@ -24,6 +24,27 @@ class PathGuard(workspace: Path) {
         return path
     }
 
+    fun resolveWritableFile(input: String?): Path {
+        val candidate = resolveCandidate(input)
+        if (Files.exists(candidate)) {
+            val real = candidate.toRealPath()
+            requireInsideRoot(real)
+            if (!Files.isRegularFile(real)) {
+                throw IllegalArgumentException("Path is not a regular file: ${display(real)}")
+            }
+            return real
+        }
+
+        var ancestor = candidate.parent
+            ?: throw IllegalArgumentException("Path has no parent: $candidate")
+        while (!Files.exists(ancestor)) {
+            ancestor = ancestor.parent
+                ?: throw IllegalArgumentException("No existing parent for path: ${display(candidate)}")
+        }
+        requireInsideRoot(ancestor.toRealPath())
+        return candidate
+    }
+
     fun display(path: Path): String = root.relativize(path.toAbsolutePath().normalize()).toString()
         .ifBlank { "." }
 
@@ -42,4 +63,3 @@ class PathGuard(workspace: Path) {
         }
     }
 }
-

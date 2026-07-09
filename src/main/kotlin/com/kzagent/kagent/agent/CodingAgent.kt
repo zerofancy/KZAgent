@@ -17,13 +17,35 @@ class CodingAgent(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
+    /**
+     * Start a fresh conversation with a single user prompt.
+     */
     suspend fun run(userPrompt: String): String {
         val messages = mutableListOf<AgentMessage>()
         val system = AgentMessage.System(promptBuilder.build())
         messages += AgentMessage.User(userPrompt)
         sessionWriter.append(system)
         sessionWriter.append(messages.last())
+        return runInternal(system, messages)
+    }
 
+    /**
+     * Continue a conversation from previous history.
+     * [history] should be previous messages (system messages will be filtered out
+     * since a fresh system prompt is provided).
+     */
+    suspend fun run(userPrompt: String, history: List<AgentMessage>): String {
+        val messages = history.filter { it !is AgentMessage.System }.toMutableList()
+        val system = AgentMessage.System(promptBuilder.build())
+        messages += AgentMessage.User(userPrompt)
+        sessionWriter.append(messages.last())
+        return runInternal(system, messages)
+    }
+
+    private suspend fun runInternal(
+        system: AgentMessage.System,
+        messages: MutableList<AgentMessage>,
+    ): String {
         repeat(maxTurns) { turn ->
             println("Turn ${turn + 1}: asking model...")
             val reply = model.chat(listOf(system) + messages, tools.toolSchemas())

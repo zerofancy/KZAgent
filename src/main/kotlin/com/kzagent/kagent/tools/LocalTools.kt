@@ -147,24 +147,31 @@ class LocalTools(
 
     private fun replaceInFileTool(): ToolDefinition = ToolDefinition(
         name = "replace_in_file",
-        description = "Replace exactly one occurrence of old_text with new_text in a workspace file. Requires approval.",
+        description = "Replace exactly one occurrence of old_text with new_text in a workspace file, or create the file with new_text when it does not exist. Does not require approval.",
         parameters = objectSchema(
             properties = mapOf(
                 "path" to stringSchema("Workspace-relative file path."),
-                "old_text" to stringSchema("Exact text to replace."),
-                "new_text" to stringSchema("Replacement text."),
+                "old_text" to stringSchema("Exact text to replace. Required when the file already exists; omit when creating a new file."),
+                "new_text" to stringSchema("Replacement text, or full file content when creating a new file."),
             ),
-            required = listOf("path", "old_text", "new_text"),
+            required = listOf("path", "new_text"),
         ),
-        requiresApproval = true,
+        requiresApproval = false,
     ) { args ->
         runCatching {
-            val path = pathGuard.resolveWritableExistingFile(args.requiredString("path"))
+            val path = pathGuard.resolveWritableFile(args.requiredString("path"))
             rejectSensitivePath(path)
+            val newText = args.requiredString("new_text")
+
+            if (!Files.exists(path)) {
+                path.parent?.let { Files.createDirectories(it) }
+                Files.writeString(path, newText, StandardCharsets.UTF_8)
+                return@runCatching ToolResult.ok("Created ${pathGuard.display(path)}.")
+            }
+
             rejectLargeFile(path)
             val oldText = args.requiredString("old_text")
-            val newText = args.requiredString("new_text")
-            if (oldText.isEmpty()) throw IllegalArgumentException("old_text must not be empty.")
+            if (oldText.isEmpty()) throw IllegalArgumentException("old_text must not be empty for existing files.")
 
             val content = Files.readString(path, StandardCharsets.UTF_8)
             val matches = countOccurrences(content, oldText)
@@ -172,17 +179,6 @@ class LocalTools(
                 0 -> throw IllegalArgumentException("old_text was not found in ${pathGuard.display(path)}.")
                 1 -> Unit
                 else -> throw IllegalArgumentException("old_text matched $matches times; refusing ambiguous edit.")
-            }
-
-            val details = buildString {
-                appendLine("File: ${pathGuard.display(path)}")
-                appendLine("Old text:")
-                appendLine(oldText.take(1_000))
-                appendLine("New text:")
-                appendLine(newText.take(1_000))
-            }
-            if (!approvalPolicy.approve("replace_in_file", details)) {
-                return@runCatching ToolResult.error("User denied replace_in_file for ${pathGuard.display(path)}.")
             }
 
             Files.writeString(path, content.replace(oldText, newText), StandardCharsets.UTF_8)

@@ -42,7 +42,7 @@ class LocalToolsTest {
         val dir = Files.createTempDirectory("kagent-replace-test")
         val file = dir.resolve("sample.txt")
         Files.writeString(file, "one two three")
-        val registry = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry()
+        val registry = LocalTools(PathGuard(dir), AlwaysDenyPolicy).registry()
 
         val result = registry.get("replace_in_file")!!.handler(buildJsonObject {
             put("path", "sample.txt")
@@ -52,6 +52,21 @@ class LocalToolsTest {
 
         assertFalse(result.isError)
         assertContains(Files.readString(file), "one TWO three")
+    }
+
+    @Test
+    fun replaceInFileCreatesNewFileWithoutApproval() = runBlocking {
+        val dir = Files.createTempDirectory("kagent-create-test")
+        val registry = LocalTools(PathGuard(dir), AlwaysDenyPolicy).registry()
+
+        val result = registry.get("replace_in_file")!!.handler(buildJsonObject {
+            put("path", "nested/new-file.txt")
+            put("new_text", "created content")
+        })
+
+        assertFalse(result.isError)
+        assertContains(result.content, "Created nested/new-file.txt")
+        assertContains(Files.readString(dir.resolve("nested/new-file.txt")), "created content")
     }
 
     @Test
@@ -122,5 +137,19 @@ class LocalToolsTest {
         assertFalse(result.isError)
         assertContains(result.content, "Exit code: 0")
         assertContains(result.content, "ok")
+    }
+
+    @Test
+    fun runCommandStillRequiresApproval() = runBlocking {
+        val dir = Files.createTempDirectory("kagent-command-approval-test")
+        val registry = LocalTools(PathGuard(dir), AlwaysDenyPolicy).registry()
+
+        val result = registry.get("run_command")!!.handler(buildJsonObject {
+            put("command", "printf ok")
+            put("timeout_seconds", 5)
+        })
+
+        assertTrue(result.isError)
+        assertContains(result.content, "User denied run_command")
     }
 }
