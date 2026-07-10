@@ -26,7 +26,7 @@ object AgentRuntimeFactory {
         observer: AgentObserver = NoOpAgentObserver,
     ): AgentRuntime {
         val root = workspace.toAbsolutePath().normalize()
-        val config = AppConfigLoader.load(root)
+        val config = AppConfigLoader.load()
         val pathGuard = PathGuard(root)
         val agent = CodingAgent(
             model = DeepSeekClient(config),

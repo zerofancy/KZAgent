@@ -2,24 +2,27 @@ package com.kzagent.kagent.config
 
 import java.nio.file.Files
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 
 class AppConfigLoaderTest {
     @Test
-    fun loadsLocalProperties() {
+    fun loadsUserConfigProperties() {
         val dir = Files.createTempDirectory("kagent-config-test")
+        val configFile = dir.resolve("kzagent").resolve("config.properties")
+        Files.createDirectories(configFile.parent)
         Files.writeString(
-            dir.resolve("local.properties"),
+            configFile,
             """
             deepseek.api.key=sk-test-local
             deepseek.model=deepseek-v4-flash
-            deepseek.base.url=https://api.deepseek.com
+            deepseek.base.url=https://api.deepseek.com/
             """.trimIndent(),
         )
 
-        val config = AppConfigLoader.load(dir, emptyMap())
+        val config = AppConfigLoader.load(configFile, emptyMap())
 
         assertEquals("sk-test-local", config.apiKey)
         assertEquals("deepseek-v4-flash", config.model)
@@ -27,22 +30,60 @@ class AppConfigLoaderTest {
     }
 
     @Test
-    fun fallsBackToEnvironmentKey() {
-        val dir = Files.createTempDirectory("kagent-config-env-test")
+    fun loadsConfigPropertiesWithUtf8Bom() {
+        val dir = Files.createTempDirectory("kagent-config-bom-test")
+        val configFile = dir.resolve("kzagent").resolve("config.properties")
+        Files.createDirectories(configFile.parent)
+        Files.writeString(configFile, "\uFEFFdeepseek.api.key=sk-test-local")
 
-        val config = AppConfigLoader.load(dir, mapOf("DEEPSEEK_API_KEY" to "sk-test-env"))
+        val config = AppConfigLoader.load(configFile, emptyMap())
+
+        assertEquals("sk-test-local", config.apiKey)
+    }
+
+    @Test
+    fun environmentKeyOverridesConfigFile() {
+        val dir = Files.createTempDirectory("kagent-config-env-test")
+        val configFile = dir.resolve("kzagent").resolve("config.properties")
+        Files.createDirectories(configFile.parent)
+        Files.writeString(
+            configFile,
+            """
+            deepseek.api.key=sk-test-file
+            deepseek.model=deepseek-v4-flash
+            """.trimIndent(),
+        )
+
+        val config = AppConfigLoader.load(configFile, mapOf("DEEPSEEK_API_KEY" to "sk-test-env"))
+
+        assertEquals("sk-test-env", config.apiKey)
+        assertEquals("deepseek-v4-flash", config.model)
+    }
+
+    @Test
+    fun usesDefaultsWithEnvironmentKeyOnly() {
+        val configFile = Files.createTempDirectory("kagent-config-default-test")
+            .resolve("kzagent")
+            .resolve("config.properties")
+
+        val config = AppConfigLoader.load(configFile, mapOf("DEEPSEEK_API_KEY" to "sk-test-env"))
 
         assertEquals("sk-test-env", config.apiKey)
         assertEquals(AppConfig.DEFAULT_MODEL, config.model)
+        assertEquals(AppConfig.DEFAULT_BASE_URL, config.baseUrl)
     }
 
     @Test
     fun failsWhenKeyIsMissing() {
         val dir = Files.createTempDirectory("kagent-config-missing-test")
+        val configFile = dir.resolve("kzagent").resolve("config.properties")
 
-        assertFailsWith<IllegalStateException> {
-            AppConfigLoader.load(dir, emptyMap())
+        val error = assertFailsWith<IllegalStateException> {
+            AppConfigLoader.load(configFile, emptyMap())
         }
+
+        assertContains(error.message.orEmpty(), configFile.toString())
+        assertContains(error.message.orEmpty(), "deepseek.api.key")
     }
 
     @Test

@@ -124,12 +124,14 @@ fun printUsage() {
           chat  - Interactive multi-turn chat. Provide an optional initial question.
                  After each answer, type your next question. Empty line to exit.
 
-        Configuration (local.properties or environment variables):
+        Configuration (%APPDATA%\kzagent\config.properties on Windows,
+        ~/Library/Application Support/kzagent/config.properties on macOS,
+        or ~/.config/kzagent/config.properties on Linux):
           deepseek.api.key=...
           deepseek.model=deepseek-v4-flash
           deepseek.base.url=https://api.deepseek.com
 
-        The API key can also be provided with DEEPSEEK_API_KEY.
+        DEEPSEEK_API_KEY can also be provided and takes priority over the config file.
         """.trimIndent(),
     )
 }

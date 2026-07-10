@@ -37,7 +37,11 @@ KZAgent 的核心思想是让大语言模型（LLM）通过工具调用（Tool C
 
 ### 1. 配置 API Key
 
-在项目根目录创建 `local.properties` 文件（已加入 `.gitignore`，不会提交到仓库）：
+在用户配置目录创建 `kzagent/config.properties` 文件：
+
+- Windows: `%APPDATA%\kzagent\config.properties`
+- macOS: `~/Library/Application Support/kzagent/config.properties`
+- Linux: `$XDG_CONFIG_HOME/kzagent/config.properties`，未设置时使用 `~/.config/kzagent/config.properties`
 
 ```properties
 deepseek.api.key=sk-xxxxxxxxxxxxxxxx
@@ -45,7 +49,7 @@ deepseek.model=deepseek-v4-flash
 deepseek.base.url=https://api.deepseek.com
 ```
 
-也可以通过环境变量提供：
+也可以通过环境变量提供，且优先级高于配置文件：
 
 ```bash
 export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
@@ -87,7 +91,7 @@ export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 - 加载最新 `.kagent/sessions/` 历史用于续聊
 - 在状态栏显示模型请求、工具执行和审批状态
 - 当模型请求执行 `run_command` 时，通过弹窗审批
-- 配置仍从工作区 `local.properties` 或 `DEEPSEEK_API_KEY` 读取
+- 配置从用户配置目录 `kzagent/config.properties` 读取，`DEEPSEEK_API_KEY` 优先级更高
 
 ### `ask` — 单次提问模式
 
@@ -154,7 +158,7 @@ Chat ended.
 | **SessionWriter** | `agent/SessionWriter.kt` | 将会话记录写入 `.kagent/sessions/` |
 | **SessionReader** | `agent/SessionReader.kt` | 从磁盘读取历史会话，支持断点续聊 |
 | **DesktopApp** | `desktop/DesktopApp.kt` | Compose Desktop 桌面聊天界面 |
-| **AppConfigLoader** | `config/AppConfig.kt` | 从 `local.properties` / 环境变量加载配置 |
+| **AppConfigLoader** | `config/AppConfig.kt` | 从用户配置文件 / 环境变量加载配置 |
 | **LocalTools** | `tools/LocalTools.kt` | 5 个本地工具的注册与实现 |
 | **PathGuard** | `tools/PathGuard.kt` | 路径安全守卫，防止逃逸出工作区 |
 | **ApprovalPolicy** | `tools/Approval.kt` | 审批策略接口及终端确认实现 |
@@ -193,7 +197,7 @@ Agent 可以通过以下工具与本地文件系统交互：
 
 自动拒绝访问以下敏感文件/目录：
 
-- `.env`、`local.properties`（API Key 配置文件）
+- `.env`、`local.properties`（历史本地敏感配置文件）
 - 密钥文件、密码文件等
 
 ### 🛡️ 命令安全校验
@@ -258,7 +262,7 @@ src/main/kotlin/com/kzagent/kagent/
 
 ## 配置参考
 
-### `local.properties`
+### 用户配置文件 `kzagent/config.properties`
 
 ```properties
 deepseek.api.key=sk-xxxxxxxxxxxxxxxx    # DeepSeek API Key（必填）
@@ -269,7 +273,7 @@ deepseek.base.url=https://api.deepseek.com  # API 地址（可选）
 ### 环境变量
 
 ```bash
-DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx    # 优先级高于 local.properties
+DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx    # 优先级高于 config.properties
 ```
 
 ---
