@@ -11,11 +11,13 @@ data class AppConfig(
     val baseUrl: String = DEFAULT_BASE_URL,
     val model: String = DEFAULT_MODEL,
     val sensitivePathProtection: Boolean = DEFAULT_SENSITIVE_PATH_PROTECTION,
+    val contextWindowSize: Int = DEFAULT_CONTEXT_WINDOW_SIZE,
 ) {
     companion object {
         const val DEFAULT_BASE_URL = "https://api.deepseek.com"
         const val DEFAULT_MODEL = "deepseek-v4-flash"
         const val DEFAULT_SENSITIVE_PATH_PROTECTION = false
+        const val DEFAULT_CONTEXT_WINDOW_SIZE = 1_000_000
     }
 }
 
@@ -49,11 +51,16 @@ object AppConfigLoader {
             ?.toBooleanStrictOrNull()
             ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION
 
+        val contextWindowSize = props.getProperty("deepseek.context.window.size")?.trim()
+            ?.toIntOrNull()
+            ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE
+
         return AppConfig(
             apiKey = apiKey,
             baseUrl = baseUrl.trimEnd('/'),
             model = model,
             sensitivePathProtection = sensitivePathProtection,
+            contextWindowSize = contextWindowSize,
         )
     }
 

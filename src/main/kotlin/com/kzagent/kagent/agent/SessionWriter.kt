@@ -12,6 +12,12 @@ import kotlinx.serialization.json.put
 
 class SessionWriter(workspace: Path) {
     private val sessionPath: Path
+    var totalTokens: Int = 0
+        private set
+
+    fun resetTokens() {
+        totalTokens = 0
+    }
 
     init {
         val dir = workspace.resolve(".kagent").resolve("sessions")
@@ -22,10 +28,12 @@ class SessionWriter(workspace: Path) {
         sessionPath = dir.resolve("session-$timestamp.jsonl")
     }
 
-    fun append(message: AgentMessage) {
+    fun append(message: AgentMessage, tokens: Int = 0) {
+        totalTokens += tokens
         val line = buildJsonObject {
             put("time", Instant.now().toString())
             put("role", message.role)
+            put("cumulative_tokens", totalTokens)
             when (message) {
                 is AgentMessage.System -> put("content", message.content)
                 is AgentMessage.User -> put("content", message.content)

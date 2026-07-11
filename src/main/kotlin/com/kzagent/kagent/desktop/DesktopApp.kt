@@ -18,6 +18,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -269,6 +270,8 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     var error by remember { mutableStateOf<String?>(null) }
     var isBusy by remember { mutableStateOf(false) }
     var pendingApproval by remember { mutableStateOf<PendingApproval?>(null) }
+    var usedTokens by remember { mutableStateOf(0) }
+    var showNewSessionDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     val approvalPolicy = ApprovalPolicy { action, details ->
@@ -312,6 +315,9 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
         }.getOrDefault(emptyList())
         conversationHistory = loadedHistory
         messages = loadedHistory.toDisplayMessages()
+        usedTokens = runCatching {
+            com.kzagent.kagent.agent.SessionReader(workspace).loadLatestTokenCount()
+        }.getOrDefault(0)
         runCatching {
             AgentRuntimeFactory.create(workspace, approvalPolicy, observer)
         }.onSuccess {
@@ -330,6 +336,8 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                     workspace = workspace,
                     status = status,
                     isBusy = isBusy,
+                    contextPercent = (usedTokens * 100) / (runtime?.contextWindowSize ?: 1_000_000),
+                    onNewSession = { showNewSessionDialog = true },
                     onChooseWorkspace = {
                         chooseWorkspace(workspace)?.let { workspace = it }
                     },
@@ -360,6 +368,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                             }.onSuccess { result ->
                                 conversationHistory = result.history
                                 messages = result.history.toDisplayMessages()
+                                usedTokens += result.totalTokens
                                 status = "就绪"
                             }.onFailure {
                                 error = SecretRedactor.redact(it.message ?: it.toString())
@@ -376,6 +385,33 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     pendingApproval?.let { approval ->
         ApprovalDialog(approval)
     }
+
+    if (showNewSessionDialog) {
+        val cws = runtime?.contextWindowSize ?: 1_000_000
+        AlertDialog(
+            onDismissRequest = { showNewSessionDialog = false },
+            title = { Text("新建会话") },
+            text = {
+                Text("当前上下文已使用 ${(usedTokens * 100) / cws}%（${usedTokens}/${cws}）。是否开启一个新的会话？")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    conversationHistory = emptyList()
+                    messages = emptyList()
+                    usedTokens = 0
+                    runtime?.resetSessionTokens()
+                    showNewSessionDialog = false
+                }) {
+                    Text("确认")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNewSessionDialog = false }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -383,6 +419,8 @@ private fun Header(
     workspace: Path,
     status: String,
     isBusy: Boolean,
+    contextPercent: Int,
+    onNewSession: () -> Unit,
     onChooseWorkspace: () -> Unit,
 ) {
     Row(
@@ -407,6 +445,15 @@ private fun Header(
             }
             Text(status, style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.width(12.dp))
+            Button(
+                onClick = onNewSession,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (contextPercent > 80) Color(0xFFE53935) else Color(0xFF5C6BC0),
+                ),
+            ) {
+                Text("上下文 $contextPercent%")
+            }
+            Spacer(Modifier.width(8.dp))
             Button(onClick = onChooseWorkspace, enabled = !isBusy) {
                 Text("切换工作区")
             }

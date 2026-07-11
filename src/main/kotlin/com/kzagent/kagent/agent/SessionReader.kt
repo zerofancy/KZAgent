@@ -68,4 +68,23 @@ class SessionReader(workspace: Path) {
     fun loadLatestHistory(): List<AgentMessage>? {
         return loadLatest()?.filter { it !is AgentMessage.System }
     }
+
+    fun loadLatestTokenCount(): Int {
+        if (!Files.isDirectory(sessionsDir)) return 0
+        val files = Files.list(sessionsDir).use { stream ->
+            stream
+                .filter { it.toString().endsWith(".jsonl") }
+                .sorted(Comparator.reverseOrder())
+                .collect(Collectors.toList())
+        }
+        val latest = files.firstOrNull() ?: return 0
+        val lines = Files.readAllLines(latest, StandardCharsets.UTF_8)
+        val lastLine = lines.lastOrNull { it.isNotBlank() } ?: return 0
+        return try {
+            val obj = json.parseToJsonElement(lastLine).jsonObject
+            obj["cumulative_tokens"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
+        } catch (_: Exception) {
+            0
+        }
+    }
 }

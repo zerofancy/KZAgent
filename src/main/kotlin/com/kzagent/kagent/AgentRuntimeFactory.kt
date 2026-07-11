@@ -17,7 +17,12 @@ data class AgentRuntime(
     val workspace: Path,
     val agent: CodingAgent,
     val sessionReader: SessionReader,
-)
+    val contextWindowSize: Int,
+) {
+    fun resetSessionTokens() {
+        agent.resetSessionTokens()
+    }
+}
 
 object AgentRuntimeFactory {
     fun create(
@@ -43,6 +48,7 @@ object AgentRuntimeFactory {
             workspace = pathGuard.root,
             agent = agent,
             sessionReader = SessionReader(pathGuard.root),
+            contextWindowSize = config.contextWindowSize,
         )
     }
 }
