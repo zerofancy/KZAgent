@@ -6,8 +6,10 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,6 +17,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -24,10 +28,12 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -50,15 +56,12 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.kzagent.kagent.AgentRuntime
-import com.kzagent.kagent.AgentRuntimeFactory
 import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.config.SecretRedactor
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.ToolResult
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
@@ -279,183 +282,331 @@ private fun requestMacForeground() {
 @Composable
 private fun KZAgentDesktopApp(initialWorkspace: Path) {
     var workspace by remember { mutableStateOf(initialWorkspace) }
-    var runtime by remember { mutableStateOf<AgentRuntime?>(null) }
-    var conversationHistory by remember { mutableStateOf<List<AgentMessage>>(emptyList()) }
-    val messages = remember { mutableStateListOf<DisplayMessage>() }
     var input by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("正在加载工作区...") }
-    var error by remember { mutableStateOf<String?>(null) }
-    var isBusy by remember { mutableStateOf(false) }
-    var currentJob by remember { mutableStateOf<Job?>(null) }
-    var pendingApproval by remember { mutableStateOf<PendingApproval?>(null) }
-    var usedTokens by remember { mutableStateOf(0) }
-    var showNewSessionDialog by remember { mutableStateOf(false) }
+    val pendingApprovals = remember { mutableStateListOf<PendingApproval>() }
+    var showDeleteConfirmIndex by remember { mutableStateOf(-1) }
+    var showRenameDialogIndex by remember { mutableStateOf(-1) }
+    var renameText by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
-
-    // Auto-collapse tool messages after conversation ends
-    LaunchedEffect(isBusy) {
-        if (!isBusy) {
-            messages.indices.forEach { i ->
-                if (messages[i].collapsible && !messages[i].collapsed) {
-                    messages[i] = messages[i].copy(collapsed = true)
-                }
-            }
-        }
-    }
 
     val approvalPolicy = ApprovalPolicy { action, details ->
         suspendCancellableCoroutine { continuation ->
-            pendingApproval = PendingApproval(action, details) { allowed ->
-                pendingApproval = null
+            lateinit var approval: PendingApproval
+            approval = PendingApproval(action, details) { allowed ->
+                pendingApprovals.remove(approval)
                 if (continuation.isActive) {
                     continuation.resume(allowed)
                 }
             }
+            continuation.invokeOnCancellation { pendingApprovals.remove(approval) }
+            pendingApprovals.add(approval)
         }
     }
-    val observer = object : AgentObserver {
-        override suspend fun onModelRequest(turn: Int) {
-            status = "请求模型（第 ${turn} 轮）..."
-        }
 
-        override suspend fun onAssistantMessage(content: String) {
-            messages.add(DisplayMessage("assistant", content))
-        }
+    val sessionManager = remember {
+        SessionManager(approvalPolicy).also { it.loadOrCreate(workspace) }
+    }
 
-        override suspend fun onToolCallStarted(name: String, argsJson: String) {
-            val summary = formatToolCallSummary(name, argsJson)
-            messages.add(DisplayMessage("tool_call", summary, collapsible = true, collapsed = false))
-            status = if (name == "run_command") {
-                "等待命令审批..."
-            } else {
-                "执行工具：$name"
-            }
-        }
-
-        override suspend fun onToolResult(name: String, result: ToolResult) {
-            messages.add(DisplayMessage("tool_result", result.content, collapsible = true, collapsed = false))
-            status = if (result.isError) {
-                "工具返回错误：$name"
-            } else {
-                "工具完成：$name"
+    // Auto-collapse tool messages when a session becomes idle
+    LaunchedEffect(sessionManager.sessions.map { it.isBusy }) {
+        sessionManager.sessions.forEach { session ->
+            if (!session.isBusy) {
+                session.messages.indices.forEach { i ->
+                    if (session.messages[i].collapsible && !session.messages[i].collapsed) {
+                        session.messages[i] = session.messages[i].copy(collapsed = true)
+                    }
+                }
             }
         }
     }
 
-    LaunchedEffect(workspace) {
-        runtime = null
-        error = null
-        status = "正在加载工作区..."
-        val loadedHistory = runCatching {
-            com.kzagent.kagent.agent.SessionReader(workspace).loadLatestHistory().orEmpty()
-        }.getOrDefault(emptyList())
-        conversationHistory = loadedHistory
-        messages.clear()
-        messages.addAll(loadedHistory.toDisplayMessages())
-        usedTokens = runCatching {
-            com.kzagent.kagent.agent.SessionReader(workspace).loadLatestTokenCount()
-        }.getOrDefault(0)
-        runCatching {
-            AgentRuntimeFactory.create(workspace, approvalPolicy, observer)
-        }.onSuccess {
-            runtime = it
-            status = "就绪"
-        }.onFailure {
-            error = SecretRedactor.redact(it.message ?: it.toString())
-            status = "配置不可用"
+    fun createObserver(session: SessionData): AgentObserver {
+        return object : AgentObserver {
+            override suspend fun onModelRequest(turn: Int) {
+                session.status = "请求模型（第 ${turn} 轮）..."
+            }
+            override suspend fun onAssistantMessage(content: String) {
+                session.messages.add(DisplayMessage("assistant", content))
+            }
+            override suspend fun onToolCallStarted(name: String, argsJson: String) {
+                val summary = formatToolCallSummary(name, argsJson)
+                session.messages.add(DisplayMessage("tool_call", summary, collapsible = true, collapsed = false))
+                session.status = if (name == "run_command") "等待命令审批..." else "执行工具：$name"
+            }
+            override suspend fun onToolResult(name: String, result: ToolResult) {
+                session.messages.add(DisplayMessage("tool_result", result.content, collapsible = true, collapsed = false))
+                session.status = if (result.isError) "工具返回错误：$name" else "工具完成：$name"
+            }
         }
+    }
+
+    // Ensure active session has a runtime
+    LaunchedEffect(workspace, sessionManager.activeSession().id) {
+        val session = sessionManager.activeSession()
+        session.status = "正在加载..."
+        val observer = createObserver(session)
+        session.error = null
+        runCatching { sessionManager.ensureRuntime(session, observer) }
+            .onSuccess { session.status = "就绪" }
+            .onFailure {
+                session.error = SecretRedactor.redact(it.message ?: it.toString())
+                session.status = "配置不可用"
+            }
     }
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
-            Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
-                Header(
-                    workspace = workspace,
-                    status = status,
-                    isBusy = isBusy,
-                    contextPercent = (usedTokens * 100) / (runtime?.contextWindowSize ?: 1_000_000),
-                    onNewSession = { showNewSessionDialog = true },
+            Row(modifier = Modifier.fillMaxSize()) {
+                // ---- Sidebar ----
+                SessionSidebar(
+                    sessions = sessionManager.sessions,
+                    activeIndex = sessionManager.activeSessionIndex,
+                    onSelect = { sessionManager.switchTo(it) },
+                    onAdd = { sessionManager.addNewSession(workspace) },
+                    onDelete = { showDeleteConfirmIndex = it },
+                    onRename = { idx ->
+                        renameText = sessionManager.sessions[idx].name
+                        showRenameDialogIndex = idx
+                    },
                     onChooseWorkspace = {
-                        chooseWorkspace(workspace)?.let { workspace = it }
-                    },
-                )
-                Spacer(Modifier.height(12.dp))
-                error?.let {
-                    ErrorBanner(it)
-                    Spacer(Modifier.height(12.dp))
-                }
-                MessageList(messages, modifier = Modifier.weight(1f).fillMaxWidth())
-                Spacer(Modifier.height(12.dp))
-                Composer(
-                    input = input,
-                    isBusy = isBusy,
-                    enabled = runtime != null,
-                    onInputChange = { input = it },
-                    onSend = {
-                        val prompt = input.trim()
-                        if (prompt.isEmpty()) return@Composer
-                        val currentRuntime = runtime ?: return@Composer
-                        input = ""
-                        isBusy = true
-                        error = null
-                        status = "准备发送..."
-                        messages.add(DisplayMessage("user", prompt))
-                        val job = scope.launch {
-                            try {
-                                val result = currentRuntime.agent.runConversation(prompt, conversationHistory)
-                                conversationHistory = result.history
-                                // Messages are already streamed via observer; no need to replace
-                                usedTokens = result.totalTokens
-                                status = "就绪"
-                            } catch (_: CancellationException) {
-                                status = "已终止"
-                            } catch (e: Exception) {
-                                error = SecretRedactor.redact(e.message ?: e.toString())
-                                status = "请求失败"
-                            } finally {
-                                isBusy = false
-                                currentJob = null
-                            }
+                        chooseWorkspace(workspace)?.let { newWs ->
+                            sessionManager.cancelAllSessions()
+                            pendingApprovals.toList().forEach { it.complete(false) }
+                            workspace = newWs
+                            sessionManager.sessions.clear()
+                            sessionManager.loadOrCreate(newWs)
                         }
-                        currentJob = job
                     },
-                    onTerminate = {
-                        currentJob?.cancel()
-                        status = "正在终止..."
-                    },
+                    modifier = Modifier.width(240.dp).fillMaxSize(),
                 )
+
+                // ---- Divider ----
+                VerticalDivider(modifier = Modifier.fillMaxHeight())
+
+                // ---- Main Chat Area ----
+                val session = sessionManager.activeSession()
+                Column(modifier = Modifier.weight(1f).fillMaxHeight().padding(16.dp)) {
+                    Header(
+                        workspace = workspace,
+                        status = session.status,
+                        isBusy = session.isBusy,
+                        contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000),
+                        onNewSession = { sessionManager.addNewSession(workspace) },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    session.error?.let {
+                        ErrorBanner(it)
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    MessageList(session.messages, modifier = Modifier.weight(1f).fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Composer(
+                        input = input,
+                        isBusy = session.isBusy,
+                        enabled = session.runtime != null,
+                        onInputChange = { input = it },
+                        onSend = {
+                            val prompt = input.trim()
+                            if (prompt.isEmpty()) return@Composer
+                            val currentRuntime = session.runtime ?: return@Composer
+                            input = ""
+                            session.isBusy = true
+                            session.error = null
+                            session.status = "准备发送..."
+                            session.messages.add(DisplayMessage("user", prompt))
+                            val job = scope.launch {
+                                try {
+                                    val result = currentRuntime.agent.runConversation(prompt, session.conversationHistory)
+                                    session.conversationHistory = result.history
+                                    session.usedTokens = result.totalTokens
+                                    session.status = "就绪"
+                                } catch (_: CancellationException) {
+                                    session.status = "已终止"
+                                } catch (e: Exception) {
+                                    session.error = SecretRedactor.redact(e.message ?: e.toString())
+                                    session.status = "请求失败"
+                                } finally {
+                                    session.isBusy = false
+                                    session.currentJob = null
+                                }
+                            }
+                            session.currentJob = job
+                        },
+                        onTerminate = {
+                            session.currentJob?.cancel()
+                            session.status = "正在终止..."
+                        },
+                    )
+                }
             }
         }
     }
 
-    pendingApproval?.let { approval ->
+    pendingApprovals.firstOrNull()?.let { approval ->
         ApprovalDialog(approval)
     }
 
-    if (showNewSessionDialog) {
-        val cws = runtime?.contextWindowSize ?: 1_000_000
+    // Delete confirmation dialog
+    if (showDeleteConfirmIndex >= 0) {
+        val sessionName = sessionManager.sessions.getOrNull(showDeleteConfirmIndex)?.name ?: ""
         AlertDialog(
-            onDismissRequest = { showNewSessionDialog = false },
-            title = { Text("新建会话") },
+            onDismissRequest = { showDeleteConfirmIndex = -1 },
+            title = { Text("删除会话") },
+            text = { Text("确定要删除会话「$sessionName」吗？此操作不可撤销。") },
+            confirmButton = {
+                Button(onClick = {
+                    sessionManager.deleteSession(showDeleteConfirmIndex)
+                    showDeleteConfirmIndex = -1
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmIndex = -1 }) { Text("取消") }
+            },
+        )
+    }
+
+    // Rename dialog
+    if (showRenameDialogIndex >= 0) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialogIndex = -1 },
+            title = { Text("重命名会话") },
             text = {
-                Text("当前上下文已使用 ${(usedTokens * 100) / cws}%（${usedTokens}/${cws}）。是否开启一个新的会话？")
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    label = { Text("会话名称") },
+                    singleLine = true,
+                )
             },
             confirmButton = {
                 Button(onClick = {
-                    conversationHistory = emptyList()
-                    messages.clear()
-                    usedTokens = 0
-                    showNewSessionDialog = false
-                }) {
-                    Text("确认")
-                }
+                    if (renameText.isNotBlank()) {
+                        sessionManager.renameSession(showRenameDialogIndex, renameText)
+                    }
+                    showRenameDialogIndex = -1
+                }) { Text("确定") }
             },
             dismissButton = {
-                TextButton(onClick = { showNewSessionDialog = false }) {
-                    Text("取消")
-                }
+                TextButton(onClick = { showRenameDialogIndex = -1 }) { Text("取消") }
             },
         )
+    }
+}
+
+@Composable
+private fun SessionSidebar(
+    sessions: List<SessionData>,
+    activeIndex: Int,
+    onSelect: (Int) -> Unit,
+    onAdd: () -> Unit,
+    onDelete: (Int) -> Unit,
+    onRename: (Int) -> Unit,
+    onChooseWorkspace: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+            .padding(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "会话列表",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Row {
+                OutlinedButton(
+                    onClick = onAdd,
+                    modifier = Modifier.height(32.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                ) {
+                    Text("+", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        OutlinedButton(
+            onClick = onChooseWorkspace,
+            modifier = Modifier.fillMaxWidth().height(32.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+        ) {
+            Text("切换工作区", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+        }
+        Spacer(Modifier.height(6.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(6.dp))
+
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            itemsIndexed(sessions, key = { _, s -> s.id }) { index, session ->
+                val isActive = index == activeIndex
+                val bgColor = if (isActive)
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                else
+                    Color.Transparent
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(index) }
+                        .background(bgColor, shape = MaterialTheme.shapes.small)
+                        .padding(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            session.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (session.isBusy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 1.5.dp,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        session.status,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(
+                            onClick = { onRename(index) },
+                            modifier = Modifier.height(24.dp),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        ) {
+                            Text("✎", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        TextButton(
+                            onClick = { onDelete(index) },
+                            modifier = Modifier.height(24.dp),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        ) {
+                            Text("✕", style = MaterialTheme.typography.bodySmall, color = Color(0xFFE53935))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+            }
+        }
     }
 }
 
@@ -466,7 +617,6 @@ private fun Header(
     isBusy: Boolean,
     contextPercent: Int,
     onNewSession: () -> Unit,
-    onChooseWorkspace: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -492,20 +642,16 @@ private fun Header(
             Spacer(Modifier.width(12.dp))
             Button(
                 onClick = onNewSession,
+                enabled = !isBusy,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (contextPercent > 80) Color(0xFFE53935) else Color(0xFF5C6BC0),
                 ),
             ) {
                 Text("上下文 $contextPercent%")
             }
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = onChooseWorkspace, enabled = !isBusy) {
-                Text("切换工作区")
-            }
         }
     }
 }
-
 @Composable
 private fun ErrorBanner(message: String) {
     Box(
@@ -726,7 +872,7 @@ private fun chooseWorkspace(current: Path): Path? {
     }
 }
 
-private fun List<AgentMessage>.toDisplayMessages(): List<DisplayMessage> {
+fun List<AgentMessage>.toDisplayMessages(): List<DisplayMessage> {
     return mapNotNull { message ->
         when (message) {
             is AgentMessage.User -> DisplayMessage("user", message.content)
@@ -792,7 +938,7 @@ internal fun extractPatchedFiles(argsJson: String): List<String> {
         .ifEmpty { listOf("(patch)") }
 }
 
-private data class DisplayMessage(
+data class DisplayMessage(
     val role: String,
     val content: String,
     val collapsible: Boolean = false,

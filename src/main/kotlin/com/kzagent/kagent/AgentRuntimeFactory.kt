@@ -25,10 +25,16 @@ object AgentRuntimeFactory {
         workspace: Path,
         approvalPolicy: ApprovalPolicy,
         observer: AgentObserver = NoOpAgentObserver,
+        sessionFile: Path? = null,
     ): AgentRuntime {
         val root = workspace.toAbsolutePath().normalize()
         val config = AppConfigLoader.load()
         val pathGuard = PathGuard(root)
+        val writer = if (sessionFile != null) {
+            SessionWriter(sessionFile)
+        } else {
+            SessionWriter.createNew(root)
+        }
         val agent = CodingAgent(
             model = DeepSeekClient(config),
             tools = LocalTools(
@@ -37,7 +43,7 @@ object AgentRuntimeFactory {
                 sensitivePathProtection = config.sensitivePathProtection,
             ).registry(),
             promptBuilder = PromptBuilder(pathGuard.root),
-            sessionWriter = SessionWriter(pathGuard.root),
+            sessionWriter = writer,
             observer = observer,
         )
         return AgentRuntime(

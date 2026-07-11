@@ -96,6 +96,11 @@ class LocalToolsTest {
 
         assertTrue(result.isError)
         assertContains(result.content, "did not match")
+        assertContains(result.content, "Patch failed for sample.txt")
+        assertContains(result.content, "Hunk #1")
+        assertContains(result.content, "Expected old content")
+        assertContains(result.content, "Actual content at declared position")
+        assertContains(result.content, "Re-read this target region")
     }
 
     @Test

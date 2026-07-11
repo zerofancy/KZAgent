@@ -10,17 +10,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-class SessionWriter(workspace: Path) {
-    private val sessionPath: Path
-
-    init {
-        val dir = workspace.resolve(".kagent").resolve("sessions")
-        Files.createDirectories(dir)
-        val timestamp = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
-            .replace(":", "")
-            .replace(".", "")
-        sessionPath = dir.resolve("session-$timestamp.jsonl")
-    }
+class SessionWriter(private val sessionPath: Path) {
 
     fun append(message: AgentMessage, tokens: Int = 0) {
         val line = buildJsonObject {
@@ -57,6 +47,17 @@ class SessionWriter(workspace: Path) {
             java.nio.file.StandardOpenOption.CREATE,
             java.nio.file.StandardOpenOption.APPEND,
         )
+    }
+
+    companion object {
+        fun createNew(workspace: Path): SessionWriter {
+            val dir = workspace.resolve(".kagent").resolve("sessions")
+            Files.createDirectories(dir)
+            val timestamp = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
+                .replace(":", "")
+                .replace(".", "")
+            return SessionWriter(dir.resolve("session-$timestamp.jsonl"))
+        }
     }
 }
 

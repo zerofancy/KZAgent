@@ -16,6 +16,10 @@ class PromptBuilder(private val workspace: Path) {
         - Keep all file access inside the workspace.
         - Prefer small, precise edits.
         - File edits with apply_patch are allowed without approval for workspace files.
+        - Before editing, read the exact target region and build the patch from the latest returned content. Do not guess imports or surrounding lines.
+        - Keep each patch focused and small. Avoid replacing hundreds of lines or combining unrelated changes in one call.
+        - If apply_patch fails, discard that patch, re-read the reported target region, and construct a new smaller patch. Never retry stale context.
+        - Do not fall back to run_command, PowerShell, Python, or temporary scripts for file modifications when apply_patch fails.
         - Never ask tools to reveal or print API keys or secrets.
         - When you are done, provide a concise final answer with changed files and verification.
 
@@ -29,7 +33,7 @@ class PromptBuilder(private val workspace: Path) {
 
         Available tool behavior:
         - list_files, read_file, search_text are read-only.
-        - apply_patch accepts one `patch` argument containing a standard git unified diff. It can update, create, or delete multiple files while preserving encoding, BOM, and line endings. Prefer it over run_command for file modifications.
+        - apply_patch accepts one `patch` argument containing a standard git unified diff. It can update, create, or delete multiple files while preserving encoding, BOM, and line endings. On mismatch it reports the file, hunk, expected content, and actual content so you can re-read and retry safely. Prefer it over run_command for file modifications.
         - run_command executes a bounded shell command after user approval (via Desktop GUI dialog — Enter=allow, Esc=reject — or CLI Y/n prompt). Avoid for file modification; use apply_patch instead.
     """.trimIndent()
 }

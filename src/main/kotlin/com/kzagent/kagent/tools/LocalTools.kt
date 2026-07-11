@@ -172,7 +172,7 @@ class LocalTools(
                 if (filePatch.newPath == null) {
                     require(Files.isRegularFile(path)) { "Cannot delete missing file: $relativePath" }
                     rejectLargeFile(path)
-                    UnifiedPatch.apply(TextFileCodec.read(path).text, filePatch)
+                    applyFilePatch(relativePath, TextFileCodec.read(path).text, filePatch)
                     PendingChange(path, null)
                 } else {
                     val original = if (Files.exists(path)) {
@@ -182,7 +182,7 @@ class LocalTools(
                         require(filePatch.oldPath == null) { "File does not exist: $relativePath" }
                         TextFile("", StandardCharsets.UTF_8, byteArrayOf())
                     }
-                    PendingChange(path, original.copy(text = UnifiedPatch.apply(original.text, filePatch)))
+                    PendingChange(path, original.copy(text = applyFilePatch(relativePath, original.text, filePatch)))
                 }
             }
             changes.forEach { change ->
@@ -195,6 +195,13 @@ class LocalTools(
             ToolResult.ok("Applied patch to ${changes.size} file(s): ${changes.joinToString { pathGuard.display(it.path) }}")
         }.getOrElse { ToolResult.error(it.message ?: it.toString()) }
     }
+
+    private fun applyFilePatch(relativePath: String, original: String, patch: FilePatch): String =
+        try {
+            UnifiedPatch.apply(original, patch)
+        } catch (error: IllegalArgumentException) {
+            throw IllegalArgumentException("Patch failed for $relativePath:\n${error.message}", error)
+        }
 
     private fun runCommandTool(): ToolDefinition = ToolDefinition(
         name = "run_command",

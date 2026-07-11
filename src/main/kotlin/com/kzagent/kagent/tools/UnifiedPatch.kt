@@ -49,9 +49,9 @@ internal object UnifiedPatch {
         val source = if (original.isEmpty()) emptyList() else original.split("\r\n", "\n", "\r").let { if (trailingNewline) it.dropLast(1) else it }
         val output = mutableListOf<String>()
         var cursor = 0
-        for (hunk in patch.hunks) {
+        for ((hunkIndex, hunk) in patch.hunks.withIndex()) {
             val expected = (hunk.oldStart - 1).coerceAtLeast(0)
-            val target = locateHunk(source, hunk, cursor, expected)
+            val target = locateHunk(source, hunk, hunkIndex + 1, cursor, expected)
             output += source.subList(cursor, target)
             cursor = target
             for (line in hunk.lines) when (line.kind) {
@@ -71,7 +71,13 @@ internal object UnifiedPatch {
      * Equally near candidates are rejected so a repeated block cannot be edited by
      * accident.
      */
-    private fun locateHunk(source: List<String>, hunk: PatchHunk, cursor: Int, expected: Int): Int {
+    private fun locateHunk(
+        source: List<String>,
+        hunk: PatchHunk,
+        hunkNumber: Int,
+        cursor: Int,
+        expected: Int,
+    ): Int {
         val oldLines = hunk.lines.filter { it.kind != '+' }.map { it.text }
         if (oldLines.isEmpty()) {
             require(expected in cursor..source.size) { "Patch hunk starts outside the file." }
@@ -82,7 +88,7 @@ internal object UnifiedPatch {
             oldLines.indices.all { offset -> source[start + offset] == oldLines[offset] }
         }
         require(candidates.isNotEmpty()) {
-            "Patch context did not match near line ${expected + 1}."
+            mismatchMessage(source, oldLines, hunkNumber, expected)
         }
         val bestDistance = candidates.minOf { kotlin.math.abs(it - expected) }
         val nearest = candidates.filter { kotlin.math.abs(it - expected) == bestDistance }
@@ -90,6 +96,30 @@ internal object UnifiedPatch {
             "Patch context is ambiguous near line ${expected + 1}; matched equally well at ${nearest.joinToString { (it + 1).toString() }}."
         }
         return nearest.single()
+    }
+
+    private fun mismatchMessage(
+        source: List<String>,
+        oldLines: List<String>,
+        hunkNumber: Int,
+        expected: Int,
+    ): String {
+        val shownLineCount = 8
+        val expectedPreview = oldLines.take(shownLineCount).mapIndexed { offset, line ->
+            "${expected + offset + 1}: ${line.take(200)}"
+        }
+        val actualPreview = source.drop(expected).take(minOf(oldLines.size, shownLineCount)).mapIndexed { offset, line ->
+            "${expected + offset + 1}: ${line.take(200)}"
+        }
+        return buildString {
+            appendLine("Hunk #$hunkNumber context did not match near declared line ${expected + 1}.")
+            appendLine("Expected old content:")
+            appendLine(expectedPreview.joinToString("\n").ifEmpty { "(none)" })
+            appendLine("Actual content at declared position:")
+            append(actualPreview.joinToString("\n").ifEmpty { "(end of file)" })
+            if (oldLines.size > shownLineCount) append("\n...[preview truncated]")
+            append("\nRe-read this target region and create a new, smaller patch; do not reuse stale context.")
+        }
     }
 
     private fun parsePath(value: String): String? {
