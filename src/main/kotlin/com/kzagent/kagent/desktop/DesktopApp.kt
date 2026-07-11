@@ -1,6 +1,7 @@
 package com.kzagent.kagent.desktop
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,16 +34,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.awt.ComposePanel
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.awt.ComposePanel
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.AgentRuntime
@@ -52,6 +55,10 @@ import com.kzagent.kagent.config.SecretRedactor
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.ToolResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.EventQueue
@@ -71,8 +78,6 @@ import javax.swing.Timer
 import javax.swing.WindowConstants
 import kotlin.coroutines.resume
 import kotlin.system.exitProcess
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 
 fun runDesktopApp() {
     System.setProperty("apple.awt.application.name", "KZAgent")
@@ -275,6 +280,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     var status by remember { mutableStateOf("正在加载工作区...") }
     var error by remember { mutableStateOf<String?>(null) }
     var isBusy by remember { mutableStateOf(false) }
+    var currentJob by remember { mutableStateOf<Job?>(null) }
     var pendingApproval by remember { mutableStateOf<PendingApproval?>(null) }
     var usedTokens by remember { mutableStateOf(0) }
     var showNewSessionDialog by remember { mutableStateOf(false) }
@@ -357,7 +363,8 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                 Spacer(Modifier.height(12.dp))
                 Composer(
                     input = input,
-                    enabled = !isBusy && runtime != null,
+                    isBusy = isBusy,
+                    enabled = runtime != null,
                     onInputChange = { input = it },
                     onSend = {
                         val prompt = input.trim()
@@ -368,20 +375,28 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                         error = null
                         status = "准备发送..."
                         messages = messages + DisplayMessage("user", prompt)
-                        scope.launch {
-                            runCatching {
-                                currentRuntime.agent.runConversation(prompt, conversationHistory)
-                            }.onSuccess { result ->
+                        val job = scope.launch {
+                            try {
+                                val result = currentRuntime.agent.runConversation(prompt, conversationHistory)
                                 conversationHistory = result.history
                                 messages = result.history.toDisplayMessages()
                                 usedTokens += result.totalTokens
                                 status = "就绪"
-                            }.onFailure {
-                                error = SecretRedactor.redact(it.message ?: it.toString())
+                            } catch (_: CancellationException) {
+                                status = "已终止"
+                            } catch (e: Exception) {
+                                error = SecretRedactor.redact(e.message ?: e.toString())
                                 status = "请求失败"
+                            } finally {
+                                isBusy = false
+                                currentJob = null
                             }
-                            isBusy = false
                         }
+                        currentJob = job
+                    },
+                    onTerminate = {
+                        currentJob?.cancel()
+                        status = "正在终止..."
                     },
                 )
             }
@@ -529,9 +544,11 @@ private fun MessageRow(message: DisplayMessage) {
 @Composable
 private fun Composer(
     input: String,
+    isBusy: Boolean,
     enabled: Boolean,
     onInputChange: (String) -> Unit,
     onSend: () -> Unit,
+    onTerminate: () -> Unit,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
         OutlinedTextField(
@@ -544,7 +561,7 @@ private fun Composer(
                         event.key == Key.Enter &&
                         !event.isCtrlPressed
                     ) {
-                        onSend()
+                        if (isBusy) onTerminate() else onSend()
                         true
                     } else {
                         false
@@ -554,27 +571,54 @@ private fun Composer(
             maxLines = 6,
         )
         Spacer(Modifier.width(12.dp))
-        Button(
-            onClick = onSend,
-            enabled = enabled && input.isNotBlank(),
-            modifier = Modifier.height(56.dp),
-        ) {
-            Text("发送")
+        if (isBusy) {
+            Button(
+                onClick = onTerminate,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
+                modifier = Modifier.height(56.dp),
+            ) {
+                Text("终止")
+            }
+        } else {
+            Button(
+                onClick = onSend,
+                enabled = enabled && input.isNotBlank(),
+                modifier = Modifier.height(56.dp),
+            ) {
+                Text("发送")
+            }
         }
     }
 }
 
 @Composable
 private fun ApprovalDialog(approval: PendingApproval) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
     AlertDialog(
         onDismissRequest = { approval.complete(false) },
         title = { Text("命令执行审批") },
         text = {
-            Column(modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
-                Text(approval.action, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(8.dp))
-                SelectionContainer {
-                    Text(approval.details, style = MaterialTheme.typography.bodyMedium)
+            Box(
+                modifier = Modifier.focusRequester(focusRequester)
+                    .focusable()
+                    .onKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyUp) {
+                            when (event.key) {
+                                Key.Enter -> { approval.complete(true); true }
+                                Key.Escape -> { approval.complete(false); true }
+                                else -> false
+                            }
+                        } else false
+                    }
+            ) {
+                Column(modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                    Text(approval.action, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    SelectionContainer {
+                        Text(approval.details, style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
         },
