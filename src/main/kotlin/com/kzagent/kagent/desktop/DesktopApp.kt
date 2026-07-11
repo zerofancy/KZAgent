@@ -592,7 +592,13 @@ private fun MessageRow(
             }
         }
         Spacer(Modifier.height(6.dp))
-        if (!message.collapsed) {
+        if (message.collapsible && message.collapsed) {
+            Text(
+                collapsedLabel,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+            )
+        } else {
             SelectionContainer {
                 Text(
                     message.content,
@@ -603,12 +609,6 @@ private fun MessageRow(
                     },
                 )
             }
-        } else {
-            Text(
-                collapsedLabel,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-            )
         }
     }
 }
