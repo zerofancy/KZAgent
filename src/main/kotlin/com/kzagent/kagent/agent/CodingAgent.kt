@@ -3,6 +3,7 @@ package com.kzagent.kagent.agent
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.llm.AssistantReply
 import com.kzagent.kagent.llm.ChatModel
+import com.kzagent.kagent.tools.ToolQuota
 import com.kzagent.kagent.tools.ToolRegistry
 import com.kzagent.kagent.tools.ToolResult
 import kotlinx.serialization.json.Json
@@ -13,23 +14,15 @@ class CodingAgent(
     private val tools: ToolRegistry,
     private val promptBuilder: PromptBuilder,
     private val sessionWriter: SessionWriter,
-    private val maxTurns: Int = 20,
+    private val quota: ToolQuota = ToolQuota(),
     private val observer: AgentObserver = NoOpAgentObserver,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
-    /**
-     * Start a fresh conversation with a single user prompt.
-     */
     suspend fun run(userPrompt: String): String {
         return runConversation(userPrompt).answer
     }
 
-    /**
-     * Continue a conversation from previous history.
-     * [history] should be previous messages (system messages will be filtered out
-     * since a fresh system prompt is provided).
-     */
     suspend fun run(userPrompt: String, history: List<AgentMessage>): String {
         return runConversation(userPrompt, history).answer
     }
@@ -47,7 +40,12 @@ class CodingAgent(
         sessionWriter.append(messages.last())
         var contextTokens = 0
         val answer = runInternal(system, messages) { contextTokens = it }
-        return AgentRunResult(answer = answer, history = messages.toList(), totalTokens = contextTokens)
+        return AgentRunResult(
+            answer = answer,
+            history = messages.toList(),
+            totalTokens = contextTokens,
+            quotaConsumed = quota.totalConsumed,
+        )
     }
 
     private suspend fun runInternal(
@@ -56,16 +54,25 @@ class CodingAgent(
         onTokens: (Int) -> Unit = {},
     ): String {
         var contextTokens = 0
-        repeat(maxTurns) { turn ->
-            observer.onModelRequest(turn + 1)
-            val reply = model.chat(listOf(system) + messages, tools.toolSchemas())
+        var loopCount = 0
+        while (true) {
+            loopCount++
+            observer.onModelRequest(loopCount)
+
+            val contextMessages = buildList {
+                add(system)
+                if (quota.isLow) {
+                    add(AgentMessage.System(buildQuotaWarning()))
+                }
+                addAll(messages)
+            }
+            val reply = model.chat(contextMessages, tools.toolSchemas())
             contextTokens = maxOf(contextTokens, reply.promptTokens ?: contextTokens)
             onTokens(contextTokens)
             val assistant = AgentMessage.Assistant(reply.content, reply.toolCalls)
             messages += assistant
             sessionWriter.append(assistant, tokens = contextTokens)
 
-            // Stream the model's text reply (thinking) to the observer
             reply.content?.takeIf { it.isNotBlank() }?.let { observer.onAssistantMessage(it) }
 
             if (reply.toolCalls.isEmpty()) {
@@ -75,6 +82,36 @@ class CodingAgent(
             for (toolCall in reply.toolCalls) {
                 val tool = tools.get(toolCall.name)
                 observer.onToolCallStarted(toolCall.name, toolCall.argumentsJson)
+
+                if (tool != null && !quota.canAfford(tool.cost)) {
+                    if (quota.isLow) {
+                        val extended = quota.extend()
+                        if (extended) {
+                            val extMsg = AgentMessage.System(
+                                "配额已自动扩容至 ${quota.remaining} 积分（第 ${quota.extensionsUsed} 次扩容），请继续工作。"
+                            )
+                            messages += extMsg
+                        }
+                    }
+                    if (!quota.canAfford(tool.cost)) {
+                        val errorMsg = "配额不足：${toolCall.name} 需要 ${tool.cost} 积分，剩余 ${quota.remaining} 积分。任务终止。"
+                        val toolMessage = AgentMessage.Tool(
+                            toolCallId = toolCall.id,
+                            name = toolCall.name,
+                            content = errorMsg,
+                            isError = true,
+                        )
+                        messages += toolMessage
+                        sessionWriter.append(toolMessage)
+                        observer.onToolResult(toolCall.name, ToolResult.error(errorMsg))
+                        return reply.content.orEmpty().ifBlank { "Stopped: quota exhausted." }
+                    }
+                }
+
+                if (tool != null) {
+                    quota.deduct(tool.cost)
+                }
+
                 val result = if (tool == null) {
                     ToolResult.error("Unknown tool: ${toolCall.name}")
                 } else {
@@ -98,8 +135,6 @@ class CodingAgent(
                 sessionWriter.append(toolMessage)
             }
         }
-
-        return "Stopped after reaching maxTurns=$maxTurns."
     }
 }
 
@@ -107,16 +142,25 @@ data class AgentRunResult(
     val answer: String,
     val history: List<AgentMessage>,
     val totalTokens: Int = 0,
+    val quotaConsumed: Int = 0,
 )
 
 interface AgentObserver {
     suspend fun onModelRequest(turn: Int) = Unit
-    /** Called when the model returns text content (its "thinking") */
     suspend fun onAssistantMessage(content: String) = Unit
-    /** Called before a tool is executed */
     suspend fun onToolCallStarted(name: String, argsJson: String) = Unit
-    /** Called after a tool returns */
     suspend fun onToolResult(name: String, result: ToolResult) = Unit
 }
 
 object NoOpAgentObserver : AgentObserver
+
+private fun buildQuotaWarning(): String = buildString {
+    appendLine("=== 配额提醒 ===")
+    appendLine("工具调用消耗积分，不同操作成本不同：")
+    appendLine("- 读操作（list_files, read_file, search_text）: 1 积分")
+    appendLine("- 写操作（replace_in_file）: 2 积分")
+    appendLine("- 终端操作（run_command）: 5 积分")
+    appendLine()
+    append("剩余积分较少，请评估任务进度：")
+    append("如果接近完成请尽快收尾；如果还需要多次操作请继续，系统将自动扩容。")
+}

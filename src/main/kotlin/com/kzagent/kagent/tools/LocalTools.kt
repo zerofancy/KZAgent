@@ -43,6 +43,7 @@ class LocalTools(
             required = emptyList(),
         ),
         requiresApproval = false,
+        cost = 1,
     ) { args ->
         runCatching {
             val start = pathGuard.resolveExisting(args.string("path") ?: ".")
@@ -79,6 +80,7 @@ class LocalTools(
             required = listOf("path"),
         ),
         requiresApproval = false,
+        cost = 1,
     ) { args ->
         runCatching {
             val path = pathGuard.resolveWritableExistingFile(args.requiredString("path"))
@@ -113,6 +115,7 @@ class LocalTools(
             required = listOf("query"),
         ),
         requiresApproval = false,
+        cost = 1,
     ) { args ->
         runCatching {
             val query = args.requiredString("query")
@@ -158,6 +161,7 @@ class LocalTools(
             required = listOf("path", "new_text"),
         ),
         requiresApproval = false,
+        cost = 2,
     ) { args ->
         runCatching {
             val path = pathGuard.resolveWritableFile(args.requiredString("path"))
@@ -198,6 +202,7 @@ class LocalTools(
             required = listOf("command"),
         ),
         requiresApproval = true,
+        cost = 5,
     ) { args ->
         runCatching {
             val command = args.requiredString("command")

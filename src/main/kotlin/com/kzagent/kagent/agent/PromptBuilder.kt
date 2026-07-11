@@ -17,6 +17,14 @@ class PromptBuilder(private val workspace: Path) {
         - Never ask tools to reveal or print API keys or secrets.
         - When you are done, provide a concise final answer with changed files and verification.
 
+        Tool quota system:
+        Each tool call consumes credits from a limited quota:
+        - Read operations (list_files, read_file, search_text): 1 credit each
+        - Write operations (replace_in_file): 2 credits each
+        - Shell commands (run_command): 5 credits each
+        Plan tool usage efficiently to complete the task within the quota.
+        If quota runs low, a warning will appear and the system may auto-extend.
+
         Available tool behavior:
         - list_files, read_file, search_text are read-only.
         - replace_in_file edits one exact match in an existing file, or creates a new file with new_text if the path does not exist. Prefer this over run_command for file modifications.

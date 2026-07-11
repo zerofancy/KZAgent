@@ -7,6 +7,7 @@ import com.kzagent.kagent.llm.ModelToolCall
 import com.kzagent.kagent.tools.AlwaysApprovePolicy
 import com.kzagent.kagent.tools.LocalTools
 import com.kzagent.kagent.tools.PathGuard
+import com.kzagent.kagent.tools.ToolQuota
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
@@ -25,7 +26,7 @@ class CodingAgentTest {
             tools = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry(),
             promptBuilder = PromptBuilder(dir),
             sessionWriter = SessionWriter(dir),
-            maxTurns = 3,
+            quota = ToolQuota(baseCredits = 10),
         )
 
         val answer = agent.run("list files")

@@ -9,6 +9,7 @@ data class ToolDefinition(
     val description: String,
     val parameters: JsonObject,
     val requiresApproval: Boolean,
+    val cost: Int = 1,
     val handler: suspend (JsonObject) -> ToolResult,
 )
 
