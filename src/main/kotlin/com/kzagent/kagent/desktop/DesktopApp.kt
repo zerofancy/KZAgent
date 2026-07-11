@@ -33,6 +33,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
@@ -532,8 +538,19 @@ private fun Composer(
             value = input,
             onValueChange = onInputChange,
             enabled = enabled,
-            modifier = Modifier.weight(1f).heightIn(min = 88.dp, max = 160.dp),
-            label = { Text("输入问题") },
+            modifier = Modifier.weight(1f).heightIn(min = 88.dp, max = 160.dp)
+                .onKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyUp &&
+                        event.key == Key.Enter &&
+                        !event.isCtrlPressed
+                    ) {
+                        onSend()
+                        true
+                    } else {
+                        false
+                    }
+                },
+            label = { Text("输入问题 (Enter 发送, Ctrl+Enter 换行)") },
             maxLines = 6,
         )
         Spacer(Modifier.width(12.dp))
