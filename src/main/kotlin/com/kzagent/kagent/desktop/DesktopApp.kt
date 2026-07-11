@@ -16,15 +16,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.AlertDialog
-import androidx.compose.material.Button
-import androidx.compose.material.CircularProgressIndicator
-import androidx.compose.material.Divider
-import androidx.compose.material.MaterialTheme
-import androidx.compose.material.OutlinedTextField
-import androidx.compose.material.Surface
-import androidx.compose.material.Text
-import androidx.compose.material.TextButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -391,11 +391,11 @@ private fun Header(
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text("KZAgent", style = MaterialTheme.typography.h5, fontWeight = FontWeight.SemiBold)
+            Text("KZAgent", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
             Text(
                 workspace.toString(),
-                style = MaterialTheme.typography.body2,
-                color = MaterialTheme.colors.onSurface.copy(alpha = 0.68f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
                 maxLines = 1,
             )
         }
@@ -405,7 +405,7 @@ private fun Header(
                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(8.dp))
             }
-            Text(status, style = MaterialTheme.typography.body2)
+            Text(status, style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.width(12.dp))
             Button(onClick = onChooseWorkspace, enabled = !isBusy) {
                 Text("切换工作区")
@@ -425,7 +425,7 @@ private fun ErrorBanner(message: String) {
         Text(
             text = message,
             color = Color(0xFFB71C1C),
-            style = MaterialTheme.typography.body2,
+            style = MaterialTheme.typography.bodyMedium,
         )
     }
 }
@@ -445,15 +445,15 @@ private fun MessageList(messages: List<DisplayMessage>, modifier: Modifier = Mod
         if (messages.isEmpty()) {
             Text(
                 "暂无会话",
-                style = MaterialTheme.typography.body1,
-                color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
             )
         } else {
             messages.forEachIndexed { index, message ->
                 MessageRow(message)
                 if (index != messages.lastIndex) {
                     Spacer(Modifier.height(12.dp))
-                    Divider()
+                    HorizontalDivider()
                     Spacer(Modifier.height(12.dp))
                 }
             }
@@ -465,10 +465,10 @@ private fun MessageList(messages: List<DisplayMessage>, modifier: Modifier = Mod
 private fun MessageRow(message: DisplayMessage) {
     val title = if (message.role == "user") "You" else "Assistant"
     Column(modifier = Modifier.fillMaxWidth()) {
-        Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.subtitle2)
+        Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(6.dp))
         SelectionContainer {
-            Text(message.content, style = MaterialTheme.typography.body1)
+            Text(message.content, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }
@@ -510,7 +510,7 @@ private fun ApprovalDialog(approval: PendingApproval) {
                 Text(approval.action, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(8.dp))
                 SelectionContainer {
-                    Text(approval.details, style = MaterialTheme.typography.body2)
+                    Text(approval.details, style = MaterialTheme.typography.bodyMedium)
                 }
             }
         },
