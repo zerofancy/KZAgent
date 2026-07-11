@@ -59,9 +59,18 @@ compose.desktop {
         ) + desktopRenderingJvmArgs()
 
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            targetFormats(TargetFormat.Dmg, TargetFormat.Exe, TargetFormat.Deb)
             packageName = "KZAgent"
             packageVersion = "1.0.0"
+            macOS {
+                iconFile.set(project.file("src/main/resources/icons/kzagent.icns"))
+            }
+            windows {
+                iconFile.set(project.file("src/main/resources/icons/kzagent.ico"))
+            }
+            linux {
+                iconFile.set(project.file("src/main/resources/icons/kzagent.png"))
+            }
         }
     }
 }

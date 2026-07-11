@@ -71,6 +71,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.EventQueue
+import java.awt.Image
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -80,6 +81,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JFileChooser
 import javax.swing.JFrame
+import javax.imageio.ImageIO
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
@@ -113,6 +115,7 @@ fun runDesktopApp() {
                 defaultCloseOperation = WindowConstants.DISPOSE_ON_CLOSE
                 minimumSize = Dimension(880, 600)
                 preferredSize = Dimension(1120, 760)
+                iconImage = loadAppIcon()
                 contentPane.layout = BorderLayout()
                 contentPane.add(loadingPanel, BorderLayout.CENTER)
                 addWindowListener(object : java.awt.event.WindowAdapter() {
@@ -159,6 +162,14 @@ fun runDesktopApp() {
     closed.await()
     desktopLog("closed")
 }
+
+private fun loadAppIcon(): Image? = runCatching {
+    checkNotNull(Thread.currentThread().contextClassLoader.getResourceAsStream("icons/kzagent.png")) {
+        "Application icon resource was not found"
+    }.use(ImageIO::read)
+}.onFailure {
+    desktopLog("failed to load application icon: ${it.message}", it)
+}.getOrNull()
 
 private fun startPackagedAppFallbackWatchdog(windowShown: AtomicBoolean) {
     if (System.getProperty("kzagent.allowOpenFallback") != "true") return
