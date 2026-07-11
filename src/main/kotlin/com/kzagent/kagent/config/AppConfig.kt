@@ -10,10 +10,12 @@ data class AppConfig(
     val apiKey: String,
     val baseUrl: String = DEFAULT_BASE_URL,
     val model: String = DEFAULT_MODEL,
+    val sensitivePathProtection: Boolean = DEFAULT_SENSITIVE_PATH_PROTECTION,
 ) {
     companion object {
         const val DEFAULT_BASE_URL = "https://api.deepseek.com"
         const val DEFAULT_MODEL = "deepseek-v4-flash"
+        const val DEFAULT_SENSITIVE_PATH_PROTECTION = false
     }
 }
 
@@ -43,7 +45,16 @@ object AppConfigLoader {
             ?.takeIf { it.isNotEmpty() }
             ?: AppConfig.DEFAULT_MODEL
 
-        return AppConfig(apiKey = apiKey, baseUrl = baseUrl.trimEnd('/'), model = model)
+        val sensitivePathProtection = props.getProperty("deepseek.sensitive.path.protection")?.trim()
+            ?.toBooleanStrictOrNull()
+            ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION
+
+        return AppConfig(
+            apiKey = apiKey,
+            baseUrl = baseUrl.trimEnd('/'),
+            model = model,
+            sensitivePathProtection = sensitivePathProtection,
+        )
     }
 
     private fun defaultConfigFile(env: Map<String, String>): Path {

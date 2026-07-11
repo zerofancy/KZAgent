@@ -130,6 +130,7 @@ fun printUsage() {
           deepseek.api.key=...
           deepseek.model=deepseek-v4-flash
           deepseek.base.url=https://api.deepseek.com
+          deepseek.sensitive.path.protection=false
 
         DEEPSEEK_API_KEY can also be provided and takes priority over the config file.
         """.trimIndent(),

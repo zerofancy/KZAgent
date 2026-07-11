@@ -30,7 +30,11 @@ object AgentRuntimeFactory {
         val pathGuard = PathGuard(root)
         val agent = CodingAgent(
             model = DeepSeekClient(config),
-            tools = LocalTools(pathGuard, approvalPolicy).registry(),
+            tools = LocalTools(
+                pathGuard = pathGuard,
+                approvalPolicy = approvalPolicy,
+                sensitivePathProtection = config.sensitivePathProtection,
+            ).registry(),
             promptBuilder = PromptBuilder(pathGuard.root),
             sessionWriter = SessionWriter(pathGuard.root),
             observer = observer,

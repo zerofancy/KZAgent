@@ -103,7 +103,7 @@ class LocalToolsTest {
         val dir = Files.createTempDirectory("kagent-sensitive-test")
         Files.writeString(dir.resolve("local.properties"), "deepseek.api.key=sk-secret")
         Files.writeString(dir.resolve("safe.txt"), "hello")
-        val registry = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry()
+        val registry = LocalTools(PathGuard(dir), AlwaysApprovePolicy, sensitivePathProtection = true).registry()
 
         val list = registry.get("list_files")!!.handler(buildJsonObject {
             put("path", ".")

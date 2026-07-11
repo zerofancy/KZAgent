@@ -20,6 +20,7 @@ class LocalTools(
     private val pathGuard: PathGuard,
     private val approvalPolicy: ApprovalPolicy,
     private val maxToolOutputChars: Int = 12_000,
+    private val sensitivePathProtection: Boolean = false,
 ) {
     fun registry(): ToolRegistry = ToolRegistry(
         listOf(
@@ -252,7 +253,7 @@ class LocalTools(
         if (Regex("""(^|\s)\.\./""").containsMatchIn(trimmed)) {
             throw IllegalArgumentException("blocked path escape using ../")
         }
-        if (SENSITIVE_NAMES.any { trimmed.contains(it) }) {
+        if (sensitivePathProtection && SENSITIVE_NAMES.any { trimmed.contains(it) }) {
             throw IllegalArgumentException("blocked command referencing sensitive local config.")
         }
     }
@@ -272,6 +273,7 @@ class LocalTools(
     }
 
     private fun rejectSensitivePath(path: Path) {
+        if (!sensitivePathProtection) return
         val parts = path.map { it.toString() }.toSet()
         if (parts.any { it in SENSITIVE_NAMES }) {
             throw IllegalArgumentException("Access to sensitive local config is blocked: ${pathGuard.display(path)}")
@@ -280,7 +282,9 @@ class LocalTools(
 
     private fun isIgnoredPath(path: Path): Boolean {
         val parts = path.map { it.toString() }.toSet()
-        return parts.any { it in IGNORED_NAMES || it in SENSITIVE_NAMES }
+        if (parts.any { it in IGNORED_NAMES }) return true
+        if (sensitivePathProtection && parts.any { it in SENSITIVE_NAMES }) return true
+        return false
     }
 
     private fun truncate(value: String): String =

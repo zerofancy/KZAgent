@@ -55,6 +55,12 @@ deepseek.base.url=https://api.deepseek.com
 export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 ```
 
+### 可选配置项
+
+| 属性 | 默认值 | 说明 |
+|------|:------:|------|
+| `deepseek.sensitive.path.protection` | `false` | 敏感路径保护开关。开启后拦截对 `local.properties`、`.env` 等本地敏感配置文件的访问 |
+
 ### 2. 运行
 
 项目使用 Gradle 9.1 和 JVM 17+。如果系统默认 Java 不是 17+，请先设置 `JAVA_HOME`。
