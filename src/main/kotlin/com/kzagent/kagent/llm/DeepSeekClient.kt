@@ -67,6 +67,7 @@ class DeepSeekClient(
                     )
                 },
                 totalTokens = parsed.usage?.totalTokens,
+                promptTokens = parsed.usage?.promptTokens,
             )
         }
 

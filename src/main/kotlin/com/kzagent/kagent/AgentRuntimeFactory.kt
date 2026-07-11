@@ -18,11 +18,7 @@ data class AgentRuntime(
     val agent: CodingAgent,
     val sessionReader: SessionReader,
     val contextWindowSize: Int,
-) {
-    fun resetSessionTokens() {
-        agent.resetSessionTokens()
-    }
-}
+)
 
 object AgentRuntimeFactory {
     fun create(

@@ -18,10 +18,6 @@ class CodingAgent(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun resetSessionTokens() {
-        sessionWriter.resetTokens()
-    }
-
     /**
      * Start a fresh conversation with a single user prompt.
      */
@@ -49,9 +45,9 @@ class CodingAgent(
             sessionWriter.append(system)
         }
         sessionWriter.append(messages.last())
-        var totalTokens = 0
-        val answer = runInternal(system, messages) { totalTokens += it }
-        return AgentRunResult(answer = answer, history = messages.toList(), totalTokens = totalTokens)
+        var contextTokens = 0
+        val answer = runInternal(system, messages) { contextTokens = it }
+        return AgentRunResult(answer = answer, history = messages.toList(), totalTokens = contextTokens)
     }
 
     private suspend fun runInternal(
@@ -62,10 +58,10 @@ class CodingAgent(
         repeat(maxTurns) { turn ->
             observer.onModelRequest(turn + 1)
             val reply = model.chat(listOf(system) + messages, tools.toolSchemas())
-            reply.totalTokens?.let { onTokens(it) }
+            reply.promptTokens?.let { onTokens(it) }
             val assistant = AgentMessage.Assistant(reply.content, reply.toolCalls)
             messages += assistant
-            sessionWriter.append(assistant, tokens = reply.totalTokens ?: 0)
+            sessionWriter.append(assistant, tokens = reply.promptTokens ?: 0)
 
             if (reply.toolCalls.isEmpty()) {
                 return reply.content.orEmpty().ifBlank { "(model returned an empty final response)" }

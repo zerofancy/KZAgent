@@ -380,7 +380,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                                 val result = currentRuntime.agent.runConversation(prompt, conversationHistory)
                                 conversationHistory = result.history
                                 messages = result.history.toDisplayMessages()
-                                usedTokens += result.totalTokens
+                                usedTokens = result.totalTokens
                                 status = "就绪"
                             } catch (_: CancellationException) {
                                 status = "已终止"
@@ -420,7 +420,6 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                     conversationHistory = emptyList()
                     messages = emptyList()
                     usedTokens = 0
-                    runtime?.resetSessionTokens()
                     showNewSessionDialog = false
                 }) {
                     Text("确认")

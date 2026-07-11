@@ -42,6 +42,7 @@ data class AssistantReply(
     val content: String?,
     val toolCalls: List<ModelToolCall> = emptyList(),
     val totalTokens: Int? = null,
+    val promptTokens: Int? = null,
 )
 
 interface ChatModel {
