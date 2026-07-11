@@ -1,6 +1,7 @@
 package com.kzagent.kagent.desktop
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -287,6 +288,17 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     var showNewSessionDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    // Auto-collapse tool messages after conversation ends
+    LaunchedEffect(isBusy) {
+        if (!isBusy) {
+            messages.indices.forEach { i ->
+                if (messages[i].collapsible && !messages[i].collapsed) {
+                    messages[i] = messages[i].copy(collapsed = true)
+                }
+            }
+        }
+    }
+
     val approvalPolicy = ApprovalPolicy { action, details ->
         suspendCancellableCoroutine { continuation ->
             pendingApproval = PendingApproval(action, details) { allowed ->
@@ -308,7 +320,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
 
         override suspend fun onToolCallStarted(name: String, argsJson: String) {
             val summary = formatToolCallSummary(name, argsJson)
-            messages.add(DisplayMessage("tool_call", summary))
+            messages.add(DisplayMessage("tool_call", summary, collapsible = true, collapsed = false))
             status = if (name == "run_command") {
                 "等待命令审批..."
             } else {
@@ -317,7 +329,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
         }
 
         override suspend fun onToolResult(name: String, result: ToolResult) {
-            messages.add(DisplayMessage("tool_result", result.content))
+            messages.add(DisplayMessage("tool_result", result.content, collapsible = true, collapsed = false))
             status = if (result.isError) {
                 "工具返回错误：$name"
             } else {
@@ -507,7 +519,7 @@ private fun ErrorBanner(message: String) {
 }
 
 @Composable
-private fun MessageList(messages: List<DisplayMessage>, modifier: Modifier = Modifier) {
+private fun MessageList(messages: MutableList<DisplayMessage>, modifier: Modifier = Modifier) {
     val scrollState = rememberScrollState()
     LaunchedEffect(messages.size) {
         scrollState.animateScrollTo(scrollState.maxValue)
@@ -526,7 +538,7 @@ private fun MessageList(messages: List<DisplayMessage>, modifier: Modifier = Mod
             )
         } else {
             messages.forEachIndexed { index, message ->
-                MessageRow(message)
+                MessageRow(index, message, messages)
                 if (index != messages.lastIndex) {
                     Spacer(Modifier.height(12.dp))
                     HorizontalDivider()
@@ -538,7 +550,11 @@ private fun MessageList(messages: List<DisplayMessage>, modifier: Modifier = Mod
 }
 
 @Composable
-private fun MessageRow(message: DisplayMessage) {
+private fun MessageRow(
+    index: Int,
+    message: DisplayMessage,
+    messages: MutableList<DisplayMessage>,
+) {
     val (title, bgColor) = when (message.role) {
         "user" -> "You" to Color.Transparent
         "assistant" -> "Assistant" to Color.Transparent
@@ -546,22 +562,59 @@ private fun MessageRow(message: DisplayMessage) {
         "tool_result" -> "📋 执行结果" to Color(0xFFF3E5F5) // light purple
         else -> message.role to Color.Transparent
     }
+
+    val collapsedLabel = when (message.role) {
+        "tool_call" -> "（展开查看工具调用详情）"
+        "tool_result" -> "（展开查看执行结果）"
+        else -> ""
+    }
+
     Column(
-        modifier = Modifier.fillMaxWidth().background(bgColor, shape = MaterialTheme.shapes.small).padding(8.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(bgColor, shape = MaterialTheme.shapes.small)
+            .padding(8.dp)
+            .let { mod ->
+                if (message.collapsible) {
+                    mod.clickable { toggleCollapse(index, messages) }
+                } else mod
+            },
     ) {
-        Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+            if (message.collapsible) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (message.collapsed) "▶" else "▼",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                )
+            }
+        }
         Spacer(Modifier.height(6.dp))
-        SelectionContainer {
+        if (!message.collapsed) {
+            SelectionContainer {
+                Text(
+                    message.content,
+                    style = when (message.role) {
+                        "tool_call" -> MaterialTheme.typography.bodyMedium
+                        "tool_result" -> MaterialTheme.typography.bodySmall
+                        else -> MaterialTheme.typography.bodyLarge
+                    },
+                )
+            }
+        } else {
             Text(
-                message.content,
-                style = when (message.role) {
-                    "tool_call" -> MaterialTheme.typography.bodyMedium
-                    "tool_result" -> MaterialTheme.typography.bodySmall
-                    else -> MaterialTheme.typography.bodyLarge
-                },
+                collapsedLabel,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
             )
         }
     }
+}
+
+private fun toggleCollapse(index: Int, messages: MutableList<DisplayMessage>) {
+    messages[index] = messages[index].copy(collapsed = !messages[index].collapsed)
 }
 
 @Composable
@@ -680,12 +733,13 @@ private fun List<AgentMessage>.toDisplayMessages(): List<DisplayMessage> {
                     val summary = message.toolCalls.joinToString("\n") { tc ->
                         formatToolCallSummary(tc.name, tc.argumentsJson)
                     }
-                    DisplayMessage("tool_call", summary)
+                    DisplayMessage("tool_call", summary, collapsible = true)
                 } else null
             }
             is AgentMessage.Tool -> DisplayMessage(
                 "tool_result",
                 if (message.isError) "错误: ${message.content}" else message.content,
+                collapsible = true,
             )
             is AgentMessage.System -> null
         }
@@ -723,6 +777,8 @@ private fun extractArg(json: String, key: String): String? {
 private data class DisplayMessage(
     val role: String,
     val content: String,
+    val collapsible: Boolean = false,
+    val collapsed: Boolean = true,
 )
 
 private data class PendingApproval(
