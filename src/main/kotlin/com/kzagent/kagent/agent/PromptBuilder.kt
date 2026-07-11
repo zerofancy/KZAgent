@@ -9,6 +9,8 @@ class PromptBuilder(private val workspace: Path) {
         Workspace root:
         ${workspace.toAbsolutePath().normalize()}
 
+        Current OS: ${System.getProperty("os.name")} (${System.getProperty("os.arch")}). When using run_command, prefer commands and syntax that work on this platform (e.g. cmd.exe /c or powershell on Windows, /bin/sh on Unix).
+
         Rules:
         - Use tools to inspect files before making claims about the repository.
         - Keep all file access inside the workspace.
