@@ -13,6 +13,17 @@ group = "com.kzagent"
 version = "0.1.0"
 
 fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
+val isMacOs = System.getProperty("os.name").lowercase().contains("mac")
+
+fun desktopRenderingJvmArgs(): List<String> = buildList {
+    // macOS keeps the software renderer fallback because hardware rendering has
+    // previously prevented the Swing-hosted Compose window from appearing.
+    if (isMacOs) {
+        add("-Dskiko.renderApi=SOFTWARE_COMPAT")
+        add("-Dsun.java2d.opengl=false")
+        add("-Dsun.java2d.metal=false")
+    }
+}
 
 kotlin {
     jvmToolchain(17)
@@ -42,13 +53,10 @@ compose.desktop {
         jvmArgs += listOf(
             "-Dskiko.data.path=${layout.buildDirectory.dir("skiko").get().asFile.absolutePath}",
             "-Dkzagent.logPath=${layout.buildDirectory.file("kzagent-desktop.log").get().asFile.absolutePath}",
-            "-Dskiko.renderApi=SOFTWARE_COMPAT",
-            "-Dsun.java2d.opengl=false",
-            "-Dsun.java2d.metal=false",
             "-Dapple.awt.application.name=KZAgent",
             "-Dapple.awt.UIElement=false",
             "-Xdock:name=KZAgent",
-        )
+        ) + desktopRenderingJvmArgs()
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
@@ -71,7 +79,7 @@ tasks.withType<JavaExec>().configureEach {
         javaLauncher.set(jbrLauncher)
         doFirst {
             setExecutable(jbrLauncher.get().executablePath.asFile.absolutePath)
-            if (System.getProperty("os.name").lowercase().contains("mac") && !jvmArgs.orEmpty().contains("-XstartOnFirstThread")) {
+            if (isMacOs && !jvmArgs.orEmpty().contains("-XstartOnFirstThread")) {
                 jvmArgs("-XstartOnFirstThread")
             }
         }
@@ -99,12 +107,10 @@ tasks.withType<JavaExec>().configureEach {
         jvmArgs(
             "-Dskiko.data.path=${layout.buildDirectory.dir("skiko").get().asFile.absolutePath}",
             "-Dkzagent.logPath=${layout.buildDirectory.file("kzagent-desktop.log").get().asFile.absolutePath}",
-            "-Dskiko.renderApi=SOFTWARE_COMPAT",
-            "-Dsun.java2d.opengl=false",
-            "-Dsun.java2d.metal=false",
             "-Dapple.awt.application.name=KZAgent",
             "-Dapple.awt.UIElement=false",
             "-Xdock:name=KZAgent",
         )
+        jvmArgs(desktopRenderingJvmArgs())
     }
 }
