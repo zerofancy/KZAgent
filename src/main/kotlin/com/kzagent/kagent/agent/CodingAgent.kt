@@ -63,16 +63,19 @@ class CodingAgent(
             messages += assistant
             sessionWriter.append(assistant, tokens = reply.promptTokens ?: 0)
 
+            // Stream the model's text reply (thinking) to the observer
+            reply.content?.takeIf { it.isNotBlank() }?.let { observer.onAssistantMessage(it) }
+
             if (reply.toolCalls.isEmpty()) {
                 return reply.content.orEmpty().ifBlank { "(model returned an empty final response)" }
             }
 
             for (toolCall in reply.toolCalls) {
                 val tool = tools.get(toolCall.name)
+                observer.onToolCallStarted(toolCall.name, toolCall.argumentsJson)
                 val result = if (tool == null) {
                     ToolResult.error("Unknown tool: ${toolCall.name}")
                 } else {
-                    observer.onToolCall(toolCall.name)
                     runCatching {
                         val args = json.parseToJsonElement(toolCall.argumentsJson) as? JsonObject
                             ?: throw IllegalArgumentException("Tool arguments must be a JSON object.")
@@ -105,13 +108,13 @@ data class AgentRunResult(
 )
 
 interface AgentObserver {
-    suspend fun onModelRequest(turn: Int)
-    suspend fun onToolCall(name: String)
-    suspend fun onToolResult(name: String, result: ToolResult)
+    suspend fun onModelRequest(turn: Int) = Unit
+    /** Called when the model returns text content (its "thinking") */
+    suspend fun onAssistantMessage(content: String) = Unit
+    /** Called before a tool is executed */
+    suspend fun onToolCallStarted(name: String, argsJson: String) = Unit
+    /** Called after a tool returns */
+    suspend fun onToolResult(name: String, result: ToolResult) = Unit
 }
 
-object NoOpAgentObserver : AgentObserver {
-    override suspend fun onModelRequest(turn: Int) = Unit
-    override suspend fun onToolCall(name: String) = Unit
-    override suspend fun onToolResult(name: String, result: ToolResult) = Unit
-}
+object NoOpAgentObserver : AgentObserver

@@ -30,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -275,7 +276,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     var workspace by remember { mutableStateOf(initialWorkspace) }
     var runtime by remember { mutableStateOf<AgentRuntime?>(null) }
     var conversationHistory by remember { mutableStateOf<List<AgentMessage>>(emptyList()) }
-    var messages by remember { mutableStateOf<List<DisplayMessage>>(emptyList()) }
+    val messages = remember { mutableStateListOf<DisplayMessage>() }
     var input by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("正在加载工作区...") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -301,7 +302,13 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
             status = "请求模型（第 ${turn} 轮）..."
         }
 
-        override suspend fun onToolCall(name: String) {
+        override suspend fun onAssistantMessage(content: String) {
+            messages.add(DisplayMessage("assistant", content))
+        }
+
+        override suspend fun onToolCallStarted(name: String, argsJson: String) {
+            val summary = formatToolCallSummary(name, argsJson)
+            messages.add(DisplayMessage("tool_call", summary))
             status = if (name == "run_command") {
                 "等待命令审批..."
             } else {
@@ -310,6 +317,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
         }
 
         override suspend fun onToolResult(name: String, result: ToolResult) {
+            messages.add(DisplayMessage("tool_result", result.content))
             status = if (result.isError) {
                 "工具返回错误：$name"
             } else {
@@ -326,7 +334,8 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
             com.kzagent.kagent.agent.SessionReader(workspace).loadLatestHistory().orEmpty()
         }.getOrDefault(emptyList())
         conversationHistory = loadedHistory
-        messages = loadedHistory.toDisplayMessages()
+        messages.clear()
+        messages.addAll(loadedHistory.toDisplayMessages())
         usedTokens = runCatching {
             com.kzagent.kagent.agent.SessionReader(workspace).loadLatestTokenCount()
         }.getOrDefault(0)
@@ -374,12 +383,12 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                         isBusy = true
                         error = null
                         status = "准备发送..."
-                        messages = messages + DisplayMessage("user", prompt)
+                        messages.add(DisplayMessage("user", prompt))
                         val job = scope.launch {
                             try {
                                 val result = currentRuntime.agent.runConversation(prompt, conversationHistory)
                                 conversationHistory = result.history
-                                messages = result.history.toDisplayMessages()
+                                // Messages are already streamed via observer; no need to replace
                                 usedTokens = result.totalTokens
                                 status = "就绪"
                             } catch (_: CancellationException) {
@@ -418,7 +427,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
             confirmButton = {
                 Button(onClick = {
                     conversationHistory = emptyList()
-                    messages = emptyList()
+                    messages.clear()
                     usedTokens = 0
                     showNewSessionDialog = false
                 }) {
@@ -530,12 +539,27 @@ private fun MessageList(messages: List<DisplayMessage>, modifier: Modifier = Mod
 
 @Composable
 private fun MessageRow(message: DisplayMessage) {
-    val title = if (message.role == "user") "You" else "Assistant"
-    Column(modifier = Modifier.fillMaxWidth()) {
+    val (title, bgColor) = when (message.role) {
+        "user" -> "You" to Color.Transparent
+        "assistant" -> "Assistant" to Color.Transparent
+        "tool_call" -> "🛠 工具调用" to Color(0xFFE3F2FD) // light blue
+        "tool_result" -> "📋 执行结果" to Color(0xFFF3E5F5) // light purple
+        else -> message.role to Color.Transparent
+    }
+    Column(
+        modifier = Modifier.fillMaxWidth().background(bgColor, shape = MaterialTheme.shapes.small).padding(8.dp)
+    ) {
         Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(6.dp))
         SelectionContainer {
-            Text(message.content, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                message.content,
+                style = when (message.role) {
+                    "tool_call" -> MaterialTheme.typography.bodyMedium
+                    "tool_result" -> MaterialTheme.typography.bodySmall
+                    else -> MaterialTheme.typography.bodyLarge
+                },
+            )
         }
     }
 }
@@ -649,14 +673,51 @@ private fun List<AgentMessage>.toDisplayMessages(): List<DisplayMessage> {
     return mapNotNull { message ->
         when (message) {
             is AgentMessage.User -> DisplayMessage("user", message.content)
-            is AgentMessage.Assistant -> message.content
-                ?.takeIf { it.isNotBlank() }
-                ?.let { DisplayMessage("assistant", it) }
-            is AgentMessage.System,
-            is AgentMessage.Tool,
-            -> null
+            is AgentMessage.Assistant -> {
+                if (!message.content.isNullOrBlank()) {
+                    DisplayMessage("assistant", message.content)
+                } else if (message.toolCalls.isNotEmpty()) {
+                    val summary = message.toolCalls.joinToString("\n") { tc ->
+                        formatToolCallSummary(tc.name, tc.argumentsJson)
+                    }
+                    DisplayMessage("tool_call", summary)
+                } else null
+            }
+            is AgentMessage.Tool -> DisplayMessage(
+                "tool_result",
+                if (message.isError) "错误: ${message.content}" else message.content,
+            )
+            is AgentMessage.System -> null
         }
     }
+}
+
+/** Format a tool invocation into a human-readable one-liner. */
+private fun formatToolCallSummary(name: String, argsJson: String): String {
+    return if (name == "run_command") {
+        val command = extractArg(argsJson, "command")
+        "运行命令: $command"
+    } else if (name == "read_file") {
+        val path = extractArg(argsJson, "path")
+        "读取文件: $path"
+    } else if (name == "list_files") {
+        val path = extractArg(argsJson, "path") ?: "."
+        "查看目录: $path"
+    } else if (name == "search_text") {
+        val query = extractArg(argsJson, "query")
+        "搜索: $query"
+    } else if (name == "replace_in_file") {
+        val path = extractArg(argsJson, "path")
+        "编辑文件: $path"
+    } else {
+        "$name($argsJson)"
+    }
+}
+
+private fun extractArg(json: String, key: String): String? {
+    // Simple JSON extraction without pulling in a full parser
+    val pattern = """"$key"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex()
+    return pattern.find(json)?.groupValues?.getOrNull(1)
 }
 
 private data class DisplayMessage(
