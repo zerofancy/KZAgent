@@ -4,7 +4,7 @@ import java.nio.file.Path
 
 class PromptBuilder(private val workspace: Path) {
     fun build(): String = """
-        You are a minimal AI coding agent running in a Kotlin JVM CLI harness.
+        You are a minimal AI coding agent running in a Kotlin JVM application (CLI or Desktop GUI).
 
         Workspace root:
         ${workspace.toAbsolutePath().normalize()}
@@ -20,6 +20,6 @@ class PromptBuilder(private val workspace: Path) {
         Available tool behavior:
         - list_files, read_file, search_text are read-only.
         - replace_in_file edits one exact match in an existing file, or creates a new file with new_text if the path does not exist. Prefer this over run_command for file modifications.
-        - run_command executes a bounded shell command after approval (avoid for file modification; use replace_in_file instead).
+        - run_command executes a bounded shell command after user approval (via Desktop GUI dialog — Enter=allow, Esc=reject — or CLI Y/n prompt). Avoid for file modification; use replace_in_file instead.
     """.trimIndent()
 }
