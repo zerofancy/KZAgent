@@ -216,7 +216,13 @@ class LocalTools(
     }
 
     private suspend fun runShell(command: String, timeout: Duration): String = withContext(Dispatchers.IO) {
-        val process = ProcessBuilder("/bin/sh", "-lc", command)
+        val isWindows = System.getProperty("os.name").lowercase().contains("windows")
+        val shellCommand = if (isWindows) {
+            listOf("cmd.exe", "/c", command)
+        } else {
+            listOf("/bin/sh", "-lc", command)
+        }
+        val process = ProcessBuilder(shellCommand)
             .directory(pathGuard.root.toFile())
             .redirectErrorStream(true)
             .start()
