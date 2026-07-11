@@ -1,61 +1,49 @@
 package com.kzagent.kagent.cli
 
-import com.kzagent.kagent.agent.CodingAgent
-import com.kzagent.kagent.agent.PromptBuilder
+import com.kzagent.kagent.AgentRuntimeFactory
 import com.kzagent.kagent.agent.SessionReader
-import com.kzagent.kagent.agent.SessionWriter
-import com.kzagent.kagent.llm.AgentMessage
-import com.kzagent.kagent.config.AppConfigLoader
 import com.kzagent.kagent.config.SecretRedactor
-import com.kzagent.kagent.llm.DeepSeekClient
-import com.kzagent.kagent.tools.LocalTools
-import com.kzagent.kagent.tools.PathGuard
+import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.TerminalApprovalPolicy
 import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
 
-fun main(args: Array<String>) = runBlocking {
+fun main(args: Array<String>) {
+    kotlin.system.exitProcess(runCli(args))
+}
+
+fun runCli(args: Array<String>): Int = runBlocking {
     if (args.isEmpty()) {
         printUsage()
-        return@runBlocking
+        return@runBlocking 0
     }
 
     val command = args[0]
     val workspace = Path.of("").toAbsolutePath().normalize()
 
     try {
-        val config = AppConfigLoader.load(workspace)
-        val pathGuard = PathGuard(workspace)
-        val tools = LocalTools(pathGuard, TerminalApprovalPolicy).registry()
-        val sessionWriter = SessionWriter(pathGuard.root)
-        val agent = CodingAgent(
-            model = DeepSeekClient(config),
-            tools = tools,
-            promptBuilder = PromptBuilder(pathGuard.root),
-            sessionWriter = sessionWriter,
-        )
-
         when (command) {
             "ask" -> {
                 val prompt = args.drop(1).joinToString(" ")
                 if (prompt.isBlank()) {
                     printUsage()
-                    return@runBlocking
+                    return@runBlocking 0
                 }
-                val answer = agent.run(prompt)
-                println()
-                println("Final answer:")
+                val runtime = AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy)
+                val answer = runtime.agent.run(prompt)
                 println(answer)
             }
             "chat" -> {
+                val runtime = AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy)
                 val initialPrompt = args.drop(1).joinToString(" ").takeIf { it.isNotBlank() }
-                interactiveChat(workspace, agent, initialPrompt)
+                interactiveChat(workspace, runtime.agent, initialPrompt)
             }
             else -> printUsage()
         }
+        0
     } catch (e: Exception) {
         System.err.println("Error: ${SecretRedactor.redact(e.message ?: e.toString())}")
-        kotlin.system.exitProcess(1)
+        1
     }
 }
 
@@ -69,7 +57,7 @@ fun main(args: Array<String>) = runBlocking {
  */
 private suspend fun interactiveChat(
     workspace: java.nio.file.Path,
-    agent: CodingAgent,
+    agent: com.kzagent.kagent.agent.CodingAgent,
     initialPrompt: String?,
 ) {
     val reader = SessionReader(workspace)
@@ -98,7 +86,7 @@ private suspend fun interactiveChat(
         } else {
             println()
             print("You (empty to exit): ")
-            val input = readLine()?.trim().orEmpty()
+            val input = readlnOrNull()?.trim().orEmpty()
             if (input.isEmpty() || input == "exit" || input == "quit") {
                 println("Chat ended.")
                 break
@@ -123,7 +111,7 @@ private suspend fun interactiveChat(
     }
 }
 
-private fun printUsage() {
+fun printUsage() {
     println(
         """
         Usage:
@@ -136,12 +124,15 @@ private fun printUsage() {
           chat  - Interactive multi-turn chat. Provide an optional initial question.
                  After each answer, type your next question. Empty line to exit.
 
-        Configuration (local.properties or environment variables):
+        Configuration (%APPDATA%\kzagent\config.properties on Windows,
+        ~/Library/Application Support/kzagent/config.properties on macOS,
+        or ~/.config/kzagent/config.properties on Linux):
           deepseek.api.key=...
           deepseek.model=deepseek-v4-flash
           deepseek.base.url=https://api.deepseek.com
+          deepseek.sensitive.path.protection=false
 
-        The API key can also be provided with DEEPSEEK_API_KEY.
+        DEEPSEEK_API_KEY can also be provided and takes priority over the config file.
         """.trimIndent(),
     )
 }

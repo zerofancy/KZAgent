@@ -1,30 +1,110 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.gradle.api.tasks.StopExecutionException
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
-    kotlin("jvm") version "1.9.25"
-    kotlin("plugin.serialization") version "1.9.25"
-    application
+    kotlin("jvm") version "2.4.0"
+    kotlin("plugin.serialization") version "2.4.0"
+    id("org.jetbrains.compose") version "1.11.1"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.0"
 }
 
 group = "com.kzagent"
 version = "0.1.0"
 
-application {
-    mainClass.set("com.kzagent.kagent.cli.MainKt")
-}
+fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
 
 kotlin {
-    jvmToolchain(11)
+    jvmToolchain(17)
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(17))
+    }
 }
 
 dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation(compose.desktop.currentOs)
+    implementation(compose.material3)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     testImplementation(kotlin("test"))
+}
+
+compose.desktop {
+    application {
+        mainClass = "com.kzagent.kagent.MainKt"
+        jvmArgs += listOf(
+            "-Dskiko.data.path=${layout.buildDirectory.dir("skiko").get().asFile.absolutePath}",
+            "-Dkzagent.logPath=${layout.buildDirectory.file("kzagent-desktop.log").get().asFile.absolutePath}",
+            "-Dskiko.renderApi=SOFTWARE_COMPAT",
+            "-Dsun.java2d.opengl=false",
+            "-Dsun.java2d.metal=false",
+            "-Dapple.awt.application.name=KZAgent",
+            "-Dapple.awt.UIElement=false",
+            "-Xdock:name=KZAgent",
+        )
+
+        nativeDistributions {
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            packageName = "KZAgent"
+            packageVersion = "1.0.0"
+        }
+    }
 }
 
 tasks.test {
     useJUnitPlatform()
 }
 
-tasks.named<JavaExec>("run") {
-    standardInput = System.`in`
+tasks.withType<JavaExec>().configureEach {
+    if (name == "run") {
+        val jbrLauncher = javaToolchains.launcherFor {
+            languageVersion.set(JavaLanguageVersion.of(21))
+            vendor.set(JvmVendorSpec.JETBRAINS)
+        }
+        javaLauncher.set(jbrLauncher)
+        doFirst {
+            setExecutable(jbrLauncher.get().executablePath.asFile.absolutePath)
+            if (System.getProperty("os.name").lowercase().contains("mac") && !jvmArgs.orEmpty().contains("-XstartOnFirstThread")) {
+                jvmArgs("-XstartOnFirstThread")
+            }
+        }
+        doFirst {
+            val packagedApp = layout.buildDirectory.dir("compose/binaries/main/app/KZAgent.app").get().asFile
+            if (args.isEmpty() && packagedApp.exists()) {
+                val desktopLog = layout.buildDirectory.file("kzagent-desktop.log").get().asFile
+                println("Opening desktop app: ${packagedApp.absolutePath}")
+                providers.exec {
+                    commandLine(
+                        "sh",
+                        "-lc",
+                        "(sleep 0.5; /usr/bin/open -n -a ${shellQuote(packagedApp.absolutePath)} >> ${shellQuote(desktopLog.absolutePath)} 2>&1) >/dev/null 2>&1 &",
+                    )
+                }.result.get().assertNormalExitValue()
+                throw StopExecutionException("Opened desktop app bundle")
+            }
+        }
+        standardInput = System.`in`
+        systemProperty("kzagent.allowOpenFallback", "true")
+        systemProperty(
+            "kzagent.packagedAppPath",
+            layout.buildDirectory.dir("compose/binaries/main/app/KZAgent.app").get().asFile.absolutePath,
+        )
+        jvmArgs(
+            "-Dskiko.data.path=${layout.buildDirectory.dir("skiko").get().asFile.absolutePath}",
+            "-Dkzagent.logPath=${layout.buildDirectory.file("kzagent-desktop.log").get().asFile.absolutePath}",
+            "-Dskiko.renderApi=SOFTWARE_COMPAT",
+            "-Dsun.java2d.opengl=false",
+            "-Dsun.java2d.metal=false",
+            "-Dapple.awt.application.name=KZAgent",
+            "-Dapple.awt.UIElement=false",
+            "-Xdock:name=KZAgent",
+        )
+    }
 }

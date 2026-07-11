@@ -66,6 +66,7 @@ class DeepSeekClient(
                         argumentsJson = it.function.arguments,
                     )
                 },
+                totalTokens = parsed.usage?.totalTokens,
             )
         }
 
