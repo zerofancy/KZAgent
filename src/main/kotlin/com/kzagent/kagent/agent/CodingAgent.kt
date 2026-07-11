@@ -158,7 +158,7 @@ private fun buildQuotaWarning(): String = buildString {
     appendLine("=== 配额提醒 ===")
     appendLine("工具调用消耗积分，不同操作成本不同：")
     appendLine("- 读操作（list_files, read_file, search_text）: 1 积分")
-    appendLine("- 写操作（replace_in_file）: 2 积分")
+    appendLine("- 写操作（apply_patch）: 2 积分")
     appendLine("- 终端操作（run_command）: 5 积分")
     appendLine()
     append("剩余积分较少，请评估任务进度：")

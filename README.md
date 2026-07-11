@@ -150,7 +150,7 @@ Chat ended.
          ├── list_files     (只读，无需审批)
          ├── read_file      (只读，无需审批)
          ├── search_text    (只读，无需审批)
-         ├── replace_in_file (文件编辑，无需审批)
+         ├── apply_patch (Git 补丁编辑，无需审批)
          └── run_command    (需终端确认，阻止危险命令)
 ```
 
@@ -180,15 +180,16 @@ Agent 可以通过以下工具与本地文件系统交互：
 | `list_files` | ❌ | 列出工作区目录结构（深度 1–8，最多 500 项） |
 | `read_file` | ❌ | 读取文本文件中指定行范围（最多 500 行） |
 | `search_text` | ❌ | 在文本文件中大小写不敏感搜索子串（最多 200 个结果） |
-| `replace_in_file` | ❌ | 替换文件中唯一出现的文本，或创建新文件 |
+| `apply_patch` | ❌ | 用单个 Git unified diff 更新、创建或删除多个文件 |
 | `run_command` | ✅ | 在终端执行 shell 命令，需用户输入 `yes` 确认 |
 
 ### 工具设计原则
 
 - **只读工具**（`list_files` / `read_file` / `search_text`）直接执行，无需人工干预
-- **文件编辑工具**（`replace_in_file`）不要求审批，支持快速迭代编辑
-  - 已有文件：精确匹配并替换唯一出现的目标文本
-  - 新文件：直接创建
+- **文件编辑工具**（`apply_patch`）不要求审批，使用单个 `patch` 参数传递标准 Git unified diff
+  - 可在一次调用中更新、创建或删除多个文件
+  - 自动识别 UTF-8（含 BOM）、UTF-16、UTF-32、GB18030/GBK 和 Windows-1252
+  - 编辑已有文件时保留原编码、BOM 与换行符风格
 - **命令执行**（`run_command`）必须经用户确认，且有严格的安全校验
 
 ---

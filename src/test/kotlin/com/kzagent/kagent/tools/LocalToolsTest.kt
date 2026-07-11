@@ -1,6 +1,7 @@
 package com.kzagent.kagent.tools
 
 import java.nio.file.Files
+import java.nio.charset.Charset
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -38,16 +39,20 @@ class LocalToolsTest {
     }
 
     @Test
-    fun replaceInFileRequiresUniqueMatch() = runBlocking {
+    fun applyPatchUpdatesFile() = runBlocking {
         val dir = Files.createTempDirectory("kagent-replace-test")
         val file = dir.resolve("sample.txt")
         Files.writeString(file, "one two three")
         val registry = LocalTools(PathGuard(dir), AlwaysDenyPolicy).registry()
 
-        val result = registry.get("replace_in_file")!!.handler(buildJsonObject {
-            put("path", "sample.txt")
-            put("old_text", "two")
-            put("new_text", "TWO")
+        val result = registry.get("apply_patch")!!.handler(buildJsonObject {
+            put("patch", """diff --git a/sample.txt b/sample.txt
+--- a/sample.txt
++++ b/sample.txt
+@@ -1 +1 @@
+-one two three
++one TWO three
+""")
         })
 
         assertFalse(result.isError)
@@ -55,34 +60,127 @@ class LocalToolsTest {
     }
 
     @Test
-    fun replaceInFileCreatesNewFileWithoutApproval() = runBlocking {
+    fun applyPatchCreatesNewFileWithoutApproval() = runBlocking {
         val dir = Files.createTempDirectory("kagent-create-test")
         val registry = LocalTools(PathGuard(dir), AlwaysDenyPolicy).registry()
 
-        val result = registry.get("replace_in_file")!!.handler(buildJsonObject {
-            put("path", "nested/new-file.txt")
-            put("new_text", "created content")
+        val result = registry.get("apply_patch")!!.handler(buildJsonObject {
+            put("patch", """diff --git a/nested/new-file.txt b/nested/new-file.txt
+--- /dev/null
++++ b/nested/new-file.txt
+@@ -0,0 +1 @@
++created content
+""")
         })
 
         assertFalse(result.isError)
-        assertContains(result.content, "Created nested/new-file.txt")
+        assertContains(result.content.replace('\\', '/'), "nested/new-file.txt")
         assertContains(Files.readString(dir.resolve("nested/new-file.txt")), "created content")
     }
 
     @Test
-    fun replaceInFileRejectsAmbiguousMatch() = runBlocking {
+    fun applyPatchRejectsMismatchedContext() = runBlocking {
         val dir = Files.createTempDirectory("kagent-replace-ambiguous-test")
         Files.writeString(dir.resolve("sample.txt"), "x x")
         val registry = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry()
 
-        val result = registry.get("replace_in_file")!!.handler(buildJsonObject {
-            put("path", "sample.txt")
-            put("old_text", "x")
-            put("new_text", "y")
+        val result = registry.get("apply_patch")!!.handler(buildJsonObject {
+            put("patch", """diff --git a/sample.txt b/sample.txt
+--- a/sample.txt
++++ b/sample.txt
+@@ -1 +1 @@
+-not x
++y
+""")
         })
 
         assertTrue(result.isError)
-        assertContains(result.content, "matched 2 times")
+        assertContains(result.content, "did not match")
+    }
+
+    @Test
+    fun applyPatchRelocatesHunkUsingContextWhenLineNumberIsOff() = runBlocking {
+        val dir = Files.createTempDirectory("kagent-patch-offset-test")
+        val file = dir.resolve("sample.txt")
+        Files.writeString(file, "header\nalpha\nbeta\ngamma\n")
+        val registry = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry()
+
+        val result = registry.get("apply_patch")!!.handler(buildJsonObject {
+            put("patch", """diff --git a/sample.txt b/sample.txt
+--- a/sample.txt
++++ b/sample.txt
+@@ -2,2 +2,2 @@
+ beta
+-gamma
++GAMMA
+""")
+        })
+
+        assertFalse(result.isError)
+        assertContains(Files.readString(file), "beta\nGAMMA")
+    }
+
+    @Test
+    fun applyPatchRejectsEquallyNearAmbiguousContext() = runBlocking {
+        val dir = Files.createTempDirectory("kagent-patch-ambiguous-test")
+        val file = dir.resolve("sample.txt")
+        Files.writeString(file, "same\nmiddle\nsame\n")
+        val registry = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry()
+
+        val result = registry.get("apply_patch")!!.handler(buildJsonObject {
+            put("patch", """diff --git a/sample.txt b/sample.txt
+--- a/sample.txt
++++ b/sample.txt
+@@ -2 +2 @@
+-same
++changed
+""")
+        })
+
+        assertTrue(result.isError)
+        assertContains(result.content, "ambiguous")
+    }
+
+    @Test
+    fun applyPatchPreservesUtf8BomAndCrLf() = runBlocking {
+        val dir = Files.createTempDirectory("kagent-bom-test")
+        val file = dir.resolve("sample.txt")
+        Files.write(file, byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + "旧值\r\n下一行\r\n".toByteArray())
+        val registry = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry()
+        val result = registry.get("apply_patch")!!.handler(buildJsonObject {
+            put("patch", """diff --git a/sample.txt b/sample.txt
+--- a/sample.txt
++++ b/sample.txt
+@@ -1,2 +1,2 @@
+-旧值
++新值
+ 下一行
+""")
+        })
+        val bytes = Files.readAllBytes(file)
+        assertFalse(result.isError)
+        assertTrue(bytes.take(3) == listOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
+        assertContains(String(bytes.drop(3).toByteArray()), "新值\r\n下一行\r\n")
+    }
+
+    @Test
+    fun applyPatchPreservesGbkEncoding() = runBlocking {
+        val dir = Files.createTempDirectory("kagent-gbk-test")
+        val file = dir.resolve("sample.txt")
+        val gbk = Charset.forName("GB18030")
+        Files.write(file, "旧值\r\n".toByteArray(gbk))
+        val registry = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry()
+        val result = registry.get("apply_patch")!!.handler(buildJsonObject {
+            put("patch", """diff --git a/sample.txt b/sample.txt
+--- a/sample.txt
++++ b/sample.txt
+@@ -1 +1 @@
+-旧值
++新值
+""")
+        })
+        assertFalse(result.isError)
+        assertTrue(Files.readAllBytes(file).contentEquals("新值\r\n".toByteArray(gbk)))
     }
 
     @Test
@@ -130,7 +228,7 @@ class LocalToolsTest {
         val registry = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry()
 
         val result = registry.get("run_command")!!.handler(buildJsonObject {
-            put("command", "printf ok")
+            put("command", "echo ok")
             put("timeout_seconds", 5)
         })
 

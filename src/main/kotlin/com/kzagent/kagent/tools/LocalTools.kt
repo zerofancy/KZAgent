@@ -1,6 +1,5 @@
 package com.kzagent.kagent.tools
 
-import java.nio.charset.MalformedInputException
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -27,7 +26,7 @@ class LocalTools(
             listFilesTool(),
             readFileTool(),
             searchTextTool(),
-            replaceInFileTool(),
+            applyPatchTool(),
             runCommandTool(),
         ),
     )
@@ -149,45 +148,51 @@ class LocalTools(
         }.getOrElse { ToolResult.error(it.message ?: it.toString()) }
     }
 
-    private fun replaceInFileTool(): ToolDefinition = ToolDefinition(
-        name = "replace_in_file",
-        description = "Replace exactly one occurrence of old_text with new_text in a workspace file, or create the file with new_text when it does not exist. Does not require approval.",
+    private fun applyPatchTool(): ToolDefinition = ToolDefinition(
+        name = "apply_patch",
+        description = "Apply a standard git unified diff to workspace text files. Preserves detected encoding, BOM, and line endings. Does not require approval.",
         parameters = objectSchema(
             properties = mapOf(
-                "path" to stringSchema("Workspace-relative file path."),
-                "old_text" to stringSchema("Exact text to replace. Required when the file already exists; omit when creating a new file."),
-                "new_text" to stringSchema("Replacement text, or full file content when creating a new file."),
+                "patch" to stringSchema("A complete git-style unified diff beginning with 'diff --git'."),
             ),
-            required = listOf("path", "new_text"),
+            required = listOf("patch"),
         ),
         requiresApproval = false,
         cost = 2,
     ) { args ->
         runCatching {
-            val path = pathGuard.resolveWritableFile(args.requiredString("path"))
-            rejectSensitivePath(path)
-            val newText = args.requiredString("new_text")
-
-            if (!Files.exists(path)) {
-                path.parent?.let { Files.createDirectories(it) }
-                Files.writeString(path, newText, StandardCharsets.UTF_8)
-                return@runCatching ToolResult.ok("Created ${pathGuard.display(path)}.")
+            data class PendingChange(val path: Path, val content: TextFile?)
+            val changes = UnifiedPatch.parse(args.requiredString("patch")).map { filePatch ->
+                require(filePatch.oldPath == null || filePatch.newPath == null || filePatch.oldPath == filePatch.newPath) {
+                    "File renames are not supported by apply_patch."
+                }
+                val relativePath = filePatch.newPath ?: filePatch.oldPath!!
+                val path = pathGuard.resolveWritableFile(relativePath)
+                rejectSensitivePath(path)
+                if (filePatch.newPath == null) {
+                    require(Files.isRegularFile(path)) { "Cannot delete missing file: $relativePath" }
+                    rejectLargeFile(path)
+                    UnifiedPatch.apply(TextFileCodec.read(path).text, filePatch)
+                    PendingChange(path, null)
+                } else {
+                    val original = if (Files.exists(path)) {
+                        rejectLargeFile(path)
+                        TextFileCodec.read(path)
+                    } else {
+                        require(filePatch.oldPath == null) { "File does not exist: $relativePath" }
+                        TextFile("", StandardCharsets.UTF_8, byteArrayOf())
+                    }
+                    PendingChange(path, original.copy(text = UnifiedPatch.apply(original.text, filePatch)))
+                }
             }
-
-            rejectLargeFile(path)
-            val oldText = args.requiredString("old_text")
-            if (oldText.isEmpty()) throw IllegalArgumentException("old_text must not be empty for existing files.")
-
-            val content = Files.readString(path, StandardCharsets.UTF_8)
-            val matches = countOccurrences(content, oldText)
-            when (matches) {
-                0 -> throw IllegalArgumentException("old_text was not found in ${pathGuard.display(path)}.")
-                1 -> Unit
-                else -> throw IllegalArgumentException("old_text matched $matches times; refusing ambiguous edit.")
+            changes.forEach { change ->
+                if (change.content == null) Files.delete(change.path)
+                else {
+                    change.path.parent?.let { Files.createDirectories(it) }
+                    TextFileCodec.write(change.path, change.content)
+                }
             }
-
-            Files.writeString(path, content.replace(oldText, newText), StandardCharsets.UTF_8)
-            ToolResult.ok("Updated ${pathGuard.display(path)}.")
+            ToolResult.ok("Applied patch to ${changes.size} file(s): ${changes.joinToString { pathGuard.display(it.path) }}")
         }.getOrElse { ToolResult.error(it.message ?: it.toString()) }
     }
 
@@ -271,9 +276,11 @@ class LocalTools(
 
     private fun readTextLines(path: Path): List<String> {
         try {
-            return Files.readAllLines(path, StandardCharsets.UTF_8)
-        } catch (e: MalformedInputException) {
-            throw IllegalArgumentException("File is not valid UTF-8 text: ${pathGuard.display(path)}")
+            return TextFileCodec.read(path).text.split("\r\n", "\n", "\r").let {
+                if (it.lastOrNull()?.isEmpty() == true) it.dropLast(1) else it
+            }
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("Unable to read text file ${pathGuard.display(path)}: ${e.message}")
         }
     }
 
@@ -300,16 +307,6 @@ class LocalTools(
 
     private fun truncate(value: String): String =
         if (value.length <= maxToolOutputChars) value else value.take(maxToolOutputChars) + "\n...[truncated]"
-
-    private fun countOccurrences(value: String, needle: String): Int {
-        var count = 0
-        var index = value.indexOf(needle)
-        while (index >= 0) {
-            count += 1
-            index = value.indexOf(needle, index + needle.length)
-        }
-        return count
-    }
 
     private fun JsonObject.string(name: String): String? =
         (this[name] as? JsonPrimitive)?.contentOrNull

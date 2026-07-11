@@ -61,6 +61,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.EventQueue
@@ -760,18 +764,32 @@ private fun formatToolCallSummary(name: String, argsJson: String): String {
     } else if (name == "search_text") {
         val query = extractArg(argsJson, "query")
         "搜索: $query"
-    } else if (name == "replace_in_file") {
-        val path = extractArg(argsJson, "path")
-        "编辑文件: $path"
+    } else if (name == "apply_patch") {
+        val files = extractPatchedFiles(argsJson)
+        "应用文件补丁 " + files.joinToString(", ")
     } else {
         "$name($argsJson)"
     }
 }
 
-private fun extractArg(json: String, key: String): String? {
-    // Simple JSON extraction without pulling in a full parser
-    val pattern = """"$key"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex()
-    return pattern.find(json)?.groupValues?.getOrNull(1)
+internal fun extractArg(json: String, key: String): String? = runCatching {
+    Json.parseToJsonElement(json).jsonObject[key]?.jsonPrimitive?.contentOrNull
+}.getOrNull()
+
+/** Extract a bounded list of affected paths without running regex over a large patch. */
+internal fun extractPatchedFiles(argsJson: String): List<String> {
+    val patch = extractArg(argsJson, "patch") ?: return listOf("(patch)")
+    return patch.lineSequence()
+        .mapNotNull { line ->
+            if (!line.startsWith("diff --git a/")) return@mapNotNull null
+            val paths = line.removePrefix("diff --git a/")
+            val separator = paths.indexOf(" b/")
+            paths.takeIf { separator > 0 }?.substring(0, separator)
+        }
+        .distinct()
+        .take(20)
+        .toList()
+        .ifEmpty { listOf("(patch)") }
 }
 
 private data class DisplayMessage(
