@@ -45,7 +45,7 @@ KZAgent 的核心思想是让大语言模型（LLM）通过工具调用（Tool C
 
 ```properties
 deepseek.api.key=sk-xxxxxxxxxxxxxxxx
-deepseek.model=deepseek-v4-flash
+deepseek.model=deepseek-v4-pro
 deepseek.base.url=https://api.deepseek.com
 ```
 
@@ -272,7 +272,7 @@ src/main/kotlin/com/kzagent/kagent/
 
 ```properties
 deepseek.api.key=sk-xxxxxxxxxxxxxxxx    # DeepSeek API Key（必填）
-deepseek.model=deepseek-v4-flash        # 模型名称（可选，默认 deepseek-v4-flash）
+deepseek.model=deepseek-v4-pro        # 模型名称（可选，默认 deepseek-v4-pro）
 deepseek.base.url=https://api.deepseek.com  # API 地址（可选）
 ```
 

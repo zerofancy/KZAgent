@@ -128,7 +128,7 @@ fun printUsage() {
         ~/Library/Application Support/kzagent/config.properties on macOS,
         or ~/.config/kzagent/config.properties on Linux):
           deepseek.api.key=...
-          deepseek.model=deepseek-v4-flash
+          deepseek.model=deepseek-v4-pro
           deepseek.base.url=https://api.deepseek.com
           deepseek.sensitive.path.protection=false
 

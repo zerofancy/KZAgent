@@ -15,7 +15,7 @@ data class AppConfig(
 ) {
     companion object {
         const val DEFAULT_BASE_URL = "https://api.deepseek.com"
-        const val DEFAULT_MODEL = "deepseek-v4-flash"
+        const val DEFAULT_MODEL = "deepseek-v4-pro"
         const val DEFAULT_SENSITIVE_PATH_PROTECTION = false
         const val DEFAULT_CONTEXT_WINDOW_SIZE = 1_000_000
     }

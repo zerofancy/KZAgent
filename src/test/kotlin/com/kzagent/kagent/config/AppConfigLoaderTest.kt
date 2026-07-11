@@ -17,7 +17,7 @@ class AppConfigLoaderTest {
             configFile,
             """
             deepseek.api.key=sk-test-local
-            deepseek.model=deepseek-v4-flash
+            deepseek.model=deepseek-v4-pro
             deepseek.base.url=https://api.deepseek.com/
             """.trimIndent(),
         )
@@ -25,7 +25,7 @@ class AppConfigLoaderTest {
         val config = AppConfigLoader.load(configFile, emptyMap())
 
         assertEquals("sk-test-local", config.apiKey)
-        assertEquals("deepseek-v4-flash", config.model)
+        assertEquals("deepseek-v4-pro", config.model)
         assertEquals("https://api.deepseek.com", config.baseUrl)
     }
 
@@ -50,14 +50,14 @@ class AppConfigLoaderTest {
             configFile,
             """
             deepseek.api.key=sk-test-file
-            deepseek.model=deepseek-v4-flash
+            deepseek.model=deepseek-v4-pro
             """.trimIndent(),
         )
 
         val config = AppConfigLoader.load(configFile, mapOf("DEEPSEEK_API_KEY" to "sk-test-env"))
 
         assertEquals("sk-test-env", config.apiKey)
-        assertEquals("deepseek-v4-flash", config.model)
+        assertEquals("deepseek-v4-pro", config.model)
     }
 
     @Test

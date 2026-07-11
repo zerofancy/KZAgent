@@ -80,17 +80,21 @@ class SessionReader(workspace: Path) {
         val latest = files.firstOrNull() ?: return 0
         val lines = Files.readAllLines(latest, StandardCharsets.UTF_8)
         // 从后往前找最后一条有 context_tokens（或旧的 cumulative_tokens）的行
+        var lastTokens = 0
         for (i in lines.indices.reversed()) {
             val line = lines[i].trim()
             if (line.isBlank()) continue
             try {
                 val obj = json.parseToJsonElement(line).jsonObject
+                val role = obj["role"]?.jsonPrimitive?.content.orEmpty()
+                if (role != "assistant") continue
                 val tokens = obj["context_tokens"]?.jsonPrimitive?.content?.toIntOrNull()
                     ?: obj["cumulative_tokens"]?.jsonPrimitive?.content?.toIntOrNull()
                     ?: 0
                 if (tokens > 0) return tokens
+                if (lastTokens == 0) lastTokens = tokens
             } catch (_: Exception) { continue }
         }
-        return 0
+        return lastTokens
     }
 }

@@ -55,13 +55,15 @@ class CodingAgent(
         messages: MutableList<AgentMessage>,
         onTokens: (Int) -> Unit = {},
     ): String {
+        var contextTokens = 0
         repeat(maxTurns) { turn ->
             observer.onModelRequest(turn + 1)
             val reply = model.chat(listOf(system) + messages, tools.toolSchemas())
-            reply.promptTokens?.let { onTokens(it) }
+            contextTokens = maxOf(contextTokens, reply.promptTokens ?: contextTokens)
+            onTokens(contextTokens)
             val assistant = AgentMessage.Assistant(reply.content, reply.toolCalls)
             messages += assistant
-            sessionWriter.append(assistant, tokens = reply.promptTokens ?: 0)
+            sessionWriter.append(assistant, tokens = contextTokens)
 
             // Stream the model's text reply (thinking) to the observer
             reply.content?.takeIf { it.isNotBlank() }?.let { observer.onAssistantMessage(it) }
