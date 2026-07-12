@@ -18,7 +18,7 @@ import kotlinx.serialization.json.put
 class LocalTools(
     private val pathGuard: PathGuard,
     private val approvalPolicy: ApprovalPolicy,
-    private val maxToolOutputChars: Int = 12_000,
+    private val maxToolOutputChars: Int = 48_000,
     private val sensitivePathProtection: Boolean = false,
 ) {
     fun registry(): ToolRegistry = ToolRegistry(
@@ -74,7 +74,7 @@ class LocalTools(
             properties = mapOf(
                 "path" to stringSchema("Workspace-relative file path."),
                 "start_line" to intSchema("1-based start line. Defaults to 1."),
-                "max_lines" to intSchema("Maximum lines to read, 1 to 500. Defaults to 200."),
+                "max_lines" to intSchema("Maximum lines to read (no hard cap; output truncated by character limit). Defaults to 200."),
             ),
             required = listOf("path"),
         ),
@@ -86,7 +86,7 @@ class LocalTools(
             rejectSensitivePath(path)
             rejectLargeFile(path)
             val startLine = (args.int("start_line") ?: 1).coerceAtLeast(1)
-            val maxLines = (args.int("max_lines") ?: 200).coerceIn(1, 500)
+            val maxLines = (args.int("max_lines") ?: 200).coerceAtLeast(1)
             val lines = readTextLines(path)
             val selected = lines.drop(startLine - 1).take(maxLines)
             val numbered = selected.mapIndexed { index, line -> "${startLine + index}: $line" }
