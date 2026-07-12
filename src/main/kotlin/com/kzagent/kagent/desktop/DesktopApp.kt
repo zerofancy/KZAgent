@@ -370,6 +370,8 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     // Reusable context compression helper
     suspend fun performCompression(session: SessionData, manageBusyState: Boolean = true): Boolean {
         if ((manageBusyState && session.isBusy) || session.runtime == null) return false
+        val sessionId = session.id
+        val titleRevision = session.titleRevision
         if (manageBusyState) session.isBusy = true
         session.status = "正在压缩上下文..."
         return try {
@@ -381,12 +383,11 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
             // Auto-update session title from compression summary
             val summary = compressed.firstOrNull()
             if (summary is AgentMessage.Summary) {
-                val sessionIndex = sessionManager.activeSessionIndex
                 val agent = session.runtime!!.agent
                 scope.launch {
                     runCatching { agent.generateTitle(summary.content) }
                         .onSuccess { title ->
-                            sessionManager.renameSession(sessionIndex, title)
+                            sessionManager.renameSessionIfRevisionMatches(sessionId, titleRevision, title)
                         }
                 }
             }
@@ -460,6 +461,8 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                             session.error = null
                             session.status = "准备发送..."
                             session.messages.add(DisplayMessage("user", prompt))
+                            val sessionId = session.id
+                            val titleRevision = session.titleRevision
                             val job = scope.launch {
                                 try {
                                     // Auto-compress when context exceeds 80%
@@ -475,11 +478,14 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                                     session.status = "就绪"
                                     // Auto-title on first user message
                                     if (result.history.count { it is AgentMessage.User } == 1) {
-                                        val sessionIndex = sessionManager.activeSessionIndex
                                         scope.launch {
                                             runCatching { currentRuntime.agent.generateTitle(prompt) }
                                                 .onSuccess { title ->
-                                                    sessionManager.renameSession(sessionIndex, title)
+                                                    sessionManager.renameSessionIfRevisionMatches(
+                                                        sessionId,
+                                                        titleRevision,
+                                                        title,
+                                                    )
                                                 }
                                         }
                                     }

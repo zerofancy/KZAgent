@@ -84,6 +84,23 @@ class CodingAgentTest {
         assertEquals("call-1", firstNonSummary.toolCalls.single().id)
     }
 
+    @Test
+    fun generatedTitleIsCleanedAndLimitedToThirtyCharacters() = runBlocking {
+        val dir = Files.createTempDirectory("kagent-title-test")
+        val model = object : ChatModel {
+            override suspend fun chat(messages: List<AgentMessage>, tools: List<JsonObject>) =
+                AssistantReply(content = "\"1234567890123456789012345678901234567890\"\nextra")
+        }
+        val agent = CodingAgent(
+            model = model,
+            tools = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry(),
+            promptBuilder = PromptBuilder(dir),
+            sessionWriter = SessionWriter(dir.resolve("session.jsonl")),
+        )
+
+        assertEquals("123456789012345678901234567890", agent.generateTitle("fallback"))
+    }
+
     private class CompressionModel : ChatModel {
         var lastMessages: List<AgentMessage> = emptyList()
 

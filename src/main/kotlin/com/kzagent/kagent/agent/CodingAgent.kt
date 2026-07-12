@@ -231,7 +231,16 @@ class CodingAgent(
             AgentMessage.User("Please create a short title for: ${sourceText.take(800)}"),
         )
         val reply = model.chat(messages, emptyList())
-        return reply.content?.trim()?.take(50).orEmpty().ifBlank { sourceText.take(30) }
+        val generated = reply.content.orEmpty()
+            .lineSequence()
+            .firstOrNull()
+            .orEmpty()
+            .trim()
+            .trim('"', '\'', '“', '”')
+            .trim()
+        return generated.take(30).ifBlank {
+            sourceText.lineSequence().firstOrNull().orEmpty().trim().take(30)
+        }
     }
 }
 

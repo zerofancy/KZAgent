@@ -7,6 +7,7 @@ import java.nio.file.attribute.FileTime
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SessionManagerTest {
@@ -42,6 +43,30 @@ class SessionManagerTest {
         val reloaded = SessionManager(denyAll)
         reloaded.loadOrCreate(workspace)
         assertEquals(newer.id, reloaded.activeSession().id)
+    }
+
+    @Test
+    fun conditionalRenameUsesStableIdAndPreservesNewerManualName() {
+        val workspace = testWorkspace()
+        val manager = SessionManager(denyAll)
+        manager.loadOrCreate(workspace)
+        val target = manager.activeSession()
+        val initialRevision = target.titleRevision
+
+        manager.addNewSession(workspace)
+        val other = manager.activeSession()
+
+        assertTrue(manager.renameSessionIfRevisionMatches(target.id, initialRevision, "自动标题"))
+        assertEquals("自动标题", target.name)
+        assertTrue(other.name.startsWith("新会话"))
+
+        val targetIndex = manager.sessions.indexOfFirst { it.id == target.id }
+        val revisionBeforeManualRename = target.titleRevision
+        assertTrue(manager.renameSession(targetIndex, "手动标题"))
+        assertFalse(
+            manager.renameSessionIfRevisionMatches(target.id, revisionBeforeManualRename, "迟到的自动标题")
+        )
+        assertEquals("手动标题", target.name)
     }
 
     private fun testWorkspace(): Path {

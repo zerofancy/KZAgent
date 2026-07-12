@@ -38,6 +38,8 @@ class SessionData(
     error: String? = null,
 ) {
     var name by mutableStateOf(name)
+    var titleRevision: Int = 0
+        private set
     var runtime by mutableStateOf(runtime)
     var conversationHistory by mutableStateOf(conversationHistory)
     var usedTokens by mutableStateOf(usedTokens)
@@ -45,6 +47,11 @@ class SessionData(
     var currentJob by mutableStateOf(currentJob)
     var status by mutableStateOf(status)
     var error by mutableStateOf(error)
+
+    fun updateName(name: String) {
+        this.name = name
+        titleRevision++
+    }
 }
 
 class SessionManager(private val approvalPolicy: ApprovalPolicy) {
@@ -130,8 +137,21 @@ class SessionManager(private val approvalPolicy: ApprovalPolicy) {
 
     fun renameSession(index: Int, name: String): Boolean {
         if (index !in sessions.indices || name.isBlank()) return false
-        sessions[index].name = name.trim()
+        sessions[index].updateName(name.trim())
         persistSessionName(sessions[index])
+        return true
+    }
+
+    fun renameSessionIfRevisionMatches(
+        sessionId: String,
+        expectedRevision: Int,
+        name: String,
+    ): Boolean {
+        if (name.isBlank()) return false
+        val session = sessions.firstOrNull { it.id == sessionId } ?: return false
+        if (session.titleRevision != expectedRevision) return false
+        session.updateName(name.trim())
+        persistSessionName(session)
         return true
     }
 
