@@ -7,13 +7,27 @@ import java.nio.file.Path
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 class SessionWriter(private val sessionPath: Path) {
 
     fun append(message: AgentMessage, tokens: Int = 0) {
-        val line = buildJsonObject {
+        writeLine(messageJson(message, tokens))
+    }
+
+    fun appendContextSnapshot(history: List<AgentMessage>, tokens: Int) {
+        writeLine(buildJsonObject {
+            put("time", Instant.now().toString())
+            put("role", "context_snapshot")
+            put("context_tokens", tokens)
+            put("messages", JsonArray(history.map { messageJson(it) }))
+        })
+    }
+
+    private fun messageJson(message: AgentMessage, tokens: Int = 0): JsonObject =
+        buildJsonObject {
             put("time", Instant.now().toString())
             put("role", message.role)
             if (tokens > 0) {
@@ -21,6 +35,7 @@ class SessionWriter(private val sessionPath: Path) {
             }
             when (message) {
                 is AgentMessage.System -> put("content", message.content)
+                is AgentMessage.Summary -> put("content", message.content)
                 is AgentMessage.User -> put("content", message.content)
                 is AgentMessage.Assistant -> {
                     put("content", message.content)
@@ -39,10 +54,12 @@ class SessionWriter(private val sessionPath: Path) {
                     put("is_error", message.isError)
                 }
             }
-        }.toString() + "\n"
+        }
+
+    private fun writeLine(value: JsonObject) {
         Files.writeString(
             sessionPath,
-            line,
+            value.toString() + "\n",
             StandardCharsets.UTF_8,
             java.nio.file.StandardOpenOption.CREATE,
             java.nio.file.StandardOpenOption.APPEND,

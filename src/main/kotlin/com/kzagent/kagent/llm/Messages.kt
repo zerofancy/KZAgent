@@ -11,6 +11,11 @@ sealed class AgentMessage {
         override val role: String = "system"
     }
 
+    /** Durable memory produced by context compression. Sent to the model as a system message. */
+    data class Summary(val content: String) : AgentMessage() {
+        override val role: String = "summary"
+    }
+
     data class User(val content: String) : AgentMessage() {
         override val role: String = "user"
     }

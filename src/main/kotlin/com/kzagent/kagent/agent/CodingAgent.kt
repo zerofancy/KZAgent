@@ -136,7 +136,104 @@ class CodingAgent(
             }
         }
     }
+
+    /**
+     * Compress conversation history by asking the LLM to summarise older messages
+     * while preserving the most recent [keepLastN] messages for immediate context.
+     */
+    suspend fun compressHistory(
+        history: List<AgentMessage>,
+        keepLastN: Int = 6,
+    ): List<AgentMessage> {
+        require(keepLastN >= 1) { "keepLastN must be positive." }
+        if (history.size <= keepLastN) return history
+
+        // Never start the retained window with an orphaned tool result. Move the
+        // boundary back to the assistant message that issued the tool call(s).
+        var splitIndex = history.size - keepLastN
+        while (splitIndex > 0 && history[splitIndex] is AgentMessage.Tool) splitIndex--
+        val candidate = history[splitIndex]
+        if (candidate is AgentMessage.Assistant && candidate.toolCalls.isNotEmpty()) {
+            // The complete assistant + tool-results group is retained.
+        } else {
+            while (splitIndex > 0 && history[splitIndex - 1] is AgentMessage.Tool) splitIndex--
+            if (splitIndex > 0) {
+                val previous = history[splitIndex - 1]
+                if (previous is AgentMessage.Assistant && previous.toolCalls.isNotEmpty()) splitIndex--
+            }
+        }
+        if (splitIndex <= 0) return history
+        val toSummarize = history.take(splitIndex)
+        val recentMessages = history.drop(splitIndex)
+
+        val conversationText = buildString {
+            for (msg in toSummarize) {
+                when (msg) {
+                    is AgentMessage.User -> {
+                        appendLine("--- User ---")
+                        appendLine(msg.content.take(2000))
+                    }
+                    is AgentMessage.Assistant -> {
+                        if (!msg.content.isNullOrBlank()) {
+                            appendLine("--- Assistant ---")
+                            appendLine(msg.content.take(2000))
+                        }
+                        if (msg.toolCalls.isNotEmpty()) {
+                            appendLine("[Tool calls: ${msg.toolCalls.joinToString(", ") { it.name }}]")
+                        }
+                    }
+                    is AgentMessage.Tool -> {
+                        val short = if (msg.content.length > 300) {
+                            msg.content.take(300) + "..."
+                        } else {
+                            msg.content
+                        }
+                        appendLine("--- Tool[${msg.name}] ---")
+                        appendLine(short)
+                    }
+                    is AgentMessage.System -> { /* skip system prompts in summary */ }
+                    is AgentMessage.Summary -> {
+                        appendLine("--- Previous summary ---")
+                        appendLine(msg.content)
+                    }
+                }
+            }
+        }
+
+        if (conversationText.isBlank()) return history
+
+        val summaryMessages = listOf(
+            AgentMessage.System("You are a helpful assistant that creates concise conversation summaries. Capture key decisions, file changes, findings, and current task state. Keep the summary under 400 words."),
+            AgentMessage.User("Please summarise this AI coding session:\n\n$conversationText"),
+        )
+
+        val reply = model.chat(summaryMessages, emptyList())
+        val summary = reply.content?.trim().orEmpty()
+        check(summary.isNotBlank()) { "The model returned an empty context summary." }
+
+        val compressed = listOf(
+            AgentMessage.Summary(summary),
+        ) + recentMessages
+
+        sessionWriter.appendContextSnapshot(compressed, estimateContextTokens(compressed))
+
+        return compressed
+    }
 }
+
+fun estimateContextTokens(messages: List<AgentMessage>): Int =
+    messages.sumOf { message ->
+        val characters = when (message) {
+            is AgentMessage.System -> message.content.length
+            is AgentMessage.Summary -> message.content.length
+            is AgentMessage.User -> message.content.length
+            is AgentMessage.Assistant -> message.content.orEmpty().length +
+                message.toolCalls.sumOf { it.name.length + it.argumentsJson.length }
+            is AgentMessage.Tool -> message.name.length + message.content.length
+        }
+        // Conservative language-agnostic approximation plus per-message framing.
+        (characters + 2) / 3 + 8
+    }
 
 data class AgentRunResult(
     val answer: String,

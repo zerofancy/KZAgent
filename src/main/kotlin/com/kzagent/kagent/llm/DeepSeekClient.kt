@@ -72,9 +72,10 @@ class DeepSeekClient(
         }
 
     private fun AgentMessage.toJson(): JsonObject = buildJsonObject {
-        put("role", role)
+        put("role", if (this@toJson is AgentMessage.Summary) "system" else role)
         when (this@toJson) {
             is AgentMessage.System -> put("content", content)
+            is AgentMessage.Summary -> put("content", "## Conversation summary\n$content")
             is AgentMessage.User -> put("content", content)
             is AgentMessage.Assistant -> {
                 put("content", content)

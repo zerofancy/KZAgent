@@ -221,7 +221,7 @@ class SessionManager(private val approvalPolicy: ApprovalPolicy) {
                 try {
                     val obj = json.parseToJsonElement(line).jsonObject
                     val role = obj["role"]?.jsonPrimitive?.content.orEmpty()
-                    if (role != "assistant") continue
+                    if (role != "assistant" && role != "context_snapshot") continue
                     val tokens = obj["context_tokens"]?.jsonPrimitive?.content?.toIntOrNull()
                         ?: obj["cumulative_tokens"]?.jsonPrimitive?.content?.toIntOrNull()
                         ?: 0

@@ -33,15 +33,25 @@ class SessionReader(workspace: Path) {
 
     fun loadFile(path: Path): List<AgentMessage> {
         val lines = Files.readAllLines(path, StandardCharsets.UTF_8)
-        return lines.filter { it.isNotBlank() }.map { parseLine(it) }
+        val history = mutableListOf<AgentMessage>()
+        for (line in lines.filter { it.isNotBlank() }) {
+            val obj = json.parseToJsonElement(line).jsonObject
+            if (obj["role"]?.jsonPrimitive?.content == "context_snapshot") {
+                history.clear()
+                history += obj["messages"]?.jsonArray.orEmpty().map { parseObject(it.jsonObject) }
+            } else {
+                history += parseObject(obj)
+            }
+        }
+        return history
     }
 
-    private fun parseLine(line: String): AgentMessage {
-        val obj = json.parseToJsonElement(line).jsonObject
+    private fun parseObject(obj: JsonObject): AgentMessage {
         val role = obj["role"]?.jsonPrimitive?.content
             ?: throw IllegalArgumentException("Missing role in session line.")
         return when (role) {
             "system" -> AgentMessage.System(content = obj["content"]?.jsonPrimitive?.content.orEmpty())
+            "summary" -> AgentMessage.Summary(content = obj["content"]?.jsonPrimitive?.content.orEmpty())
             "user" -> AgentMessage.User(content = obj["content"]?.jsonPrimitive?.content.orEmpty())
             "assistant" -> {
                 val content = obj["content"]?.jsonPrimitive?.contentOrNull
@@ -87,7 +97,7 @@ class SessionReader(workspace: Path) {
             try {
                 val obj = json.parseToJsonElement(line).jsonObject
                 val role = obj["role"]?.jsonPrimitive?.content.orEmpty()
-                if (role != "assistant") continue
+                if (role != "assistant" && role != "context_snapshot") continue
                 val tokens = obj["context_tokens"]?.jsonPrimitive?.content?.toIntOrNull()
                     ?: obj["cumulative_tokens"]?.jsonPrimitive?.content?.toIntOrNull()
                     ?: 0

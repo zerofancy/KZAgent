@@ -20,7 +20,7 @@ class CodingAgentOutputTest {
             model = FinalAnswerModel,
             tools = ToolRegistry(emptyList()),
             promptBuilder = PromptBuilder(dir),
-            sessionWriter = SessionWriter(dir),
+            sessionWriter = SessionWriter(dir.resolve("session.jsonl")),
         )
         val originalOut = System.out
         val captured = ByteArrayOutputStream()

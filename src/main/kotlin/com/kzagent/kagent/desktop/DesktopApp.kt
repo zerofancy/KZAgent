@@ -57,6 +57,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.agent.AgentObserver
+import com.kzagent.kagent.agent.estimateContextTokens
 import com.kzagent.kagent.config.SecretRedactor
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalPolicy
@@ -298,6 +299,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     var showDeleteConfirmIndex by remember { mutableStateOf(-1) }
     var showRenameDialogIndex by remember { mutableStateOf(-1) }
     var renameText by remember { mutableStateOf("") }
+    var showCompressConfirm by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     val approvalPolicy = ApprovalPolicy { action, details ->
@@ -365,6 +367,27 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
             }
     }
 
+    // Reusable context compression helper
+    suspend fun performCompression(session: SessionData, manageBusyState: Boolean = true): Boolean {
+        if ((manageBusyState && session.isBusy) || session.runtime == null) return false
+        if (manageBusyState) session.isBusy = true
+        session.status = "正在压缩上下文..."
+        return try {
+            val compressed = session.runtime!!.agent.compressHistory(session.conversationHistory)
+            session.conversationHistory = compressed
+            session.usedTokens = estimateContextTokens(compressed)
+            session.messages.add(DisplayMessage("tool_result", "✅ 上下文已压缩。之前的对话已总结为摘要，保留最近几条消息。"))
+            session.status = "就绪"
+            true
+        } catch (e: Exception) {
+            session.error = "压缩失败: ${SecretRedactor.redact(e.message ?: e.toString())}"
+            session.status = "压缩失败"
+            false
+        } finally {
+            if (manageBusyState) session.isBusy = false
+        }
+    }
+
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             Row(modifier = Modifier.fillMaxSize()) {
@@ -402,7 +425,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                         status = session.status,
                         isBusy = session.isBusy,
                         contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000),
-                        onNewSession = { sessionManager.addNewSession(workspace) },
+                        onCompressContext = { showCompressConfirm = true },
                     )
                     Spacer(Modifier.height(8.dp))
                     session.error?.let {
@@ -427,6 +450,13 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                             session.messages.add(DisplayMessage("user", prompt))
                             val job = scope.launch {
                                 try {
+                                    // Auto-compress when context exceeds 80%
+                                    val ctxPct = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000)
+                                    if (ctxPct > 80) {
+                                        session.status = "上下文超 80%，自动压缩..."
+                                        session.messages.add(DisplayMessage("tool_result", "⚠️ 上下文使用率达 $ctxPct%，自动触发压缩..."))
+                                        if (!performCompression(session, manageBusyState = false)) return@launch
+                                    }
                                     val result = currentRuntime.agent.runConversation(prompt, session.conversationHistory)
                                     session.conversationHistory = result.history
                                     session.usedTokens = result.totalTokens
@@ -455,6 +485,34 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
 
     pendingApprovals.firstOrNull()?.let { approval ->
         ApprovalDialog(approval)
+    }
+
+    // Compress confirmation dialog
+    if (showCompressConfirm) {
+        val session = sessionManager.activeSession()
+        val ctxPct = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000)
+        AlertDialog(
+            onDismissRequest = { showCompressConfirm = false },
+            title = { Text("压缩上下文") },
+            text = {
+                Text(
+                    "当前上下文使用率 $ctxPct%。压缩将使用 LLM 把较早的对话总结为摘要，" +
+                    "仅保留最近几条消息。是否继续？"
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showCompressConfirm = false
+                    scope.launch {
+                        performCompression(session)
+                        session.isBusy = false
+                    }
+                }) { Text("压缩") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCompressConfirm = false }) { Text("取消") }
+            },
+        )
     }
 
     // Delete confirmation dialog
@@ -627,7 +685,7 @@ private fun Header(
     status: String,
     isBusy: Boolean,
     contextPercent: Int,
-    onNewSession: () -> Unit,
+    onCompressContext: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -652,10 +710,13 @@ private fun Header(
             Text(status, style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.width(12.dp))
             Button(
-                onClick = onNewSession,
+                onClick = onCompressContext,
                 enabled = !isBusy,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (contextPercent > 80) Color(0xFFE53935) else Color(0xFF5C6BC0),
+                    containerColor = when {
+                        contextPercent > 80 -> Color(0xFFE53935)
+                        else -> Color(0xFF5C6BC0)
+                    },
                 ),
             ) {
                 Text("上下文 $contextPercent%")
@@ -903,6 +964,7 @@ fun List<AgentMessage>.toDisplayMessages(): List<DisplayMessage> {
                 collapsible = true,
             )
             is AgentMessage.System -> null
+            is AgentMessage.Summary -> null
         }
     }
 }
