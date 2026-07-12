@@ -219,6 +219,20 @@ class CodingAgent(
 
         return compressed
     }
+
+    /** Generate a concise session title from a user message or summary. */
+    suspend fun generateTitle(sourceText: String): String {
+        val messages = listOf(
+            AgentMessage.System(
+                "You are a helpful assistant that creates concise session titles. " +
+                "Given a user query or conversation summary, produce a short title (under 20 characters if possible, max 30) " +
+                "that captures the main topic. Reply with ONLY the title, no quotes, no punctuation, no extra text."
+            ),
+            AgentMessage.User("Please create a short title for: ${sourceText.take(800)}"),
+        )
+        val reply = model.chat(messages, emptyList())
+        return reply.content?.trim()?.take(50).orEmpty().ifBlank { sourceText.take(30) }
+    }
 }
 
 fun estimateContextTokens(messages: List<AgentMessage>): Int =

@@ -378,6 +378,18 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
             session.usedTokens = estimateContextTokens(compressed)
             session.messages.add(DisplayMessage("tool_result", "✅ 上下文已压缩。之前的对话已总结为摘要，保留最近几条消息。"))
             session.status = "就绪"
+            // Auto-update session title from compression summary
+            val summary = compressed.firstOrNull()
+            if (summary is AgentMessage.Summary) {
+                val sessionIndex = sessionManager.activeSessionIndex
+                val agent = session.runtime!!.agent
+                scope.launch {
+                    runCatching { agent.generateTitle(summary.content) }
+                        .onSuccess { title ->
+                            sessionManager.renameSession(sessionIndex, title)
+                        }
+                }
+            }
             true
         } catch (e: Exception) {
             session.error = "压缩失败: ${SecretRedactor.redact(e.message ?: e.toString())}"
@@ -461,6 +473,16 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                                     session.conversationHistory = result.history
                                     session.usedTokens = result.totalTokens
                                     session.status = "就绪"
+                                    // Auto-title on first user message
+                                    if (result.history.count { it is AgentMessage.User } == 1) {
+                                        val sessionIndex = sessionManager.activeSessionIndex
+                                        scope.launch {
+                                            runCatching { currentRuntime.agent.generateTitle(prompt) }
+                                                .onSuccess { title ->
+                                                    sessionManager.renameSession(sessionIndex, title)
+                                                }
+                                        }
+                                    }
                                 } catch (_: CancellationException) {
                                     session.status = "已终止"
                                 } catch (e: Exception) {
