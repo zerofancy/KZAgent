@@ -13,6 +13,7 @@ data class AppConfig(
     val model: String = DEFAULT_MODEL,
     val sensitivePathProtection: Boolean = DEFAULT_SENSITIVE_PATH_PROTECTION,
     val contextWindowSize: Int = DEFAULT_CONTEXT_WINDOW_SIZE,
+    val userPrompt: String = "",
 ) {
     companion object {
         const val DEFAULT_BASE_URL = "https://api.deepseek.com"
@@ -56,12 +57,15 @@ object AppConfigLoader {
             ?.toIntOrNull()
             ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE
 
+        val userPrompt = props.getProperty("deepseek.user.prompt")?.trim() ?: ""
+
         return AppConfig(
             apiKey = apiKey,
             baseUrl = baseUrl.trimEnd('/'),
             model = model,
             sensitivePathProtection = sensitivePathProtection,
             contextWindowSize = contextWindowSize,
+            userPrompt = userPrompt,
         )
     }
 
@@ -90,6 +94,10 @@ object AppConfigLoader {
 object ConfigWriter {
     fun save(config: AppConfig) {
         val configFile = AppConfigLoader.defaultConfigFile()
+        save(configFile, config)
+    }
+
+    internal fun save(configFile: Path, config: AppConfig) {
         Files.createDirectories(configFile.parent)
         val content = buildString {
             appendLine("deepseek.api.key=${config.apiKey}")
@@ -97,6 +105,9 @@ object ConfigWriter {
             appendLine("deepseek.model=${config.model}")
             appendLine("deepseek.sensitive.path.protection=${config.sensitivePathProtection}")
             appendLine("deepseek.context.window.size=${config.contextWindowSize}")
+            if (config.userPrompt.isNotBlank()) {
+                appendLine("deepseek.user.prompt=${escapePropertyValue(config.userPrompt)}")
+            }
         }
         Files.writeString(
             configFile,
@@ -106,6 +117,11 @@ object ConfigWriter {
             StandardOpenOption.TRUNCATE_EXISTING,
         )
     }
+
+    private fun escapePropertyValue(value: String): String = value
+        .replace("\\", "\\\\")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
 }
 
 object SecretRedactor {

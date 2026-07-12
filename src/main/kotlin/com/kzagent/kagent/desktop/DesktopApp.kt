@@ -395,7 +395,8 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     }
 
     // Ensure active session has a runtime
-    LaunchedEffect(workspace, sessionManager.activeSession().id) {
+    val activeSession = sessionManager.activeSession()
+    LaunchedEffect(workspace, sessionManager, activeSession.id, activeSession.runtime) {
         val session = sessionManager.activeSession()
         session.status = "正在加载..."
         val observer = createObserver(session)
@@ -483,6 +484,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                         initialModel = savedConfig?.model ?: AppConfig.DEFAULT_MODEL,
                         initialContextWindowSize = savedConfig?.contextWindowSize ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
                         initialSensitivePathProtection = savedConfig?.sensitivePathProtection ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION,
+                        initialUserPrompt = savedConfig?.userPrompt ?: "",
                         onSave = { onSettingsSaved() },
                         onCancel = {
                             if (savedConfig != null) {

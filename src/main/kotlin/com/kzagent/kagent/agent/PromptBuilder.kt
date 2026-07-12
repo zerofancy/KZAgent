@@ -2,7 +2,7 @@ package com.kzagent.kagent.agent
 
 import java.nio.file.Path
 
-class PromptBuilder(private val workspace: Path) {
+class PromptBuilder(private val workspace: Path, private val userPrompt: String = "") {
     fun build(): String = """
         You are a minimal AI coding agent running in a Kotlin JVM application (CLI or Desktop GUI).
 
@@ -36,4 +36,5 @@ class PromptBuilder(private val workspace: Path) {
         - apply_patch accepts one `patch` argument containing a standard git unified diff. It can update, create, or delete multiple files while preserving encoding, BOM, and line endings. On mismatch it reports the file, hunk, expected content, and actual content so you can re-read and retry safely. Prefer it over run_command for file modifications.
         - run_command executes a bounded shell command after user approval (via Desktop GUI dialog — Enter=allow, Esc=reject — or CLI Y/n prompt). Avoid for file modification; use apply_patch instead.
     """.trimIndent()
+        .let { if (userPrompt.isBlank()) it else "$it\n\n${userPrompt.trim()}" }
 }

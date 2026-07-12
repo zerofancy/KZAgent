@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -40,6 +41,7 @@ fun SettingsPanel(
     initialModel: String,
     initialContextWindowSize: Int,
     initialSensitivePathProtection: Boolean,
+    initialUserPrompt: String,
     onSave: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -48,6 +50,7 @@ fun SettingsPanel(
     var model by remember { mutableStateOf(initialModel) }
     var contextWindowSizeText by remember { mutableStateOf(initialContextWindowSize.toString()) }
     var sensitivePathProtection by remember { mutableStateOf(initialSensitivePathProtection) }
+    var userPrompt by remember { mutableStateOf(initialUserPrompt) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var saved by remember { mutableStateOf(false) }
 
@@ -80,6 +83,7 @@ fun SettingsPanel(
             model = model.trim(),
             sensitivePathProtection = sensitivePathProtection,
             contextWindowSize = contextWindowSizeText.toInt(),
+            userPrompt = userPrompt.trim(),
         )
         ConfigWriter.save(config)
         saved = true
@@ -163,7 +167,25 @@ fun SettingsPanel(
                 Spacer(Modifier.width(8.dp))
                 Text("敏感路径保护", style = MaterialTheme.typography.bodyLarge)
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(20.dp))
+
+            // User Prompt
+            Text("用户提示词", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "附加在系统提示词之后的自定义规则（如编码规范、执行偏好等），不受上下文压缩影响。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+            Spacer(Modifier.height(4.dp))
+            OutlinedTextField(
+                value = userPrompt,
+                onValueChange = { userPrompt = it },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp, max = 240.dp),
+                label = { Text("例如：遵循 Kotlin 官方编码规范，优先使用不可变数据结构") },
+                maxLines = 12,
+            )
+            Spacer(Modifier.height(20.dp))
 
             // Error message
             errorMessage?.let {

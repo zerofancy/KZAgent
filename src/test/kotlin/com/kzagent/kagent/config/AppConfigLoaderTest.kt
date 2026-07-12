@@ -87,6 +87,22 @@ class AppConfigLoaderTest {
     }
 
     @Test
+    fun userPromptRoundTripsBackslashesAndNewlines() {
+        val configFile = Files.createTempDirectory("kagent-prompt-roundtrip-test")
+            .resolve("kzagent")
+            .resolve("config.properties")
+        val prompt = """Use C:\Users\name and regex \d+\s+\w+.
+Keep the literal text \n unchanged.
+This is a real second line."""
+        val original = AppConfig(apiKey = "sk-test-local", userPrompt = prompt)
+
+        ConfigWriter.save(configFile, original)
+        val loaded = AppConfigLoader.load(configFile, emptyMap())
+
+        assertEquals(prompt, loaded.userPrompt)
+    }
+
+    @Test
     fun redactsSecrets() {
         val redacted = SecretRedactor.redact("Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz")
 

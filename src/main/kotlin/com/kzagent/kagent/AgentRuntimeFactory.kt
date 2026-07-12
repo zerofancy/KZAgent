@@ -42,7 +42,7 @@ object AgentRuntimeFactory {
                 approvalPolicy = approvalPolicy,
                 sensitivePathProtection = config.sensitivePathProtection,
             ).registry(),
-            promptBuilder = PromptBuilder(pathGuard.root),
+            promptBuilder = PromptBuilder(pathGuard.root, config.userPrompt),
             sessionWriter = writer,
             observer = observer,
         )
