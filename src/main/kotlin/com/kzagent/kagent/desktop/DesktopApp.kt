@@ -58,6 +58,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.AppConfigLoader
+import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.agent.estimateContextTokens
 import com.kzagent.kagent.config.SecretRedactor
@@ -265,7 +266,7 @@ private fun desktopLog(message: String, throwable: Throwable? = null) {
 
 private fun desktopLogPath(): Path =
     System.getProperty("kzagent.logPath")?.let(Path::of)
-        ?: Path.of(System.getProperty("user.home"), ".kzagent", "desktop.log")
+        ?: AppDataDir.appDir().resolve("desktop.log")
 
 private fun showWindowInForeground(window: java.awt.Window) {
     window.minimumSize = Dimension(880, 600)

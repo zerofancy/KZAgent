@@ -25,6 +25,15 @@ fun desktopRenderingJvmArgs(): List<String> = buildList {
     }
 }
 
+fun platformDesktopJvmArgs(): List<String> = buildList {
+    if (isMacOs) {
+        add("-Dapple.awt.application.name=KZAgent")
+        add("-Dapple.awt.UIElement=false")
+        add("-Xdock:name=KZAgent")
+    }
+    addAll(desktopRenderingJvmArgs())
+}
+
 kotlin {
     jvmToolchain(17)
     compilerOptions {
@@ -50,16 +59,11 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "com.kzagent.kagent.MainKt"
-        jvmArgs += listOf(
-            "-Dskiko.data.path=${layout.buildDirectory.dir("skiko").get().asFile.absolutePath}",
-            "-Dkzagent.logPath=${layout.buildDirectory.file("kzagent-desktop.log").get().asFile.absolutePath}",
-            "-Dapple.awt.application.name=KZAgent",
-            "-Dapple.awt.UIElement=false",
-            "-Xdock:name=KZAgent",
-        ) + desktopRenderingJvmArgs()
+        jvmArgs += platformDesktopJvmArgs()
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Exe, TargetFormat.Deb)
+            modules("java.net.http")
             packageName = "KZAgent"
             packageVersion = "1.0.0"
             macOS {
@@ -116,10 +120,6 @@ tasks.withType<JavaExec>().configureEach {
         jvmArgs(
             "-Dskiko.data.path=${layout.buildDirectory.dir("skiko").get().asFile.absolutePath}",
             "-Dkzagent.logPath=${layout.buildDirectory.file("kzagent-desktop.log").get().asFile.absolutePath}",
-            "-Dapple.awt.application.name=KZAgent",
-            "-Dapple.awt.UIElement=false",
-            "-Xdock:name=KZAgent",
         )
-        jvmArgs(desktopRenderingJvmArgs())
     }
 }
