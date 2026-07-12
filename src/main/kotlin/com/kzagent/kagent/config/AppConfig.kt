@@ -3,6 +3,7 @@ package com.kzagent.kagent.config
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.charset.StandardCharsets
+import java.nio.file.StandardOpenOption
 import java.io.StringReader
 import java.util.Properties
 
@@ -64,7 +65,7 @@ object AppConfigLoader {
         )
     }
 
-    private fun defaultConfigFile(env: Map<String, String>): Path {
+    internal fun defaultConfigFile(env: Map<String, String> = System.getenv()): Path {
         val osName = System.getProperty("os.name").lowercase()
         val userHome = System.getProperty("user.home")?.trim()?.takeIf { it.isNotEmpty() }
 
@@ -83,6 +84,27 @@ object AppConfigLoader {
         } ?: throw IllegalStateException("Cannot resolve user config directory for KZAgent.")
 
         return configDir.resolve("kzagent").resolve("config.properties")
+    }
+}
+
+object ConfigWriter {
+    fun save(config: AppConfig) {
+        val configFile = AppConfigLoader.defaultConfigFile()
+        Files.createDirectories(configFile.parent)
+        val content = buildString {
+            appendLine("deepseek.api.key=${config.apiKey}")
+            appendLine("deepseek.base.url=${config.baseUrl}")
+            appendLine("deepseek.model=${config.model}")
+            appendLine("deepseek.sensitive.path.protection=${config.sensitivePathProtection}")
+            appendLine("deepseek.context.window.size=${config.contextWindowSize}")
+        }
+        Files.writeString(
+            configFile,
+            content,
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+        )
     }
 }
 

@@ -56,6 +56,8 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.kzagent.kagent.config.AppConfig
+import com.kzagent.kagent.config.AppConfigLoader
 import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.agent.estimateContextTokens
 import com.kzagent.kagent.config.SecretRedactor
@@ -300,7 +302,33 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     var showRenameDialogIndex by remember { mutableStateOf(-1) }
     var renameText by remember { mutableStateOf("") }
     var showCompressConfirm by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    var savedConfig by remember { mutableStateOf<AppConfig?>(null) }
     val scope = rememberCoroutineScope()
+
+    // Check configuration on startup; if API key is missing, open settings
+    LaunchedEffect(Unit) {
+        runCatching { AppConfigLoader.load() }
+            .onSuccess { savedConfig = it }
+            .onFailure {
+                savedConfig = null
+                showSettings = true
+            }
+    }
+
+    // Helper to derive safe default values for settings panel
+    fun settingsDefaults(): Pair<String, String> {
+        val existing = savedConfig
+        return if (existing != null) {
+            existing.apiKey to existing.baseUrl
+        } else {
+            // Try to load partial config to prefill what's available
+            runCatching {
+                val cfg = AppConfigLoader.load()
+                cfg.apiKey to cfg.baseUrl
+            }.getOrDefault("" to AppConfig.DEFAULT_BASE_URL)
+        }
+    }
 
     val approvalPolicy = ApprovalPolicy { action, details ->
         suspendCancellableCoroutine { continuation ->
@@ -316,8 +344,21 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
         }
     }
 
-    val sessionManager = remember {
+    val sessionManager = remember(workspace, savedConfig) {
         SessionManager(approvalPolicy).also { it.loadOrCreate(workspace) }
+    }
+
+    // When settings are saved, reset session runtimes so they pick up new config
+    fun onSettingsSaved() {
+        savedConfig = runCatching { AppConfigLoader.load() }.getOrNull()
+        // Clear all runtimes so they will be recreated with new config
+        sessionManager.sessions.forEach { session ->
+            session.currentJob?.cancel()
+            session.runtime = null
+            session.error = null
+            session.status = "正在加载..."
+        }
+        showSettings = false
     }
 
     // Auto-collapse tool messages when a session becomes idle
@@ -424,6 +465,9 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                             sessionManager.loadOrCreate(newWs)
                         }
                     },
+                    onSettings = {
+                        showSettings = true
+                    },
                     modifier = Modifier.width(240.dp).fillMaxSize(),
                 )
 
@@ -431,6 +475,22 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                 VerticalDivider(modifier = Modifier.fillMaxHeight())
 
                 // ---- Main Chat Area ----
+                if (showSettings) {
+                    val (defaultApiKey, defaultBaseUrl) = settingsDefaults()
+                    SettingsPanel(
+                        initialApiKey = defaultApiKey,
+                        initialBaseUrl = defaultBaseUrl,
+                        initialModel = savedConfig?.model ?: AppConfig.DEFAULT_MODEL,
+                        initialContextWindowSize = savedConfig?.contextWindowSize ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
+                        initialSensitivePathProtection = savedConfig?.sensitivePathProtection ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION,
+                        onSave = { onSettingsSaved() },
+                        onCancel = {
+                            if (savedConfig != null) {
+                                showSettings = false
+                            }
+                        },
+                    )
+                } else {
                 val session = sessionManager.activeSession()
                 Column(modifier = Modifier.weight(1f).fillMaxHeight().padding(16.dp)) {
                     Header(
@@ -506,6 +566,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                             session.status = "正在终止..."
                         },
                     )
+                }
                 }
             }
         }
@@ -599,6 +660,7 @@ private fun SessionSidebar(
     onDelete: (Int) -> Unit,
     onRename: (Int) -> Unit,
     onChooseWorkspace: () -> Unit,
+    onSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -636,6 +698,14 @@ private fun SessionSidebar(
         }
         Spacer(Modifier.height(6.dp))
         HorizontalDivider()
+        Spacer(Modifier.height(6.dp))
+        OutlinedButton(
+            onClick = onSettings,
+            modifier = Modifier.fillMaxWidth().height(32.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+        ) {
+            Text("⚙ 设置", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+        }
         Spacer(Modifier.height(6.dp))
 
         LazyColumn(modifier = Modifier.weight(1f)) {

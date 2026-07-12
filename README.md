@@ -37,7 +37,9 @@ KZAgent 的核心思想是让大语言模型（LLM）通过工具调用（Tool C
 
 ### 1. 配置 API Key
 
-在用户配置目录创建 `kzagent/config.properties` 文件：
+**方式一（推荐）：通过桌面应用内置设置面板配置。** 首次启动桌面应用时如未检测到 API Key，将自动打开设置面板；你也可以随时通过侧边栏的「⚙ 设置」按钮进入。在面板中可配置 API Key、Base URL、模型名称、上下文窗口大小和敏感路径保护等全部选项。
+
+**方式二：手动创建配置文件。** 在用户配置目录创建 `kzagent/config.properties` 文件：
 
 - Windows: `%APPDATA%\kzagent\config.properties`
 - macOS: `~/Library/Application Support/kzagent/config.properties`
@@ -59,11 +61,14 @@ export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 
 | 属性 | 默认值 | 说明 |
 |------|:------:|------|
+| `deepseek.model` | `deepseek-v4-pro` | 使用的 DeepSeek 模型名称 |
+| `deepseek.base.url` | `https://api.deepseek.com` | API 端点地址（兼容 OpenAI 格式的均可） |
 | `deepseek.sensitive.path.protection` | `false` | 敏感路径保护开关。开启后拦截对 `local.properties`、`.env` 等本地敏感配置文件的访问 |
+| `deepseek.context.window.size` | `1000000` | 上下文窗口大小（tokens），用于计算压缩阈值 |
 
 ### 2. 运行
 
-项目使用 Gradle 9.1 和 JVM 17+。如果系统默认 Java 不是 17+，请先设置 `JAVA_HOME`。
+项目使用 Gradle 和 JVM 17+。如果系统默认 Java 不是 17+，请先设置 `JAVA_HOME`。
 
 ```bash
 # 启动桌面应用
@@ -93,11 +98,12 @@ export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 
 桌面端支持：
 
-- 默认使用启动目录作为工作区，并可切换目录
-- 加载最新 `.kagent/sessions/` 历史用于续聊
+- 默认使用启动目录作为工作区，并可任意切换目录
+- 加载最新 `.kagent/sessions/` 历史用于续聊，支持多会话管理
+- 侧边栏提供**设置面板**：配置 DeepSeek API Key、Base URL、模型、上下文窗口等
+- 启动时自动检测配置：如未设置 API Key 将**默认跳转到设置界面**
 - 在状态栏显示模型请求、工具执行和审批状态
 - 当模型请求执行 `run_command` 时，通过弹窗审批
-- 配置从用户配置目录 `kzagent/config.properties` 读取，`DEEPSEEK_API_KEY` 优先级更高
 
 ### `ask` — 单次提问模式
 
@@ -250,11 +256,13 @@ src/main/kotlin/com/kzagent/kagent/
 ├── cli/
 │   └── Main.kt             # 入口：ask / chat 命令
 ├── desktop/
-│   └── DesktopApp.kt       # 桌面应用 UI 与审批弹窗
+│   ├── DesktopApp.kt       # 桌面应用 UI（主界面、侧边栏、消息列表、审批弹窗）
+│   ├── SessionManager.kt   # 多会话管理（新建、切换、改名、删除）
+│   └── SettingsPanel.kt    # 设置面板（API Key、模型、URL 等 GUI 配置）
 ├── Main.kt                 # 根入口：无参数桌面；有参数 CLI
 ├── AgentRuntimeFactory.kt  # 共享运行时创建
 ├── config/
-│   └── AppConfig.kt        # 配置加载与密钥脱敏
+│   └── AppConfig.kt        # 配置加载（AppConfigLoader）、保存（ConfigWriter）与密钥脱敏
 ├── llm/
 │   ├── DeepSeekClient.kt   # DeepSeek API 客户端
 │   └── Messages.kt         # 消息模型定义
@@ -262,7 +270,10 @@ src/main/kotlin/com/kzagent/kagent/
     ├── Tool.kt             # 工具定义、注册表、JSON Schema 构建
     ├── LocalTools.kt       # 5 个本地工具实现
     ├── Approval.kt         # 审批策略（终端确认 / 始终批准 / 始终拒绝）
-    └── PathGuard.kt        # 路径安全守卫
+    ├── PathGuard.kt        # 路径安全守卫
+    ├── TextFileCodec.kt    # 多编码文本文件读写（UTF-8/16/32、GBK、Windows-1252）
+    ├── UnifiedPatch.kt     # Git unified diff 解析与应用引擎
+    └── ToolQuota.kt        # 工具调用配额系统（含自动扩容）
 ```
 
 ---
@@ -272,9 +283,11 @@ src/main/kotlin/com/kzagent/kagent/
 ### 用户配置文件 `kzagent/config.properties`
 
 ```properties
-deepseek.api.key=sk-xxxxxxxxxxxxxxxx    # DeepSeek API Key（必填）
-deepseek.model=deepseek-v4-pro        # 模型名称（可选，默认 deepseek-v4-pro）
-deepseek.base.url=https://api.deepseek.com  # API 地址（可选）
+deepseek.api.key=sk-xxxxxxxxxxxxxxxx          # DeepSeek API Key（必填）
+deepseek.model=deepseek-v4-pro                # 模型名称（可选）
+deepseek.base.url=https://api.deepseek.com    # API 地址（可选）
+deepseek.sensitive.path.protection=false      # 敏感路径保护（可选）
+deepseek.context.window.size=1000000          # 上下文窗口 tokens（可选）
 ```
 
 ### 环境变量
