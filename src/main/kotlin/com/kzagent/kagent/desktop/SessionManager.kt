@@ -27,7 +27,7 @@ import java.util.stream.Collectors
 class SessionData(
     val id: String,
     name: String,
-    val workspace: Path,
+    workspace: Path,
     val sessionFile: Path,
     runtime: AgentRuntime? = null,
     conversationHistory: List<AgentMessage> = emptyList(),
@@ -39,6 +39,8 @@ class SessionData(
     error: String? = null,
 ) {
     var name by mutableStateOf(name)
+    var workspace by mutableStateOf(workspace)
+        private set
     var titleRevision: Int = 0
         private set
     var runtime by mutableStateOf(runtime)
@@ -53,26 +55,33 @@ class SessionData(
         this.name = name
         titleRevision++
     }
+
+    fun updateWorkspace(workspace: Path) {
+        this.workspace = workspace.toAbsolutePath().normalize()
+    }
 }
 
-class SessionManager(private val approvalPolicy: ApprovalPolicy) {
+class SessionManager(
+    private val approvalPolicy: ApprovalPolicy,
+    private val sessionsRoot: Path = AppDataDir.ensureSessionsRoot(),
+) {
     val sessions: SnapshotStateList<SessionData> = mutableStateListOf()
     var activeSessionIndex by mutableStateOf(0)
 
     /** Load all existing sessions from disk, or create a default one. */
     fun loadOrCreate(workspace: Path) {
-        val sessionsDir = AppDataDir.ensureSessionsDir(workspace)
-        if (Files.isDirectory(sessionsDir)) {
-            val sessionFiles = Files.list(sessionsDir).use { stream ->
+        Files.createDirectories(sessionsRoot)
+        if (Files.isDirectory(sessionsRoot)) {
+            val sessionFiles = Files.walk(sessionsRoot, 2).use { stream ->
                 stream
-                    .filter { it.toString().endsWith(".jsonl") }
+                    .filter { Files.isRegularFile(it) && it.toString().endsWith(".jsonl") }
                     .sorted(compareByDescending { Files.getLastModifiedTime(it).toMillis() })
                     .collect(Collectors.toList())
             }
             if (sessionFiles.isNotEmpty()) {
                 sessionFiles.forEach { file ->
                     runCatching { createSessionFromFile(workspace, file) }
-                        .onSuccess(sessions::add)
+                        .onSuccess { session -> session?.let(sessions::add) }
                 }
                 if (sessions.isNotEmpty()) {
                     // Activate the most recent readable session (first in reverse order)
@@ -87,9 +96,11 @@ class SessionManager(private val approvalPolicy: ApprovalPolicy) {
         activeSessionIndex = 0
     }
 
-    private fun createSessionFromFile(workspace: Path, file: Path): SessionData {
-        val sessionsDir = AppDataDir.sessionsDir(workspace)
-        val history = SessionReader(sessionsDir).loadFile(file)
+    private fun createSessionFromFile(workspace: Path, file: Path): SessionData? {
+        val sessionWorkspace = loadSessionWorkspace(file)
+            ?: workspace.takeIf { file.parent.fileName.toString() == AppDataDir.workspaceKey(it) }
+            ?: return null
+        val history = SessionReader(file.parent).loadFile(file)
             .filter { it !is AgentMessage.System }
         val tokens = loadTokenCount(file)
         val displayMsgs = history.toDisplayMessages()
@@ -98,17 +109,17 @@ class SessionManager(private val approvalPolicy: ApprovalPolicy) {
         return SessionData(
             id = id,
             name = name,
-            workspace = workspace,
+            workspace = sessionWorkspace,
             sessionFile = file,
             conversationHistory = history,
             messages = mutableStateListOf<DisplayMessage>().also { it.addAll(displayMsgs) },
             usedTokens = tokens,
             status = "就绪",
-        )
+        ).also { persistSessionWorkspace(it) }
     }
 
     fun createNewSession(workspace: Path): SessionData {
-        val sessionsDir = AppDataDir.sessionsDir(workspace)
+        val sessionsDir = sessionsRoot.resolve(AppDataDir.workspaceKey(workspace))
         Files.createDirectories(sessionsDir)
         val id = "session-${UUID.randomUUID()}"
         val file = sessionsDir.resolve("$id.jsonl")
@@ -122,13 +133,25 @@ class SessionManager(private val approvalPolicy: ApprovalPolicy) {
             status = "就绪",
         )
         persistSessionName(session)
+        persistSessionWorkspace(session)
         return session
     }
 
-    fun addNewSession(workspace: Path) {
-        val session = createNewSession(workspace)
+    fun addNewSession() {
+        val session = createNewSession(activeSession().workspace)
         sessions.add(0, session)
         activeSessionIndex = 0
+    }
+
+    fun changeWorkspace(session: SessionData, workspace: Path) {
+        session.currentJob?.cancel()
+        session.currentJob = null
+        session.isBusy = false
+        session.runtime = null
+        session.error = null
+        session.updateWorkspace(workspace)
+        session.status = "正在加载..."
+        persistSessionWorkspace(session)
     }
 
     fun switchTo(index: Int) {
@@ -172,6 +195,7 @@ class SessionManager(private val approvalPolicy: ApprovalPolicy) {
         // Remove session file from disk
         runCatching { Files.deleteIfExists(session.sessionFile) }
         runCatching { Files.deleteIfExists(nameFile(session.sessionFile)) }
+        runCatching { Files.deleteIfExists(workspaceFile(session.sessionFile)) }
 
         sessions.removeAt(index)
         if (activeSessionIndex >= sessions.size) {
@@ -202,6 +226,9 @@ class SessionManager(private val approvalPolicy: ApprovalPolicy) {
         private fun nameFile(sessionFile: Path): Path =
             sessionFile.resolveSibling("${sessionFile.fileName}.name")
 
+        private fun workspaceFile(sessionFile: Path): Path =
+            sessionFile.resolveSibling("${sessionFile.fileName}.workspace")
+
         private fun loadSessionName(sessionFile: Path): String? = runCatching {
             Files.readString(nameFile(sessionFile), java.nio.charset.StandardCharsets.UTF_8)
                 .trim()
@@ -212,6 +239,22 @@ class SessionManager(private val approvalPolicy: ApprovalPolicy) {
             Files.writeString(
                 nameFile(session.sessionFile),
                 session.name,
+                java.nio.charset.StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING,
+            )
+        }
+
+        private fun loadSessionWorkspace(sessionFile: Path): Path? = runCatching {
+            Path.of(Files.readString(workspaceFile(sessionFile), java.nio.charset.StandardCharsets.UTF_8).trim())
+                .toAbsolutePath()
+                .normalize()
+        }.getOrNull()
+
+        private fun persistSessionWorkspace(session: SessionData) {
+            Files.writeString(
+                workspaceFile(session.sessionFile),
+                session.workspace.toString(),
                 java.nio.charset.StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING,

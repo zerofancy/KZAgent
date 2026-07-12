@@ -50,6 +50,7 @@ java {
 dependencies {
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.compose.material3:material3:1.9.0")
+    implementation("io.github.vinceglb:filekit-dialogs:0.14.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
@@ -73,6 +74,7 @@ compose.desktop {
                 iconFile.set(project.file("src/main/resources/icons/kzagent.ico"))
             }
             linux {
+                modules("jdk.security.auth")
                 iconFile.set(project.file("src/main/resources/icons/kzagent.png"))
             }
         }
@@ -87,7 +89,9 @@ tasks.withType<JavaExec>().configureEach {
     if (name == "run") {
         val jbrLauncher = javaToolchains.launcherFor {
             languageVersion.set(JavaLanguageVersion.of(21))
-            vendor.set(JvmVendorSpec.JETBRAINS)
+            if (isMacOs) {
+                vendor.set(JvmVendorSpec.JETBRAINS)
+            }
         }
         javaLauncher.set(jbrLauncher)
         doFirst {

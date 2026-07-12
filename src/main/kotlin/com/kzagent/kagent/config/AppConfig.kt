@@ -8,6 +8,8 @@ import java.io.StringReader
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.Properties
+import io.github.vinceglb.filekit.FileKit
+import io.github.vinceglb.filekit.filesDir
 
 data class AppConfig(
     val apiKey: String,
@@ -71,26 +73,8 @@ object AppConfigLoader {
         )
     }
 
-    internal fun defaultConfigFile(env: Map<String, String> = System.getenv()): Path {
-        val osName = System.getProperty("os.name").lowercase()
-        val userHome = System.getProperty("user.home")?.trim()?.takeIf { it.isNotEmpty() }
-
-        val configDir = when {
-            osName.contains("win") -> {
-                env["APPDATA"]?.trim()?.takeIf { it.isNotEmpty() }?.let { Path.of(it) }
-                    ?: env["USERPROFILE"]?.trim()?.takeIf { it.isNotEmpty() }
-                        ?.let { Path.of(it, "AppData", "Roaming") }
-                    ?: userHome?.let { Path.of(it, "AppData", "Roaming") }
-            }
-            osName.contains("mac") -> userHome?.let { Path.of(it, "Library", "Application Support") }
-            else -> {
-                env["XDG_CONFIG_HOME"]?.trim()?.takeIf { it.isNotEmpty() }?.let { Path.of(it) }
-                    ?: userHome?.let { Path.of(it, ".config") }
-            }
-        } ?: throw IllegalStateException("Cannot resolve user config directory for KZAgent.")
-
-        return configDir.resolve("kzagent").resolve("config.properties")
-    }
+    internal fun defaultConfigFile(@Suppress("UNUSED_PARAMETER") env: Map<String, String> = System.getenv()): Path =
+        FileKitPaths.filesDir().resolve("config.properties")
 }
 
 object ConfigWriter {
@@ -127,8 +111,12 @@ object ConfigWriter {
 }
 
 object AppDataDir {
-    /** e.g. %APPDATA%/kzagent, ~/Library/Application Support/kzagent, ~/.config/kzagent */
-    fun appDir(): Path = AppConfigLoader.defaultConfigFile().parent
+    /** FileKit-managed application data directory for the current platform. */
+    fun appDir(): Path = FileKitPaths.filesDir()
+
+    fun sessionsRoot(): Path = appDir().resolve("sessions")
+
+    fun ensureSessionsRoot(): Path = sessionsRoot().also(Files::createDirectories)
 
     /** Fixed-length, collision-resistant sessions directory for a workspace. */
     fun sessionsDir(workspace: Path): Path = sessionsDir(workspace, appDir())
@@ -160,6 +148,26 @@ object AppDataDir {
     }
 }
 
+object FileKitPaths {
+    private const val APP_ID = "kzagent"
+    @Volatile private var initialized = false
+
+    fun initialize() {
+        if (initialized) return
+        synchronized(this) {
+            if (!initialized) {
+                FileKit.init(appId = APP_ID)
+                initialized = true
+            }
+        }
+    }
+
+    fun filesDir(): Path {
+        initialize()
+        return FileKit.filesDir.file.toPath().toAbsolutePath().normalize()
+    }
+}
+
 object SecretRedactor {
     private val secretPatterns = listOf(
         Regex("sk-[A-Za-z0-9_-]{12,}"),
@@ -181,4 +189,3 @@ object SecretRedactor {
         return redacted
     }
 }
-

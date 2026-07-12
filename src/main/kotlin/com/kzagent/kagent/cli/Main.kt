@@ -4,12 +4,14 @@ import com.kzagent.kagent.AgentRuntimeFactory
 import com.kzagent.kagent.agent.SessionReader
 import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.config.SecretRedactor
+import com.kzagent.kagent.config.FileKitPaths
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.TerminalApprovalPolicy
 import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
 
 fun main(args: Array<String>) {
+    FileKitPaths.initialize()
     kotlin.system.exitProcess(runCli(args))
 }
 

@@ -2,9 +2,11 @@ package com.kzagent.kagent
 
 import com.kzagent.kagent.cli.runCli
 import com.kzagent.kagent.desktop.runDesktopApp
+import com.kzagent.kagent.config.FileKitPaths
 import kotlin.system.exitProcess
 
 fun main(args: Array<String>) {
+    FileKitPaths.initialize()
     when (LaunchModeResolver.resolve(args)) {
         LaunchMode.Desktop -> runDesktopApp()
         LaunchMode.Cli -> exitProcess(runCli(args))

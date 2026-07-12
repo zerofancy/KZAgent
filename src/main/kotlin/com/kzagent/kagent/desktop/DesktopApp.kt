@@ -65,6 +65,9 @@ import com.kzagent.kagent.config.SecretRedactor
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.ToolResult
+import io.github.vinceglb.filekit.FileKit
+import io.github.vinceglb.filekit.PlatformFile
+import io.github.vinceglb.filekit.dialogs.openDirectoryPicker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -83,7 +86,6 @@ import java.time.OffsetDateTime
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.swing.JFileChooser
 import javax.swing.JFrame
 import javax.imageio.ImageIO
 import javax.swing.JLabel
@@ -296,7 +298,6 @@ private fun requestMacForeground() {
 
 @Composable
 private fun KZAgentDesktopApp(initialWorkspace: Path) {
-    var workspace by remember { mutableStateOf(initialWorkspace) }
     var input by remember { mutableStateOf("") }
     val pendingApprovals = remember { mutableStateListOf<PendingApproval>() }
     var showDeleteConfirmIndex by remember { mutableStateOf(-1) }
@@ -345,8 +346,8 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
         }
     }
 
-    val sessionManager = remember(workspace, savedConfig) {
-        SessionManager(approvalPolicy).also { it.loadOrCreate(workspace) }
+    val sessionManager = remember(savedConfig) {
+        SessionManager(approvalPolicy).also { it.loadOrCreate(initialWorkspace) }
     }
 
     // When settings are saved, reset session runtimes so they pick up new config
@@ -397,7 +398,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
 
     // Ensure active session has a runtime
     val activeSession = sessionManager.activeSession()
-    LaunchedEffect(workspace, sessionManager, activeSession.id, activeSession.runtime) {
+    LaunchedEffect(sessionManager, activeSession.id, activeSession.workspace, activeSession.runtime) {
         val session = sessionManager.activeSession()
         session.status = "正在加载..."
         val observer = createObserver(session)
@@ -452,19 +453,18 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                     sessions = sessionManager.sessions,
                     activeIndex = sessionManager.activeSessionIndex,
                     onSelect = { sessionManager.switchTo(it) },
-                    onAdd = { sessionManager.addNewSession(workspace) },
+                    onAdd = { sessionManager.addNewSession() },
                     onDelete = { showDeleteConfirmIndex = it },
                     onRename = { idx ->
                         renameText = sessionManager.sessions[idx].name
                         showRenameDialogIndex = idx
                     },
                     onChooseWorkspace = {
-                        chooseWorkspace(workspace)?.let { newWs ->
-                            sessionManager.cancelAllSessions()
-                            pendingApprovals.toList().forEach { it.complete(false) }
-                            workspace = newWs
-                            sessionManager.sessions.clear()
-                            sessionManager.loadOrCreate(newWs)
+                        scope.launch {
+                            val session = sessionManager.activeSession()
+                            chooseWorkspace(session.workspace)?.let { newWs ->
+                                sessionManager.changeWorkspace(session, newWs)
+                            }
                         }
                     },
                     onSettings = {
@@ -497,7 +497,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                 val session = sessionManager.activeSession()
                 Column(modifier = Modifier.weight(1f).fillMaxHeight().padding(16.dp)) {
                     Header(
-                        workspace = workspace,
+                        workspace = session.workspace,
                         status = session.status,
                         isBusy = session.isBusy,
                         contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000),
@@ -1034,16 +1034,12 @@ private fun ApprovalDialog(approval: PendingApproval) {
     )
 }
 
-private fun chooseWorkspace(current: Path): Path? {
-    val chooser = JFileChooser(current.toFile())
-    chooser.fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-    chooser.dialogTitle = "选择 KZAgent 工作区"
-    return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
-        chooser.selectedFile.toPath().toAbsolutePath().normalize()
-    } else {
-        null
-    }
-}
+private suspend fun chooseWorkspace(current: Path): Path? =
+    FileKit.openDirectoryPicker(directory = PlatformFile(current.toFile()))
+        ?.file
+        ?.toPath()
+        ?.toAbsolutePath()
+        ?.normalize()
 
 fun List<AgentMessage>.toDisplayMessages(): List<DisplayMessage> {
     return mapNotNull { message ->
