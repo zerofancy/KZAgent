@@ -6,6 +6,7 @@ import com.kzagent.kagent.agent.NoOpAgentObserver
 import com.kzagent.kagent.agent.PromptBuilder
 import com.kzagent.kagent.agent.SessionReader
 import com.kzagent.kagent.agent.SessionWriter
+import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.config.AppConfigLoader
 import com.kzagent.kagent.llm.DeepSeekClient
 import com.kzagent.kagent.tools.ApprovalPolicy
@@ -28,12 +29,13 @@ object AgentRuntimeFactory {
         sessionFile: Path? = null,
     ): AgentRuntime {
         val root = workspace.toAbsolutePath().normalize()
+        val sessionsDir = AppDataDir.ensureSessionsDir(root)
         val config = AppConfigLoader.load()
         val pathGuard = PathGuard(root)
         val writer = if (sessionFile != null) {
             SessionWriter(sessionFile)
         } else {
-            SessionWriter.createNew(root)
+            SessionWriter.createNew(sessionsDir)
         }
         val agent = CodingAgent(
             model = DeepSeekClient(config),
@@ -49,7 +51,7 @@ object AgentRuntimeFactory {
         return AgentRuntime(
             workspace = pathGuard.root,
             agent = agent,
-            sessionReader = SessionReader(pathGuard.root),
+            sessionReader = SessionReader(sessionsDir),
             contextWindowSize = config.contextWindowSize,
         )
     }

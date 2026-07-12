@@ -15,8 +15,7 @@ import java.nio.file.Path
 import java.util.Comparator
 import java.util.stream.Collectors
 
-class SessionReader(workspace: Path) {
-    private val sessionsDir: Path = workspace.resolve(".kagent").resolve("sessions")
+class SessionReader(private val sessionsDir: Path) {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun loadLatest(): List<AgentMessage>? {

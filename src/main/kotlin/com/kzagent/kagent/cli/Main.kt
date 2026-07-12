@@ -2,6 +2,7 @@ package com.kzagent.kagent.cli
 
 import com.kzagent.kagent.AgentRuntimeFactory
 import com.kzagent.kagent.agent.SessionReader
+import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.config.SecretRedactor
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.TerminalApprovalPolicy
@@ -60,7 +61,8 @@ private suspend fun interactiveChat(
     agent: com.kzagent.kagent.agent.CodingAgent,
     initialPrompt: String?,
 ) {
-    val reader = SessionReader(workspace)
+    val sessionsDir = AppDataDir.ensureSessionsDir(workspace)
+    val reader = SessionReader(sessionsDir)
     val resumedHistory: List<AgentMessage> = if (initialPrompt == null) {
         reader.loadLatestHistory().orEmpty()
     } else {

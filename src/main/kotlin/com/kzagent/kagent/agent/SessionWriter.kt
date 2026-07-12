@@ -67,13 +67,12 @@ class SessionWriter(private val sessionPath: Path) {
     }
 
     companion object {
-        fun createNew(workspace: Path): SessionWriter {
-            val dir = workspace.resolve(".kagent").resolve("sessions")
-            Files.createDirectories(dir)
+        fun createNew(sessionsDir: Path): SessionWriter {
+            Files.createDirectories(sessionsDir)
             val timestamp = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
                 .replace(":", "")
                 .replace(".", "")
-            return SessionWriter(dir.resolve("session-$timestamp.jsonl"))
+            return SessionWriter(sessionsDir.resolve("session-$timestamp.jsonl"))
         }
     }
 }

@@ -5,6 +5,8 @@ import java.nio.file.Path
 import java.nio.charset.StandardCharsets
 import java.nio.file.StandardOpenOption
 import java.io.StringReader
+import java.security.MessageDigest
+import java.util.Locale
 import java.util.Properties
 
 data class AppConfig(
@@ -122,6 +124,40 @@ object ConfigWriter {
         .replace("\\", "\\\\")
         .replace("\r", "\\r")
         .replace("\n", "\\n")
+}
+
+object AppDataDir {
+    /** e.g. %APPDATA%/kzagent, ~/Library/Application Support/kzagent, ~/.config/kzagent */
+    fun appDir(): Path = AppConfigLoader.defaultConfigFile().parent
+
+    /** Fixed-length, collision-resistant sessions directory for a workspace. */
+    fun sessionsDir(workspace: Path): Path = sessionsDir(workspace, appDir())
+
+    internal fun sessionsDir(workspace: Path, appDir: Path): Path =
+        appDir.resolve("sessions").resolve(workspaceKey(workspace))
+
+    /** Creates and returns the sessions directory for a workspace. */
+    fun ensureSessionsDir(workspace: Path): Path = ensureSessionsDir(workspace, appDir())
+
+    internal fun ensureSessionsDir(workspace: Path, appDir: Path): Path {
+        val destination = sessionsDir(workspace, appDir)
+        Files.createDirectories(destination)
+        return destination
+    }
+
+    internal fun workspaceKey(workspace: Path): String {
+        val normalized = runCatching { workspace.toRealPath() }
+            .getOrElse { workspace.toAbsolutePath().normalize() }
+            .toString()
+            .let { if (System.getProperty("os.name").lowercase().contains("win")) it.lowercase(Locale.ROOT) else it }
+        val digest = MessageDigest.getInstance("SHA-256").digest(normalized.toByteArray(StandardCharsets.UTF_8))
+        val hash = digest.take(16).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        val label = workspace.fileName?.toString().orEmpty()
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .take(40)
+            .ifBlank { "workspace" }
+        return "$label-$hash"
+    }
 }
 
 object SecretRedactor {

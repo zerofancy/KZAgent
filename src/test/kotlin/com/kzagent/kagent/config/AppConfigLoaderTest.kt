@@ -6,6 +6,8 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 class AppConfigLoaderTest {
     @Test
@@ -100,6 +102,20 @@ This is a real second line."""
         val loaded = AppConfigLoader.load(configFile, emptyMap())
 
         assertEquals(prompt, loaded.userPrompt)
+    }
+
+    @Test
+    fun workspaceSessionKeysAreFixedLengthAndDoNotCollideForSanitizedPaths() {
+        val root = Files.createTempDirectory("kagent-workspace-key-test")
+        val first = root.resolve("a_b").resolve("c")
+        val second = root.resolve("a").resolve("b_c")
+
+        val firstKey = AppDataDir.workspaceKey(first)
+        val secondKey = AppDataDir.workspaceKey(second)
+
+        assertNotEquals(firstKey, secondKey)
+        assertTrue(firstKey.length <= 73)
+        assertTrue(secondKey.length <= 73)
     }
 
     @Test

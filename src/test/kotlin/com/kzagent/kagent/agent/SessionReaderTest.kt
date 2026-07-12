@@ -30,7 +30,7 @@ class SessionReaderTest {
             """.trimIndent() + "\n",
         )
 
-        val history = SessionReader(dir).loadLatestHistory()
+        val history = SessionReader(sessions).loadLatestHistory()
 
         assertNotNull(history)
         assertEquals(3, history.size)

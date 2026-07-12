@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.kzagent.kagent.AgentRuntime
 import com.kzagent.kagent.AgentRuntimeFactory
+import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.agent.SessionReader
 import com.kzagent.kagent.llm.AgentMessage
@@ -60,7 +61,7 @@ class SessionManager(private val approvalPolicy: ApprovalPolicy) {
 
     /** Load all existing sessions from disk, or create a default one. */
     fun loadOrCreate(workspace: Path) {
-        val sessionsDir = workspace.resolve(".kagent").resolve("sessions")
+        val sessionsDir = AppDataDir.ensureSessionsDir(workspace)
         if (Files.isDirectory(sessionsDir)) {
             val sessionFiles = Files.list(sessionsDir).use { stream ->
                 stream
@@ -87,7 +88,8 @@ class SessionManager(private val approvalPolicy: ApprovalPolicy) {
     }
 
     private fun createSessionFromFile(workspace: Path, file: Path): SessionData {
-        val history = SessionReader(workspace).loadFile(file)
+        val sessionsDir = AppDataDir.sessionsDir(workspace)
+        val history = SessionReader(sessionsDir).loadFile(file)
             .filter { it !is AgentMessage.System }
         val tokens = loadTokenCount(file)
         val displayMsgs = history.toDisplayMessages()
@@ -106,10 +108,10 @@ class SessionManager(private val approvalPolicy: ApprovalPolicy) {
     }
 
     fun createNewSession(workspace: Path): SessionData {
-        val dir = workspace.resolve(".kagent").resolve("sessions")
-        Files.createDirectories(dir)
+        val sessionsDir = AppDataDir.sessionsDir(workspace)
+        Files.createDirectories(sessionsDir)
         val id = "session-${UUID.randomUUID()}"
-        val file = dir.resolve("$id.jsonl")
+        val file = sessionsDir.resolve("$id.jsonl")
         Files.createFile(file)
         val session = SessionData(
             id = id,
