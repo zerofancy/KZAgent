@@ -1,0 +1,3 @@
+-keep class org.freedesktop.dbus.** { *; }
+-keep class io.github.vinceglb.** { *; }
+-keep class com.sun.jna.** { *; }

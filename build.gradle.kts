@@ -70,11 +70,23 @@ compose.desktop {
             }
             windows {
                 iconFile.set(project.file("src/main/resources/icons/kzagent.ico"))
+                menuGroup = "ntutn"
+                upgradeUuid = "ca802488-32a0-4ea6-9d9f-d0d6b7c30f64"
             }
             linux {
                 modules("jdk.security.auth")
                 iconFile.set(project.file("src/main/resources/icons/kzagent.png"))
             }
+        }
+        buildTypes.release.proguard {
+            configurationFiles.from(
+                project.file("kotlinx-serialization.pro"),
+                project.file("coroutines.pro"),
+                project.file("okio.pro"),
+                project.file("filekit.pro"),
+                project.file("coil3.pro"),
+                //project.file("decompose.pro")
+            )
         }
     }
 }
