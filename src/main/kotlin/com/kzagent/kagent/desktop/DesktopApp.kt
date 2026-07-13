@@ -956,12 +956,14 @@ private fun Composer(
             enabled = enabled,
             modifier = Modifier.weight(1f).heightIn(min = 88.dp, max = 160.dp)
                 .onKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyUp &&
-                        event.key == Key.Enter &&
+                    if (event.key == Key.Enter &&
                         !event.isCtrlPressed
                     ) {
-                        if (isBusy) onTerminate() else onSend()
-                        true
+                        if (event.type == KeyEventType.KeyDown) {
+                            if (isBusy) onTerminate() else onSend()
+                        }
+                        // Consume both KeyDown and KeyUp to prevent newline insertion
+                        return@onKeyEvent true
                     } else {
                         false
                     }

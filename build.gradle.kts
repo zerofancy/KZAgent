@@ -1,5 +1,4 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
-import org.gradle.api.tasks.StopExecutionException
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -12,17 +11,16 @@ plugins {
 group = "com.kzagent"
 version = "0.1.0"
 
-fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
 val isMacOs = System.getProperty("os.name").lowercase().contains("mac")
 
 fun desktopRenderingJvmArgs(): List<String> = buildList {
     // macOS keeps the software renderer fallback because hardware rendering has
     // previously prevented the Swing-hosted Compose window from appearing.
-    if (isMacOs) {
-        add("-Dskiko.renderApi=SOFTWARE_COMPAT")
-        add("-Dsun.java2d.opengl=false")
-        add("-Dsun.java2d.metal=false")
-    }
+//    if (isMacOs) {
+//        add("-Dskiko.renderApi=SOFTWARE_COMPAT")
+//        add("-Dsun.java2d.opengl=false")
+//        add("-Dsun.java2d.metal=false")
+//    }
 }
 
 fun platformDesktopJvmArgs(): List<String> = buildList {
@@ -83,47 +81,4 @@ compose.desktop {
 
 tasks.test {
     useJUnitPlatform()
-}
-
-tasks.withType<JavaExec>().configureEach {
-    if (name == "run") {
-        val jbrLauncher = javaToolchains.launcherFor {
-            languageVersion.set(JavaLanguageVersion.of(21))
-            if (isMacOs) {
-                vendor.set(JvmVendorSpec.JETBRAINS)
-            }
-        }
-        javaLauncher.set(jbrLauncher)
-        doFirst {
-            setExecutable(jbrLauncher.get().executablePath.asFile.absolutePath)
-            if (isMacOs && !jvmArgs.orEmpty().contains("-XstartOnFirstThread")) {
-                jvmArgs("-XstartOnFirstThread")
-            }
-        }
-        doFirst {
-            val packagedApp = layout.buildDirectory.dir("compose/binaries/main/app/KZAgent.app").get().asFile
-            if (args.isEmpty() && packagedApp.exists()) {
-                val desktopLog = layout.buildDirectory.file("kzagent-desktop.log").get().asFile
-                println("Opening desktop app: ${packagedApp.absolutePath}")
-                providers.exec {
-                    commandLine(
-                        "sh",
-                        "-lc",
-                        "(sleep 0.5; /usr/bin/open -n -a ${shellQuote(packagedApp.absolutePath)} >> ${shellQuote(desktopLog.absolutePath)} 2>&1) >/dev/null 2>&1 &",
-                    )
-                }.result.get().assertNormalExitValue()
-                throw StopExecutionException("Opened desktop app bundle")
-            }
-        }
-        standardInput = System.`in`
-        systemProperty("kzagent.allowOpenFallback", "true")
-        systemProperty(
-            "kzagent.packagedAppPath",
-            layout.buildDirectory.dir("compose/binaries/main/app/KZAgent.app").get().asFile.absolutePath,
-        )
-        jvmArgs(
-            "-Dskiko.data.path=${layout.buildDirectory.dir("skiko").get().asFile.absolutePath}",
-            "-Dkzagent.logPath=${layout.buildDirectory.file("kzagent-desktop.log").get().asFile.absolutePath}",
-        )
-    }
 }
