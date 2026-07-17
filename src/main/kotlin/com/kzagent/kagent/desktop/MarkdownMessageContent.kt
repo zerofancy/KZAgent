@@ -64,7 +64,8 @@ internal fun MessageContent(
         return
     }
 
-    val markdownState = rememberMarkdownState(message.content)
+    val escapedContent = remember(message.content) { escapeUnsupportedMarkdown(message.content) }
+    val markdownState = rememberMarkdownState(escapedContent)
     val imageAltByLink = remember(message.content) { extractImageAltByLink(message.content) }
     val imageTransformer = remember(workspace, imageAltByLink) {
         WorkspaceImageTransformer(workspace, imageAltByLink)
@@ -105,6 +106,33 @@ internal fun MessageContent(
                 )
             },
         )
+    }
+}
+
+/**
+ * Escapes markdown syntax for features that the renderer doesn't handle correctly,
+ * so they display as raw text rather than garbled output.
+ *
+ * Currently covers:
+ * - Inline math: $...$ → \$...\$
+ * - Block math:  $$...$$ → \$\$...\$\$
+ * - Footnote references: [^n] → \[^n]
+ * - Footnote definitions: [^n]: → \[^n]:
+ */
+private val unsupportedMarkdownRegex = Regex(
+    pattern = """(?<!\\)\$\$|(?<!\\)\$|\[(\^[^]]+)]""",
+)
+
+internal fun escapeUnsupportedMarkdown(text: String): String {
+    return unsupportedMarkdownRegex.replace(text) { match ->
+        when {
+            match.value == "\$\$" -> "\\\$\\\$"
+            match.value == "\$"   -> "\\\$"
+            match.value.startsWith("[^") -> {
+                "\\[" + match.groupValues[1] + "]"
+            }
+            else -> match.value
+        }
     }
 }
 

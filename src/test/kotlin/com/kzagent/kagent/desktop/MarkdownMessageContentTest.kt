@@ -87,4 +87,42 @@ class MarkdownMessageContentTest {
             extractImageAltByLink(markdown),
         )
     }
+
+    @Test
+    fun escapeUnsupportedMarkdownEscapesMathAndFootnotes() {
+        val input = """
+            行内公式：$E = mc^2$
+            块级公式：
+            $$
+            \sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+            $$
+            这是脚注[^1]和另一个脚注[^label]。
+            
+            [^1]: 这是脚注定义
+        """.trimIndent()
+
+        val escaped = escapeUnsupportedMarkdown(input)
+
+        assertTrue(escaped.contains("""\$E = mc^2\$"""))
+        assertTrue(escaped.contains("""\$\$"""))
+        assertTrue(escaped.contains("""\[^1]"""))
+        assertTrue(escaped.contains("""\[^label]"""))
+        // Dollar signs that were already escaped should stay escaped
+        assertFalse(escaped.contains("""\\\$"""))
+    }
+
+    @Test
+    fun alreadyEscapedDollarSignsArePreserved() {
+        val input = "Already escaped: \\\$100 and \\\$\$200\\\$\$"
+        val escaped = escapeUnsupportedMarkdown(input)
+        // Should not double-escape
+        assertEquals(input, escaped)
+    }
+
+    @Test
+    fun normalTextIsUnchanged() {
+        val input = "This is **bold** and *italic* with `code` and [link](url)"
+        val escaped = escapeUnsupportedMarkdown(input)
+        assertEquals(input, escaped)
+    }
 }
