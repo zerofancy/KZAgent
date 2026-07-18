@@ -48,6 +48,11 @@ java {
 dependencies {
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.compose.material3:material3:1.9.0")
+    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.43.0")
+    implementation("com.mikepenz:multiplatform-markdown-renderer-code:0.43.0")
+    implementation("com.mikepenz:multiplatform-markdown-renderer-coil3:0.43.0")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
+    implementation("io.coil-kt.coil3:coil-svg:3.5.0")
     implementation("io.github.vinceglb:filekit-dialogs:0.14.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")

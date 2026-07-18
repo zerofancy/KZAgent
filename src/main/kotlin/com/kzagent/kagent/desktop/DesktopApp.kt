@@ -508,7 +508,11 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                         ErrorBanner(it)
                         Spacer(Modifier.height(8.dp))
                     }
-                    MessageList(session.messages, modifier = Modifier.weight(1f).fillMaxWidth())
+                    MessageList(
+                        messages = session.messages,
+                        workspace = session.workspace,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                    )
                     Spacer(Modifier.height(8.dp))
                     Composer(
                         input = input,
@@ -842,7 +846,11 @@ private fun ErrorBanner(message: String) {
 }
 
 @Composable
-private fun MessageList(messages: MutableList<DisplayMessage>, modifier: Modifier = Modifier) {
+private fun MessageList(
+    messages: MutableList<DisplayMessage>,
+    workspace: Path,
+    modifier: Modifier = Modifier,
+) {
     val scrollState = rememberScrollState()
     LaunchedEffect(messages.size) {
         scrollState.animateScrollTo(scrollState.maxValue)
@@ -861,7 +869,7 @@ private fun MessageList(messages: MutableList<DisplayMessage>, modifier: Modifie
             )
         } else {
             messages.forEachIndexed { index, message ->
-                MessageRow(index, message, messages)
+                MessageRow(index, message, messages, workspace)
                 if (index != messages.lastIndex) {
                     Spacer(Modifier.height(12.dp))
                     HorizontalDivider()
@@ -877,6 +885,7 @@ private fun MessageRow(
     index: Int,
     message: DisplayMessage,
     messages: MutableList<DisplayMessage>,
+    workspace: Path,
 ) {
     val (title, bgColor) = when (message.role) {
         "user" -> "You" to Color.Transparent
@@ -922,16 +931,7 @@ private fun MessageRow(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
             )
         } else {
-            SelectionContainer {
-                Text(
-                    message.content,
-                    style = when (message.role) {
-                        "tool_call" -> MaterialTheme.typography.bodyMedium
-                        "tool_result" -> MaterialTheme.typography.bodySmall
-                        else -> MaterialTheme.typography.bodyLarge
-                    },
-                )
-            }
+            MessageContent(message, workspace)
         }
     }
 }
