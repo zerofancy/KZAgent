@@ -91,7 +91,7 @@ class MarkdownMessageContentTest {
     @Test
     fun escapeUnsupportedMarkdownEscapesMathAndFootnotes() {
         val input = """
-            行内公式：$E = mc^2$
+            行内公式：${'$'}E = mc^2$
             块级公式：
             $$
             \sum_{i=1}^{n} i = \frac{n(n+1)}{2}
@@ -103,7 +103,7 @@ class MarkdownMessageContentTest {
 
         val escaped = escapeUnsupportedMarkdown(input)
 
-        assertTrue(escaped.contains("""\$E = mc^2\$"""))
+        assertTrue(escaped.contains("""\${'$'}E = mc^2\$"""))
         assertTrue(escaped.contains("""\$\$"""))
         assertTrue(escaped.contains("""\[^1]"""))
         assertTrue(escaped.contains("""\[^label]"""))
@@ -113,7 +113,7 @@ class MarkdownMessageContentTest {
 
     @Test
     fun alreadyEscapedDollarSignsArePreserved() {
-        val input = "Already escaped: \\\$100 and \\\$\$200\\\$\$"
+        val input = """Already escaped: \${'$'}100 and \${'$'}\${'$'}200\${'$'}\${'$'}"""
         val escaped = escapeUnsupportedMarkdown(input)
         // Should not double-escape
         assertEquals(input, escaped)
