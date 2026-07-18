@@ -751,6 +751,13 @@ private fun SessionSidebar(
                     }
                     Spacer(Modifier.height(2.dp))
                     Text(
+                        session.workspace.toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
                         session.status,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),

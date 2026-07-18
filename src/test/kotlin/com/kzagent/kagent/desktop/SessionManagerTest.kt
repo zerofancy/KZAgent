@@ -79,17 +79,22 @@ class SessionManagerTest {
         val manager = SessionManager(denyAll, sessionsRoot)
         manager.loadOrCreate(firstWorkspace)
         val original = manager.activeSession()
+        assertEquals(sessionsRoot, original.sessionFile.parent)
 
         manager.addNewSession()
         val changed = manager.activeSession()
+        val sessionIdsBeforeWorkspaceChange = manager.sessions.map { it.id }
         manager.changeWorkspace(changed, secondWorkspace)
 
+        assertEquals(sessionIdsBeforeWorkspaceChange, manager.sessions.map { it.id })
         assertEquals(firstWorkspace, original.workspace)
         assertEquals(secondWorkspace, changed.workspace)
+        assertEquals(sessionsRoot, changed.sessionFile.parent)
 
         manager.addNewSession()
         val inherited = manager.activeSession()
         assertEquals(secondWorkspace, inherited.workspace)
+        assertEquals(sessionsRoot, inherited.sessionFile.parent)
 
         val reloaded = SessionManager(denyAll, sessionsRoot)
         reloaded.loadOrCreate(firstWorkspace)

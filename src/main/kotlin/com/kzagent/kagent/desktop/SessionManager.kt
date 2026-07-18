@@ -68,8 +68,8 @@ class SessionManager(
     val sessions: SnapshotStateList<SessionData> = mutableStateListOf()
     var activeSessionIndex by mutableStateOf(0)
 
-    /** Load all existing sessions from disk, or create a default one. */
-    fun loadOrCreate(workspace: Path) {
+    /** Load all existing sessions from disk, or create one using [defaultWorkspace]. */
+    fun loadOrCreate(defaultWorkspace: Path) {
         Files.createDirectories(sessionsRoot)
         if (Files.isDirectory(sessionsRoot)) {
             val sessionFiles = Files.walk(sessionsRoot, 2).use { stream ->
@@ -80,7 +80,7 @@ class SessionManager(
             }
             if (sessionFiles.isNotEmpty()) {
                 sessionFiles.forEach { file ->
-                    runCatching { createSessionFromFile(workspace, file) }
+                    runCatching { createSessionFromFile(defaultWorkspace, file) }
                         .onSuccess { session -> session?.let(sessions::add) }
                 }
                 if (sessions.isNotEmpty()) {
@@ -91,14 +91,18 @@ class SessionManager(
             }
         }
         // No existing sessions — create default
-        val newSession = createNewSession(workspace)
+        val newSession = createNewSession(defaultWorkspace)
         sessions.add(newSession)
         activeSessionIndex = 0
     }
 
-    private fun createSessionFromFile(workspace: Path, file: Path): SessionData? {
+    private fun createSessionFromFile(defaultWorkspace: Path, file: Path): SessionData? {
         val sessionWorkspace = loadSessionWorkspace(file)
-            ?: workspace.takeIf { file.parent.fileName.toString() == AppDataDir.workspaceKey(it) }
+            // Compatibility with sessions created before workspace became
+            // persistent session metadata.
+            ?: defaultWorkspace.takeIf {
+                file.parent.fileName.toString() == AppDataDir.workspaceKey(it)
+            }
             ?: return null
         val history = SessionReader(file.parent).loadFile(file)
             .filter { it !is AgentMessage.System }
@@ -119,10 +123,9 @@ class SessionManager(
     }
 
     fun createNewSession(workspace: Path): SessionData {
-        val sessionsDir = sessionsRoot.resolve(AppDataDir.workspaceKey(workspace))
-        Files.createDirectories(sessionsDir)
+        Files.createDirectories(sessionsRoot)
         val id = "session-${UUID.randomUUID()}"
-        val file = sessionsDir.resolve("$id.jsonl")
+        val file = sessionsRoot.resolve("$id.jsonl")
         Files.createFile(file)
         val session = SessionData(
             id = id,
