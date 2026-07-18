@@ -16,6 +16,18 @@ sealed class AgentMessage {
         override val role: String = "summary"
     }
 
+    /**
+     * Directory-scoped project guidance discovered after reading a file.
+     * It is persisted in conversation history but may be removed by context compression.
+     */
+    data class ScopedInstruction(
+        val sourcePath: String,
+        val scopePath: String,
+        val content: String,
+    ) : AgentMessage() {
+        override val role: String = "project_instruction"
+    }
+
     data class User(val content: String) : AgentMessage() {
         override val role: String = "user"
     }

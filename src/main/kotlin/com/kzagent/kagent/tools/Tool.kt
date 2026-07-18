@@ -1,5 +1,6 @@
 package com.kzagent.kagent.tools
 
+import java.nio.file.Path
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -16,9 +17,13 @@ data class ToolDefinition(
 data class ToolResult(
     val content: String,
     val isError: Boolean = false,
+    /** Internal metadata consumed by CodingAgent; never included in model-visible tool output. */
+    val readPaths: List<Path> = emptyList(),
 ) {
     companion object {
-        fun ok(content: String) = ToolResult(content = content, isError = false)
+        fun ok(content: String, readPaths: List<Path> = emptyList()) =
+            ToolResult(content = content, isError = false, readPaths = readPaths)
+
         fun error(content: String) = ToolResult(content = content, isError = true)
     }
 }

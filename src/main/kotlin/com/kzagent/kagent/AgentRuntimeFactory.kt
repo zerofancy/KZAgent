@@ -1,6 +1,7 @@
 package com.kzagent.kagent
 
 import com.kzagent.kagent.agent.AgentObserver
+import com.kzagent.kagent.agent.AgentsInstructionsLoader
 import com.kzagent.kagent.agent.CodingAgent
 import com.kzagent.kagent.agent.NoOpAgentObserver
 import com.kzagent.kagent.agent.PromptBuilder
@@ -32,6 +33,10 @@ object AgentRuntimeFactory {
         val sessionsDir = AppDataDir.ensureSessionsDir(root)
         val config = AppConfigLoader.load()
         val pathGuard = PathGuard(root)
+        val instructionsLoader = AgentsInstructionsLoader(pathGuard.root)
+        // Root guidance is a session-level snapshot. Rebuilding the runtime is
+        // intentionally required before edits to the root AGENTS.md take effect.
+        val rootInstructions = instructionsLoader.loadRoot()?.content.orEmpty()
         val writer = if (sessionFile != null) {
             SessionWriter(sessionFile)
         } else {
@@ -44,9 +49,14 @@ object AgentRuntimeFactory {
                 approvalPolicy = approvalPolicy,
                 sensitivePathProtection = config.sensitivePathProtection,
             ).registry(),
-            promptBuilder = PromptBuilder(pathGuard.root, config.userPrompt),
+            promptBuilder = PromptBuilder(
+                workspace = pathGuard.root,
+                userPrompt = config.userPrompt,
+                rootInstructions = rootInstructions,
+            ),
             sessionWriter = writer,
             observer = observer,
+            instructionsLoader = instructionsLoader,
         )
         return AgentRuntime(
             workspace = pathGuard.root,

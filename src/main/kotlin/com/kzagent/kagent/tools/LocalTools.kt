@@ -98,6 +98,7 @@ class LocalTools(
                         numbered.joinToString("\n")
                     },
                 ),
+                readPaths = listOf(path),
             )
         }.getOrElse { ToolResult.error(it.message ?: it.toString()) }
     }

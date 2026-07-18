@@ -31,7 +31,7 @@ class DeepSeekClient(
             val body = buildJsonObject {
                 put("model", config.model)
                 put("temperature", 0.2)
-                put("messages", JsonArray(messages.map { it.toJson() }))
+                put("messages", JsonArray(messages.map { it.toDeepSeekJson() }))
                 if (tools.isNotEmpty()) {
                     put("tools", JsonArray(tools))
                     put("tool_choice", "auto")
@@ -70,43 +70,63 @@ class DeepSeekClient(
                 promptTokens = parsed.usage?.promptTokens,
             )
         }
+}
 
-    private fun AgentMessage.toJson(): JsonObject = buildJsonObject {
-        put("role", if (this@toJson is AgentMessage.Summary) "system" else role)
-        when (this@toJson) {
-            is AgentMessage.System -> put("content", content)
-            is AgentMessage.Summary -> put("content", "## Conversation summary\n$content")
-            is AgentMessage.User -> put("content", content)
-            is AgentMessage.Assistant -> {
-                put("content", content)
-                if (toolCalls.isNotEmpty()) {
-                    put(
-                        "tool_calls",
-                        buildJsonArray {
-                            for (toolCall in toolCalls) {
-                                add(
-                                    buildJsonObject {
-                                        put("id", toolCall.id)
-                                        put("type", "function")
-                                        put(
-                                            "function",
-                                            buildJsonObject {
-                                                put("name", toolCall.name)
-                                                put("arguments", toolCall.argumentsJson)
-                                            },
-                                        )
-                                    },
-                                )
-                            }
-                        },
-                    )
-                }
+internal fun AgentMessage.toDeepSeekJson(): JsonObject = buildJsonObject {
+    put(
+        "role",
+        if (
+            this@toDeepSeekJson is AgentMessage.Summary ||
+            this@toDeepSeekJson is AgentMessage.ScopedInstruction
+        ) {
+            "system"
+        } else {
+            role
+        },
+    )
+    when (this@toDeepSeekJson) {
+        is AgentMessage.System -> put("content", content)
+        is AgentMessage.Summary -> put("content", "## Conversation summary\n$content")
+        is AgentMessage.ScopedInstruction -> put(
+            "content",
+            buildString {
+                appendLine("## Directory-scoped project instructions")
+                appendLine("Source: $sourcePath")
+                appendLine("Applies to: $scopePath")
+                appendLine()
+                append(content)
+            },
+        )
+        is AgentMessage.User -> put("content", content)
+        is AgentMessage.Assistant -> {
+            put("content", content)
+            if (toolCalls.isNotEmpty()) {
+                put(
+                    "tool_calls",
+                    buildJsonArray {
+                        for (toolCall in toolCalls) {
+                            add(
+                                buildJsonObject {
+                                    put("id", toolCall.id)
+                                    put("type", "function")
+                                    put(
+                                        "function",
+                                        buildJsonObject {
+                                            put("name", toolCall.name)
+                                            put("arguments", toolCall.argumentsJson)
+                                        },
+                                    )
+                                },
+                            )
+                        }
+                    },
+                )
             }
-            is AgentMessage.Tool -> {
-                put("tool_call_id", toolCallId)
-                put("name", name)
-                put("content", content)
-            }
+        }
+        is AgentMessage.Tool -> {
+            put("tool_call_id", toolCallId)
+            put("name", name)
+            put("content", content)
         }
     }
 }

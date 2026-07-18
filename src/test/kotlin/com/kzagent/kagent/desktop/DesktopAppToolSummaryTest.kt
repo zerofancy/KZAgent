@@ -1,5 +1,6 @@
 package com.kzagent.kagent.desktop
 
+import com.kzagent.kagent.llm.AgentMessage
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
@@ -25,5 +26,15 @@ class DesktopAppToolSummaryTest {
     fun malformedArgumentsHaveSafeFallback() {
         assertEquals(null, extractArg("{not-json", "patch"))
         assertEquals(listOf("(patch)"), extractPatchedFiles("{not-json"))
+    }
+
+    @Test
+    fun scopedInstructionsAreHiddenFromConversationDisplay() {
+        val messages = listOf(
+            AgentMessage.ScopedInstruction("src/AGENTS.md", "src", "guidance"),
+            AgentMessage.User("visible"),
+        )
+
+        assertEquals(listOf(DisplayMessage("user", "visible")), messages.toDisplayMessages())
     }
 }

@@ -39,5 +39,21 @@ class SessionReaderTest {
         assertEquals("list_files", assistant.toolCalls.single().name)
         assertIs<AgentMessage.Tool>(history[2])
     }
+
+    @Test
+    fun scopedInstructionRoundTripsThroughSessionJsonl() {
+        val dir = Files.createTempDirectory("kagent-scoped-instruction-session-test")
+        val sessionFile = dir.resolve("session.jsonl")
+        val instruction = AgentMessage.ScopedInstruction(
+            sourcePath = "src/AGENTS.md",
+            scopePath = "src",
+            content = "source guidance",
+        )
+
+        SessionWriter(sessionFile).append(instruction)
+        val loaded = SessionReader(dir).loadFile(sessionFile)
+
+        assertEquals(listOf(instruction), loaded)
+    }
 }
 

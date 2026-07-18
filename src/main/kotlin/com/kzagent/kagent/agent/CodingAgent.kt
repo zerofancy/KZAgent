@@ -16,8 +16,13 @@ class CodingAgent(
     private val sessionWriter: SessionWriter,
     private val quota: ToolQuota = ToolQuota(),
     private val observer: AgentObserver = NoOpAgentObserver,
+    private val instructionsLoader: AgentsInstructionsLoader? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+    // Deduplicates scoped instructions between two successful compressions.
+    // This is runtime state rather than conversation state so a compression can
+    // deliberately start a fresh loading cycle even when recent copies survive.
+    private val loadedScopedInstructionSources = mutableSetOf<java.nio.file.Path>()
 
     suspend fun run(userPrompt: String): String {
         return runConversation(userPrompt).answer
@@ -79,6 +84,10 @@ class CodingAgent(
                 return reply.content.orEmpty().ifBlank { "(model returned an empty final response)" }
             }
 
+            // Hold newly discovered guidance until every tool result has been
+            // appended. Inserting a system message between parallel tool results
+            // would break the assistant -> tool-results message sequence.
+            val pendingInstructions = mutableListOf<LoadedAgentsInstruction>()
             for (toolCall in reply.toolCalls) {
                 val tool = tools.get(toolCall.name)
                 observer.onToolCallStarted(toolCall.name, toolCall.argumentsJson)
@@ -112,7 +121,7 @@ class CodingAgent(
                     quota.deduct(tool.cost)
                 }
 
-                val result = if (tool == null) {
+                val rawResult = if (tool == null) {
                     ToolResult.error("Unknown tool: ${toolCall.name}")
                 } else {
                     runCatching {
@@ -121,6 +130,36 @@ class CodingAgent(
                         tool.handler(args)
                     }.getOrElse {
                         ToolResult.error(it.message ?: it.toString())
+                    }
+                }
+                val loader = instructionsLoader
+                val result = if (
+                    rawResult.isError ||
+                    rawResult.readPaths.isEmpty() ||
+                    loader == null
+                ) {
+                    rawResult
+                } else {
+                    runCatching {
+                        val discovered = mutableListOf<LoadedAgentsInstruction>()
+                        for (readPath in rawResult.readPaths) {
+                            // Include instructions discovered by earlier tool calls
+                            // in this same model turn, not only previous turns.
+                            val excluded = buildSet {
+                                addAll(loadedScopedInstructionSources)
+                                addAll(pendingInstructions.map { it.source })
+                                addAll(discovered.map { it.source })
+                            }
+                            discovered += loader.loadForRead(readPath, excluded)
+                        }
+                        pendingInstructions += discovered
+                        loadedScopedInstructionSources += discovered.map { it.source }
+                        rawResult
+                    }.getOrElse {
+                        ToolResult.error(
+                            "File read completed, but applicable AGENTS.md instructions could not be loaded: " +
+                                (it.message ?: it.toString()),
+                        )
                     }
                 }
                 observer.onToolResult(toolCall.name, result)
@@ -133,6 +172,16 @@ class CodingAgent(
                 )
                 messages += toolMessage
                 sessionWriter.append(toolMessage)
+            }
+
+            for (instruction in pendingInstructions) {
+                val instructionMessage = AgentMessage.ScopedInstruction(
+                    sourcePath = instruction.sourcePath,
+                    scopePath = instruction.scopePath,
+                    content = instruction.content,
+                )
+                messages += instructionMessage
+                sessionWriter.append(instructionMessage)
             }
         }
     }
@@ -192,6 +241,9 @@ class CodingAgent(
                         appendLine(short)
                     }
                     is AgentMessage.System -> { /* skip system prompts in summary */ }
+                    is AgentMessage.ScopedInstruction -> {
+                        /* Directory instructions in the summarized region are intentionally discarded. */
+                    }
                     is AgentMessage.Summary -> {
                         appendLine("--- Previous summary ---")
                         appendLine(msg.content)
@@ -216,6 +268,9 @@ class CodingAgent(
         ) + recentMessages
 
         sessionWriter.appendContextSnapshot(compressed, estimateContextTokens(compressed))
+        // A successful compression starts a new loading epoch by design. Scoped
+        // instructions may therefore be loaded again on the next matching read.
+        loadedScopedInstructionSources.clear()
 
         return compressed
     }
@@ -249,6 +304,8 @@ fun estimateContextTokens(messages: List<AgentMessage>): Int =
         val characters = when (message) {
             is AgentMessage.System -> message.content.length
             is AgentMessage.Summary -> message.content.length
+            is AgentMessage.ScopedInstruction ->
+                message.sourcePath.length + message.scopePath.length + message.content.length
             is AgentMessage.User -> message.content.length
             is AgentMessage.Assistant -> message.content.orEmpty().length +
                 message.toolCalls.sumOf { it.name.length + it.argumentsJson.length }

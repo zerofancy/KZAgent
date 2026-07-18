@@ -9,6 +9,7 @@
 - [项目概述](#项目概述)
 - [快速开始](#快速开始)
 - [使用方式](#使用方式)
+- [项目指令（AGENTS.md）](#项目指令agentsmd)
 - [核心架构](#核心架构)
 - [工具列表](#工具列表)
 - [安全机制](#安全机制)
@@ -135,6 +136,31 @@ Chat ended.
 
 ---
 
+## 项目指令（AGENTS.md）
+
+KZAgent 支持使用工作区中的 `AGENTS.md` 为 Agent 提供持久的项目约定：
+
+- 每个 session 创建时读取工作区根目录的 `AGENTS.md`，并将完整内容固化到基础系统提示词中。根指令不会受上下文压缩影响，session 中途修改后需新建或重建 session 才会生效。
+- 当 `read_file` 成功读取子目录中的文件时，从工作区根目录下一层到目标文件父目录逐层发现 `AGENTS.md`，按浅到深顺序加载；越接近目标文件的规则优先级越高。
+- 空的 `AGENTS.md` 会被忽略。KZAgent 不限制单个指令文件大小，也不会截断或自动压缩文件内容。
+- 同一份非空子目录指令在两次上下文压缩之间只加载一次。压缩成功后会开启新的加载周期，再次读取相应目录时允许重新加载，即使旧指令仍在最近消息窗口中。
+- 子目录指令会记录到 session JSONL，并作为系统消息发送给模型，但不会显示在桌面对话列表中。落入压缩摘要区的子目录指令会被丢弃。
+- 当前仅识别规范文件名 `AGENTS.md`，不读取全局指令、`AGENTS.override.md` 或其他备用文件名。
+
+示例：
+
+```text
+workspace/
+├── AGENTS.md              # 整个 session 始终生效
+└── src/
+    ├── AGENTS.md          # 读取 src/ 下文件后加载
+    └── feature/
+        ├── AGENTS.md      # 读取此目录文件后在 src/ 规则之后加载
+        └── Feature.kt
+```
+
+---
+
 ## 核心架构
 
 ### 工作流程
@@ -165,6 +191,7 @@ Chat ended.
 | 组件 | 文件 | 职责 |
 |------|------|------|
 | **CodingAgent** | `agent/CodingAgent.kt` | Agent 核心循环：调度模型推理与工具执行 |
+| **AgentsInstructionsLoader** | `agent/AgentsInstructionsLoader.kt` | 加载根目录与子目录 `AGENTS.md` 项目指令 |
 | **PromptBuilder** | `agent/PromptBuilder.kt` | 构建系统提示词（定义 Agent 行为规则） |
 | **DeepSeekClient** | `llm/DeepSeekClient.kt` | 调用 DeepSeek Chat Completions API |
 | **SessionWriter** | `agent/SessionWriter.kt` | 将会话记录写入 `.kagent/sessions/` |
@@ -249,6 +276,7 @@ Agent 可以通过以下工具与本地文件系统交互：
 ```
 src/main/kotlin/com/kzagent/kagent/
 ├── agent/
+│   ├── AgentsInstructionsLoader.kt # 分层 AGENTS.md 加载
 │   ├── CodingAgent.kt      # Agent 核心循环
 │   ├── PromptBuilder.kt    # 系统提示词构建
 │   ├── SessionReader.kt    # 会话历史读取

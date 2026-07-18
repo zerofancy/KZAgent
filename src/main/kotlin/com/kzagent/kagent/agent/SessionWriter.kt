@@ -36,6 +36,11 @@ class SessionWriter(private val sessionPath: Path) {
             when (message) {
                 is AgentMessage.System -> put("content", message.content)
                 is AgentMessage.Summary -> put("content", message.content)
+                is AgentMessage.ScopedInstruction -> {
+                    put("source_path", message.sourcePath)
+                    put("scope_path", message.scopePath)
+                    put("content", message.content)
+                }
                 is AgentMessage.User -> put("content", message.content)
                 is AgentMessage.Assistant -> {
                     put("content", message.content)

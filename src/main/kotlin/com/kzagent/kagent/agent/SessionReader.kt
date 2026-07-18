@@ -51,6 +51,11 @@ class SessionReader(private val sessionsDir: Path) {
         return when (role) {
             "system" -> AgentMessage.System(content = obj["content"]?.jsonPrimitive?.content.orEmpty())
             "summary" -> AgentMessage.Summary(content = obj["content"]?.jsonPrimitive?.content.orEmpty())
+            "project_instruction" -> AgentMessage.ScopedInstruction(
+                sourcePath = obj["source_path"]?.jsonPrimitive?.content.orEmpty(),
+                scopePath = obj["scope_path"]?.jsonPrimitive?.content.orEmpty(),
+                content = obj["content"]?.jsonPrimitive?.content.orEmpty(),
+            )
             "user" -> AgentMessage.User(content = obj["content"]?.jsonPrimitive?.content.orEmpty())
             "assistant" -> {
                 val content = obj["content"]?.jsonPrimitive?.contentOrNull

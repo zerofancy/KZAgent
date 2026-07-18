@@ -1070,6 +1070,7 @@ fun List<AgentMessage>.toDisplayMessages(): List<DisplayMessage> {
                 collapsible = true,
             )
             is AgentMessage.System -> null
+            is AgentMessage.ScopedInstruction -> null
             is AgentMessage.Summary -> null
         }
     }
