@@ -3,6 +3,7 @@ package com.kzagent.kagent.desktop
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +20,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -671,6 +674,7 @@ private fun SessionSidebar(
     onSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val listState = rememberLazyListState()
     Column(
         modifier = modifier
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
@@ -716,78 +720,91 @@ private fun SessionSidebar(
         }
         Spacer(Modifier.height(6.dp))
 
-        LazyColumn(modifier = Modifier.weight(1f)) {
-            itemsIndexed(sessions, key = { _, s -> s.id }) { index, session ->
-                val isActive = index == activeIndex
-                val bgColor = if (isActive)
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                else
-                    Color.Transparent
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().padding(end = 12.dp),
+            ) {
+                itemsIndexed(sessions, key = { _, s -> s.id }) { index, session ->
+                    val isActive = index == activeIndex
+                    val bgColor = if (isActive)
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                    else
+                        Color.Transparent
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onSelect(index) }
-                        .background(bgColor, shape = MaterialTheme.shapes.small)
-                        .padding(8.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(index) }
+                            .background(bgColor, shape = MaterialTheme.shapes.small)
+                            .padding(8.dp),
                     ) {
-                        Text(
-                            session.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                            maxLines = 1,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (session.isBusy) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 1.5.dp,
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                session.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                                maxLines = 1,
+                                modifier = Modifier.weight(1f),
                             )
+                            if (session.isBusy) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 1.5.dp,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            session.workspace.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                            maxLines = 1,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            session.status,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                            maxLines = 1,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(
+                                onClick = { onRename(index) },
+                                modifier = Modifier.height(24.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                            ) {
+                                Text("✎", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Spacer(Modifier.width(4.dp))
+                            TextButton(
+                                onClick = { onDelete(index) },
+                                modifier = Modifier.height(24.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                            ) {
+                                Text(
+                                    "✕",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFFE53935),
+                                )
+                            }
                         }
                     }
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        session.workspace.toString(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        maxLines = 1,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        session.status,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        maxLines = 1,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                    ) {
-                        TextButton(
-                            onClick = { onRename(index) },
-                            modifier = Modifier.height(24.dp),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                        ) {
-                            Text("✎", style = MaterialTheme.typography.bodySmall)
-                        }
-                        Spacer(Modifier.width(4.dp))
-                        TextButton(
-                            onClick = { onDelete(index) },
-                            modifier = Modifier.height(24.dp),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                        ) {
-                            Text("✕", style = MaterialTheme.typography.bodySmall, color = Color(0xFFE53935))
-                        }
-                    }
+                    Spacer(Modifier.height(6.dp))
                 }
-                Spacer(Modifier.height(6.dp))
             }
+            VerticalScrollbar(
+                adapter = rememberScrollbarAdapter(listState),
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+            )
         }
     }
 }
@@ -863,28 +880,34 @@ private fun MessageList(
     LaunchedEffect(messages.size) {
         scrollState.animateScrollTo(scrollState.maxValue)
     }
-    Column(
-        modifier = modifier
-            .background(Color(0xFFF7F7F8))
-            .padding(16.dp)
-            .verticalScroll(scrollState),
-    ) {
-        if (messages.isEmpty()) {
-            Text(
-                "暂无会话",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            )
-        } else {
-            messages.forEachIndexed { index, message ->
-                MessageRow(index, message, messages, workspace)
-                if (index != messages.lastIndex) {
-                    Spacer(Modifier.height(12.dp))
-                    HorizontalDivider()
-                    Spacer(Modifier.height(12.dp))
+    Box(modifier = modifier.background(Color(0xFFF7F7F8))) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(start = 16.dp, top = 16.dp, end = 28.dp, bottom = 16.dp),
+        ) {
+            if (messages.isEmpty()) {
+                Text(
+                    "暂无会话",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+            } else {
+                messages.forEachIndexed { index, message ->
+                    MessageRow(index, message, messages, workspace)
+                    if (index != messages.lastIndex) {
+                        Spacer(Modifier.height(12.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(12.dp))
+                    }
                 }
             }
         }
+        VerticalScrollbar(
+            adapter = rememberScrollbarAdapter(scrollState),
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 4.dp),
+        )
     }
 }
 
@@ -1036,6 +1059,7 @@ internal fun resolveComposerKeyAction(
 @Composable
 private fun ApprovalDialog(approval: PendingApproval) {
     val focusRequester = remember { FocusRequester() }
+    val scrollState = rememberScrollState()
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
     AlertDialog(
@@ -1045,6 +1069,8 @@ private fun ApprovalDialog(approval: PendingApproval) {
             Box(
                 modifier = Modifier.focusRequester(focusRequester)
                     .focusable()
+                    .fillMaxWidth()
+                    .heightIn(max = 320.dp)
                     .onKeyEvent { event ->
                         if (event.type == KeyEventType.KeyUp) {
                             when (event.key) {
@@ -1055,13 +1081,22 @@ private fun ApprovalDialog(approval: PendingApproval) {
                         } else false
                     }
             ) {
-                Column(modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(scrollState)
+                        .padding(end = 12.dp),
+                ) {
                     Text(approval.action, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(8.dp))
                     SelectionContainer {
                         Text(approval.details, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
+                VerticalScrollbar(
+                    adapter = rememberScrollbarAdapter(scrollState),
+                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                )
             }
         },
         confirmButton = {

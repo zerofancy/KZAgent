@@ -101,6 +101,7 @@ export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 
 - 默认使用启动目录作为工作区，并可任意切换目录
 - 加载最新 `.kagent/sessions/` 历史用于续聊，支持多会话管理
+- 会话列表、消息历史、设置和审批详情等滚动区域均提供可拖拽的桌面滚动条
 - 侧边栏提供**设置面板**：配置 DeepSeek API Key、Base URL、模型、上下文窗口等
 - 启动时自动检测配置：如未设置 API Key 将**默认跳转到设置界面**
 - 在状态栏显示模型请求、工具执行和审批状态

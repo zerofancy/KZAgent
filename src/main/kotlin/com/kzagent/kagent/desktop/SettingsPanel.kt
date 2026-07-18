@@ -1,16 +1,20 @@
 package com.kzagent.kagent.desktop
 
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -90,118 +94,125 @@ fun SettingsPanel(
         onSave()
     }
 
+    val scrollState = rememberScrollState()
     Surface(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(32.dp),
-            verticalArrangement = Arrangement.Top,
-        ) {
-            Text(
-                "设置",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(24.dp))
-
-            // API Key
-            Text("DeepSeek API Key", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(4.dp))
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it; errorMessage = null },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("API Key (sk-...)") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-            )
-            Spacer(Modifier.height(16.dp))
-
-            // Base URL
-            Text("Base URL", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(4.dp))
-            OutlinedTextField(
-                value = baseUrl,
-                onValueChange = { baseUrl = it; errorMessage = null },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Base URL") },
-                singleLine = true,
-            )
-            Spacer(Modifier.height(16.dp))
-
-            // Model
-            Text("模型", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(4.dp))
-            OutlinedTextField(
-                value = model,
-                onValueChange = { model = it; errorMessage = null },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("模型名称") },
-                singleLine = true,
-            )
-            Spacer(Modifier.height(16.dp))
-
-            // Context Window Size
-            Text("上下文窗口大小", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(4.dp))
-            OutlinedTextField(
-                value = contextWindowSizeText,
-                onValueChange = { contextWindowSizeText = it; errorMessage = null },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("上下文窗口大小 (tokens)") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            )
-            Spacer(Modifier.height(16.dp))
-
-            // Sensitive Path Protection
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .padding(start = 32.dp, top = 32.dp, end = 44.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.Top,
             ) {
-                Checkbox(
-                    checked = sensitivePathProtection,
-                    onCheckedChange = { sensitivePathProtection = it },
+                Text(
+                    "设置",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.SemiBold,
                 )
-                Spacer(Modifier.width(8.dp))
-                Text("敏感路径保护", style = MaterialTheme.typography.bodyLarge)
-            }
-            Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(24.dp))
 
-            // User Prompt
-            Text("用户提示词", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(2.dp))
-            Text(
-                "附加在系统提示词之后的自定义规则（如编码规范、执行偏好等），不受上下文压缩影响。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            )
-            Spacer(Modifier.height(4.dp))
-            OutlinedTextField(
-                value = userPrompt,
-                onValueChange = { userPrompt = it },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp, max = 240.dp),
-                label = { Text("例如：遵循 Kotlin 官方编码规范，优先使用不可变数据结构") },
-                maxLines = 12,
-            )
-            Spacer(Modifier.height(20.dp))
+                // API Key
+                Text("DeepSeek API Key", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it; errorMessage = null },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("API Key (sk-...)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Spacer(Modifier.height(16.dp))
 
-            // Error message
-            errorMessage?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(12.dp))
-            }
+                // Base URL
+                Text("Base URL", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { baseUrl = it; errorMessage = null },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Base URL") },
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(16.dp))
 
-            // Buttons
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = { doSave() }) {
-                    Text(if (saved) "已保存 ✓" else "保存")
+                // Model
+                Text("模型", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = model,
+                    onValueChange = { model = it; errorMessage = null },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("模型名称") },
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(16.dp))
+
+                // Context Window Size
+                Text("上下文窗口大小", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = contextWindowSizeText,
+                    onValueChange = { contextWindowSizeText = it; errorMessage = null },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("上下文窗口大小 (tokens)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                Spacer(Modifier.height(16.dp))
+
+                // Sensitive Path Protection
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = sensitivePathProtection,
+                        onCheckedChange = { sensitivePathProtection = it },
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("敏感路径保护", style = MaterialTheme.typography.bodyLarge)
                 }
-                OutlinedButton(onClick = onCancel) {
-                    Text("返回")
+                Spacer(Modifier.height(20.dp))
+
+                // User Prompt
+                Text("用户提示词", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "附加在系统提示词之后的自定义规则（如编码规范、执行偏好等），不受上下文压缩影响。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = userPrompt,
+                    onValueChange = { userPrompt = it },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp, max = 240.dp),
+                    label = { Text("例如：遵循 Kotlin 官方编码规范，优先使用不可变数据结构") },
+                    maxLines = 12,
+                )
+                Spacer(Modifier.height(20.dp))
+
+                // Error message
+                errorMessage?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(12.dp))
+                }
+
+                // Buttons
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = { doSave() }) {
+                        Text(if (saved) "已保存 ✓" else "保存")
+                    }
+                    OutlinedButton(onClick = onCancel) {
+                        Text("返回")
+                    }
                 }
             }
+            VerticalScrollbar(
+                adapter = rememberScrollbarAdapter(scrollState),
+                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 8.dp),
+            )
         }
     }
 }
