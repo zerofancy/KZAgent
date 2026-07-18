@@ -53,6 +53,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -962,17 +963,27 @@ private fun Composer(
             onValueChange = onInputChange,
             enabled = enabled,
             modifier = Modifier.weight(1f).heightIn(min = 88.dp, max = 160.dp)
-                .onKeyEvent { event ->
-                    if (event.key == Key.Enter &&
-                        !event.isCtrlPressed
+                // Text fields consume Enter while editing. Handle it in the preview
+                // phase so plain Enter can send before the field inserts a newline.
+                .onPreviewKeyEvent { event ->
+                    when (
+                        resolveComposerKeyAction(
+                            isEnter = event.key == Key.Enter,
+                            isCtrlPressed = event.isCtrlPressed,
+                            eventType = event.type,
+                            isBusy = isBusy,
+                        )
                     ) {
-                        if (event.type == KeyEventType.KeyDown) {
-                            if (isBusy) onTerminate() else onSend()
+                        ComposerKeyAction.Send -> {
+                            onSend()
+                            true
                         }
-                        // Consume both KeyDown and KeyUp to prevent newline insertion
-                        return@onKeyEvent true
-                    } else {
-                        false
+                        ComposerKeyAction.Terminate -> {
+                            onTerminate()
+                            true
+                        }
+                        ComposerKeyAction.Consume -> true
+                        ComposerKeyAction.PassThrough -> false
                     }
                 },
             label = { Text("输入问题 (Enter 发送, Ctrl+Enter 换行)") },
@@ -997,6 +1008,29 @@ private fun Composer(
             }
         }
     }
+}
+
+internal enum class ComposerKeyAction {
+    Send,
+    Terminate,
+    Consume,
+    PassThrough,
+}
+
+/**
+ * Keeps keyboard behavior testable without constructing platform-specific key events.
+ * Plain Enter is consumed on both phases; only KeyDown performs the action.
+ */
+internal fun resolveComposerKeyAction(
+    isEnter: Boolean,
+    isCtrlPressed: Boolean,
+    eventType: KeyEventType,
+    isBusy: Boolean,
+): ComposerKeyAction = when {
+    !isEnter || isCtrlPressed -> ComposerKeyAction.PassThrough
+    eventType != KeyEventType.KeyDown -> ComposerKeyAction.Consume
+    isBusy -> ComposerKeyAction.Terminate
+    else -> ComposerKeyAction.Send
 }
 
 @Composable
