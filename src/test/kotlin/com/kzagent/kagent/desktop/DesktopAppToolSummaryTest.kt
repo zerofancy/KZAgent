@@ -1,6 +1,7 @@
 package com.kzagent.kagent.desktop
 
 import com.kzagent.kagent.llm.AgentMessage
+import java.nio.file.Files
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
@@ -36,5 +37,13 @@ class DesktopAppToolSummaryTest {
         )
 
         assertEquals(listOf(DisplayMessage("user", "visible")), messages.toDisplayMessages())
+    }
+
+    @Test
+    fun headerUsesWorkspaceFolderNameAsProjectName() {
+        val parent = Files.createTempDirectory("kagent-project-name")
+        val workspace = parent.resolve("GoProxyCopy").also(Files::createDirectories)
+
+        assertEquals("GoProxyCopy", workspaceProjectName(workspace))
     }
 }

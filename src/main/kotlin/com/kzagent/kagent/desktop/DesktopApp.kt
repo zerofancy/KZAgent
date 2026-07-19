@@ -905,7 +905,12 @@ private fun Header(
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text("KZAgent", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                workspaceProjectName(workspace),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
             Text(
                 workspace.toString(),
                 style = MaterialTheme.typography.bodyMedium,
@@ -941,6 +946,11 @@ private fun Header(
         }
     }
 }
+
+internal fun workspaceProjectName(workspace: Path): String =
+    workspace.toAbsolutePath().normalize().fileName?.toString()
+        ?.takeIf { it.isNotBlank() }
+        ?: workspace.toAbsolutePath().normalize().toString()
 
 internal fun approvalModeLabel(mode: ApprovalMode): String = when (mode) {
     ApprovalMode.AUTO -> "自动"
