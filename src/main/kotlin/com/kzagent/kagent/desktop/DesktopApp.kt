@@ -100,7 +100,41 @@ import javax.swing.WindowConstants
 import kotlin.coroutines.resume
 import kotlin.system.exitProcess
 
+/**
+ * Auto-detect Linux desktop DPI scaling factor so Compose Desktop matches the
+ * system-level scale (GNOME / KDE).  Must be called before AWT/Swing initialise.
+ *
+ * Priority: `SKIKO_AWT_DPI_SCALE` env var > `GDK_SCALE` env var >
+ * gsettings scaling-factor > 1.0 default.
+ */
+private fun applyLinuxDpiScale() {
+    val osName = System.getProperty("os.name").lowercase()
+    if (!osName.contains("linux")) return
+
+    val envScale = System.getenv("SKIKO_AWT_DPI_SCALE")
+        ?: System.getenv("GDK_SCALE")
+    if (envScale != null) {
+        val value = envScale.toDoubleOrNull()
+        if (value != null && value > 0.0) {
+            System.setProperty("skiko.awt.dpi.scale", value.toString())
+            System.setProperty("sun.java2d.uiScale", value.toString())
+            return
+        }
+    }
+
+    val gsettingsScale = runCatching {
+        val s = ProcessBuilder("gsettings", "get", "org.gnome.desktop.interface", "scaling-factor")
+            .start().inputStream.bufferedReader().use { it.readText().trim() }
+        Regex("""(\d+)$""").find(s)?.groupValues?.get(1)?.toDoubleOrNull()
+    }.getOrNull()
+    if (gsettingsScale != null && gsettingsScale > 0.0) {
+        System.setProperty("skiko.awt.dpi.scale", gsettingsScale.toString())
+        System.setProperty("sun.java2d.uiScale", gsettingsScale.toString())
+    }
+}
+
 fun runDesktopApp() {
+    applyLinuxDpiScale()
     System.setProperty("apple.awt.application.name", "KZAgent")
     System.setProperty("apple.awt.UIElement", "false")
     Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
@@ -862,11 +896,13 @@ private fun ErrorBanner(message: String) {
             .background(Color(0xFFFFEBEE))
             .padding(12.dp),
     ) {
-        Text(
-            text = message,
-            color = Color(0xFFB71C1C),
-            style = MaterialTheme.typography.bodyMedium,
-        )
+        SelectionContainer {
+            Text(
+                text = message,
+                color = Color(0xFFB71C1C),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
     }
 }
 

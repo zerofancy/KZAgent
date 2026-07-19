@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -194,8 +195,8 @@ fun SettingsPanel(
                 Spacer(Modifier.height(20.dp))
 
                 // Error message
-                errorMessage?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                errorMessage?.let { msg ->
+                    ErrorText(msg)
                     Spacer(Modifier.height(12.dp))
                 }
 
@@ -214,5 +215,12 @@ fun SettingsPanel(
                 modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 8.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun ErrorText(message: String) {
+    SelectionContainer {
+        Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
     }
 }
