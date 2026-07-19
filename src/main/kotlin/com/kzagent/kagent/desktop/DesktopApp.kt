@@ -29,6 +29,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -63,11 +65,19 @@ import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.AppConfigLoader
 import com.kzagent.kagent.config.AppDataDir
+import com.kzagent.kagent.config.ConfigWriter
 import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.agent.estimateContextTokens
 import com.kzagent.kagent.config.SecretRedactor
 import com.kzagent.kagent.llm.AgentMessage
+import com.kzagent.kagent.tools.ApprovalDecision
+import com.kzagent.kagent.tools.ApprovalMode
 import com.kzagent.kagent.tools.ApprovalPolicy
+import com.kzagent.kagent.tools.ApprovalRequest
+import com.kzagent.kagent.tools.ApprovalResult
+import com.kzagent.kagent.tools.ApprovalSource
+import com.kzagent.kagent.tools.actionLabel
+import com.kzagent.kagent.tools.details
 import com.kzagent.kagent.tools.ToolResult
 import io.github.vinceglb.filekit.FileKit
 import io.github.vinceglb.filekit.PlatformFile
@@ -370,13 +380,19 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
         }
     }
 
-    val approvalPolicy = ApprovalPolicy { action, details ->
+    val approvalPolicy = ApprovalPolicy { request ->
         suspendCancellableCoroutine { continuation ->
             lateinit var approval: PendingApproval
-            approval = PendingApproval(action, details) { allowed ->
+            approval = PendingApproval(request) { allowed ->
                 pendingApprovals.remove(approval)
                 if (continuation.isActive) {
-                    continuation.resume(allowed)
+                    continuation.resume(
+                        ApprovalResult(
+                            decision = if (allowed) ApprovalDecision.ALLOW else ApprovalDecision.DENY,
+                            source = ApprovalSource.HUMAN,
+                            reason = if (allowed) "用户已批准。" else "用户已拒绝。",
+                        ),
+                    )
                 }
             }
             continuation.invokeOnCancellation { pendingApprovals.remove(approval) }
@@ -399,6 +415,13 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
             session.status = "正在加载..."
         }
         showSettings = false
+    }
+
+    fun onApprovalModeChanged(mode: ApprovalMode) {
+        val current = savedConfig ?: return
+        if (current.approvalMode == mode) return
+        ConfigWriter.save(current.copy(approvalMode = mode))
+        onSettingsSaved()
     }
 
     // Auto-collapse tool messages when a session becomes idle
@@ -425,11 +448,31 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
             override suspend fun onToolCallStarted(name: String, argsJson: String) {
                 val summary = formatToolCallSummary(name, argsJson)
                 session.messages.add(DisplayMessage("tool_call", summary, collapsible = true, collapsed = false))
-                session.status = if (name == "run_command") "等待命令审批..." else "执行工具：$name"
+                session.status = when (name) {
+                    "run_command" -> when (savedConfig?.approvalMode) {
+                        com.kzagent.kagent.tools.ApprovalMode.MANUAL -> "等待命令审批..."
+                        com.kzagent.kagent.tools.ApprovalMode.AUTO -> "正在自动审批命令..."
+                        com.kzagent.kagent.tools.ApprovalMode.FULL -> "执行命令..."
+                        null -> "正在自动审批命令..."
+                    }
+                    "read_file" -> when (savedConfig?.approvalMode) {
+                        com.kzagent.kagent.tools.ApprovalMode.FULL -> "读取文件..."
+                        else -> "检查文件读取权限..."
+                    }
+                    else -> "执行工具：$name"
+                }
             }
             override suspend fun onToolResult(name: String, result: ToolResult) {
                 session.messages.add(DisplayMessage("tool_result", result.content, collapsible = true, collapsed = false))
-                session.status = if (result.isError) "工具返回错误：$name" else "工具完成：$name"
+                session.status = when (result.approvalSource) {
+                    ApprovalSource.STATIC_RULE -> "静态规则已放行：$name"
+                    ApprovalSource.APPROVAL_AGENT ->
+                        if (result.isError) "审批 Agent 已拒绝：$name" else "审批 Agent 已放行：$name"
+                    ApprovalSource.HUMAN ->
+                        if (result.isError) "人工已拒绝：$name" else "人工已批准：$name"
+                    ApprovalSource.FULL_MODE -> "全部放行：$name"
+                    null -> if (result.isError) "工具返回错误：$name" else "工具完成：$name"
+                }
             }
         }
     }
@@ -524,6 +567,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                         initialContextWindowSize = savedConfig?.contextWindowSize ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
                         initialSensitivePathProtection = savedConfig?.sensitivePathProtection ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION,
                         initialUserPrompt = savedConfig?.userPrompt ?: "",
+                        initialApprovalMode = savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE,
                         onSave = { onSettingsSaved() },
                         onCancel = {
                             if (savedConfig != null) {
@@ -539,6 +583,8 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                         status = session.status,
                         isBusy = session.isBusy,
                         contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000),
+                        approvalMode = savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE,
+                        onApprovalModeChanged = { onApprovalModeChanged(it) },
                         onCompressContext = { showCompressConfirm = true },
                     )
                     Spacer(Modifier.height(8.dp))
@@ -849,6 +895,8 @@ private fun Header(
     status: String,
     isBusy: Boolean,
     contextPercent: Int,
+    approvalMode: ApprovalMode,
+    onApprovalModeChanged: (ApprovalMode) -> Unit,
     onCompressContext: () -> Unit,
 ) {
     Row(
@@ -873,6 +921,11 @@ private fun Header(
             }
             Text(status, style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.width(12.dp))
+            ApprovalModeMenu(
+                approvalMode = approvalMode,
+                onApprovalModeChanged = onApprovalModeChanged,
+            )
+            Spacer(Modifier.width(8.dp))
             Button(
                 onClick = onCompressContext,
                 enabled = !isBusy,
@@ -888,6 +941,98 @@ private fun Header(
         }
     }
 }
+
+internal fun approvalModeLabel(mode: ApprovalMode): String = when (mode) {
+    ApprovalMode.AUTO -> "自动"
+    ApprovalMode.MANUAL -> "手动"
+    ApprovalMode.FULL -> "全部放行"
+}
+
+internal fun requiresFullModeConfirmation(current: ApprovalMode, target: ApprovalMode): Boolean =
+    target == ApprovalMode.FULL && current != ApprovalMode.FULL
+
+@Composable
+private fun ApprovalModeMenu(
+    approvalMode: ApprovalMode,
+    onApprovalModeChanged: (ApprovalMode) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var confirmFullMode by remember { mutableStateOf(false) }
+
+    Box {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.height(40.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+        ) {
+            Text("审批：${approvalModeLabel(approvalMode)} ▾", maxLines = 1)
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            ApprovalMode.entries.forEach { mode ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                if (mode == approvalMode) "✓ ${approvalModeLabel(mode)}" else approvalModeLabel(mode),
+                            )
+                            Text(
+                                when (mode) {
+                                    ApprovalMode.AUTO -> "静态规则、审批 Agent、必要时人工"
+                                    ApprovalMode.MANUAL -> "所有受控操作逐次人工确认"
+                                    ApprovalMode.FULL -> "命令和外部读取直接放行"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (mode == ApprovalMode.FULL) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                                },
+                            )
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        if (requiresFullModeConfirmation(approvalMode, mode)) {
+                            confirmFullMode = true
+                        } else {
+                            onApprovalModeChanged(mode)
+                        }
+                    },
+                )
+            }
+        }
+    }
+
+    if (confirmFullMode) {
+        AlertDialog(
+            onDismissRequest = { confirmFullMode = false },
+            title = { Text("确认全部放行") },
+            text = {
+                Text(
+                    "全部放行会以当前系统用户权限直接执行命令，并允许读取工作区外或敏感文件，" +
+                        "不会调用审批 Agent 或弹出人工确认。",
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    confirmFullMode = false
+                    onApprovalModeChanged(ApprovalMode.FULL)
+                }) {
+                    Text("我了解风险，继续")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmFullMode = false }) {
+                    Text("取消")
+                }
+            },
+        )
+    }
+}
+
 @Composable
 private fun ErrorBanner(message: String) {
     Box(
@@ -1092,6 +1237,26 @@ internal fun resolveComposerKeyAction(
     else -> ComposerKeyAction.Send
 }
 
+internal enum class ApprovalKeyAction {
+    Approve,
+    Deny,
+    Consume,
+    PassThrough,
+}
+
+internal fun resolveApprovalKeyAction(
+    isEnter: Boolean,
+    isEscape: Boolean,
+    eventType: KeyEventType,
+    highRisk: Boolean,
+): ApprovalKeyAction = when {
+    !isEnter && !isEscape -> ApprovalKeyAction.PassThrough
+    eventType != KeyEventType.KeyUp -> ApprovalKeyAction.Consume
+    isEscape -> ApprovalKeyAction.Deny
+    highRisk -> ApprovalKeyAction.Consume
+    else -> ApprovalKeyAction.Approve
+}
+
 @Composable
 private fun ApprovalDialog(approval: PendingApproval) {
     val focusRequester = remember { FocusRequester() }
@@ -1100,7 +1265,7 @@ private fun ApprovalDialog(approval: PendingApproval) {
 
     AlertDialog(
         onDismissRequest = { approval.complete(false) },
-        title = { Text("命令执行审批") },
+        title = { Text(if (approval.highRisk) "高风险操作审批" else approval.request.actionLabel()) },
         text = {
             Box(
                 modifier = Modifier.focusRequester(focusRequester)
@@ -1108,13 +1273,25 @@ private fun ApprovalDialog(approval: PendingApproval) {
                     .fillMaxWidth()
                     .heightIn(max = 320.dp)
                     .onKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyUp) {
-                            when (event.key) {
-                                Key.Enter -> { approval.complete(true); true }
-                                Key.Escape -> { approval.complete(false); true }
-                                else -> false
+                        when (
+                            resolveApprovalKeyAction(
+                                isEnter = event.key == Key.Enter,
+                                isEscape = event.key == Key.Escape,
+                                eventType = event.type,
+                                highRisk = approval.highRisk,
+                            )
+                        ) {
+                            ApprovalKeyAction.Approve -> {
+                                approval.complete(true)
+                                true
                             }
-                        } else false
+                            ApprovalKeyAction.Deny -> {
+                                approval.complete(false)
+                                true
+                            }
+                            ApprovalKeyAction.Consume -> true
+                            ApprovalKeyAction.PassThrough -> false
+                        }
                     }
             ) {
                 Column(
@@ -1123,10 +1300,28 @@ private fun ApprovalDialog(approval: PendingApproval) {
                         .verticalScroll(scrollState)
                         .padding(end = 12.dp),
                 ) {
-                    Text(approval.action, fontWeight = FontWeight.SemiBold)
+                    if (approval.highRisk) {
+                        Text(
+                            "此操作可能产生高风险影响，请确认后再继续。",
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    Text(approval.request.actionLabel(), fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(8.dp))
                     SelectionContainer {
-                        Text(approval.details, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            buildString {
+                                append(approval.request.details())
+                                if (approval.request.risk.isHighRisk) {
+                                    appendLine()
+                                    appendLine()
+                                    append("风险：${approval.request.risk.reasons.joinToString("；")}")
+                                }
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
                     }
                 }
                 VerticalScrollbar(
@@ -1137,7 +1332,7 @@ private fun ApprovalDialog(approval: PendingApproval) {
         },
         confirmButton = {
             Button(onClick = { approval.complete(true) }) {
-                Text("允许")
+                Text(if (approval.highRisk) "仍然执行" else "允许")
             }
         },
         dismissButton = {
@@ -1231,7 +1426,8 @@ data class DisplayMessage(
 )
 
 private data class PendingApproval(
-    val action: String,
-    val details: String,
+    val request: ApprovalRequest,
     val complete: (Boolean) -> Unit,
-)
+) {
+    val highRisk: Boolean get() = request.risk.isHighRisk
+}

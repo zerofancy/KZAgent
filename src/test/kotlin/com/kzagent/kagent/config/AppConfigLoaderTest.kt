@@ -8,6 +8,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
+import com.kzagent.kagent.tools.ApprovalMode
 
 class AppConfigLoaderTest {
     @Test
@@ -73,6 +74,7 @@ class AppConfigLoaderTest {
         assertEquals("sk-test-env", config.apiKey)
         assertEquals(AppConfig.DEFAULT_MODEL, config.model)
         assertEquals(AppConfig.DEFAULT_BASE_URL, config.baseUrl)
+        assertEquals(ApprovalMode.AUTO, config.approvalMode)
     }
 
     @Test
@@ -102,6 +104,22 @@ This is a real second line."""
         val loaded = AppConfigLoader.load(configFile, emptyMap())
 
         assertEquals(prompt, loaded.userPrompt)
+    }
+
+    @Test
+    fun approvalModeRoundTripsAndInvalidValueFallsBackToAuto() {
+        val configFile = Files.createTempDirectory("kagent-approval-config-test")
+            .resolve("config.properties")
+        val original = AppConfig(apiKey = "sk-test-local", approvalMode = ApprovalMode.FULL)
+
+        ConfigWriter.save(configFile, original)
+        assertEquals(ApprovalMode.FULL, AppConfigLoader.load(configFile, emptyMap()).approvalMode)
+
+        Files.writeString(
+            configFile,
+            "deepseek.api.key=sk-test-local\nkzagent.approval.mode=unknown\n",
+        )
+        assertEquals(ApprovalMode.AUTO, AppConfigLoader.load(configFile, emptyMap()).approvalMode)
     }
 
     @Test

@@ -77,6 +77,30 @@ class AgentsInstructionsIntegrationTest {
         assertTrue(model.lastMessages.filterIsInstance<AgentMessage.Tool>().single().isError)
     }
 
+    @Test
+    fun approvedExternalReadNeverLoadsExternalInstructions() = runBlocking {
+        val workspace = Files.createTempDirectory("kagent-agents-external-read-workspace")
+        val external = Files.createTempDirectory("kagent-agents-external-read-target")
+        val target = external.resolve("Target.kt")
+        Files.writeString(external.resolve("AGENTS.md"), "must never load")
+        Files.writeString(target, "class ExternalTarget")
+        val model = SingleReadModel(target.toString().replace("\\", "\\\\"))
+        val agent = CodingAgent(
+            model = model,
+            tools = LocalTools(PathGuard(workspace), AlwaysApprovePolicy).registry(),
+            promptBuilder = PromptBuilder(workspace),
+            sessionWriter = SessionWriter(workspace.resolve("session.jsonl")),
+            instructionsLoader = AgentsInstructionsLoader(workspace),
+        )
+
+        agent.run("read external")
+
+        assertFalse(model.lastMessages.any { it is AgentMessage.ScopedInstruction })
+        val toolResult = model.lastMessages.filterIsInstance<AgentMessage.Tool>().single()
+        assertFalse(toolResult.isError)
+        assertTrue("ExternalTarget" in toolResult.content)
+    }
+
     private class RepeatedReadModel(private val path: String) : ChatModel {
         val finalRequests = mutableListOf<List<AgentMessage>>()
         val systemPrompts = mutableListOf<String>()

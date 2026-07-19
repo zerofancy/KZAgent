@@ -10,6 +10,7 @@ import java.util.Locale
 import java.util.Properties
 import io.github.vinceglb.filekit.FileKit
 import io.github.vinceglb.filekit.filesDir
+import com.kzagent.kagent.tools.ApprovalMode
 
 data class AppConfig(
     val apiKey: String,
@@ -18,12 +19,14 @@ data class AppConfig(
     val sensitivePathProtection: Boolean = DEFAULT_SENSITIVE_PATH_PROTECTION,
     val contextWindowSize: Int = DEFAULT_CONTEXT_WINDOW_SIZE,
     val userPrompt: String = "",
+    val approvalMode: ApprovalMode = DEFAULT_APPROVAL_MODE,
 ) {
     companion object {
         const val DEFAULT_BASE_URL = "https://api.deepseek.com"
         const val DEFAULT_MODEL = "deepseek-v4-pro"
         const val DEFAULT_SENSITIVE_PATH_PROTECTION = false
         const val DEFAULT_CONTEXT_WINDOW_SIZE = 1_000_000
+        val DEFAULT_APPROVAL_MODE = ApprovalMode.AUTO
     }
 }
 
@@ -62,6 +65,7 @@ object AppConfigLoader {
             ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE
 
         val userPrompt = props.getProperty("deepseek.user.prompt")?.trim() ?: ""
+        val approvalMode = ApprovalMode.fromConfig(props.getProperty("kzagent.approval.mode"))
 
         return AppConfig(
             apiKey = apiKey,
@@ -70,6 +74,7 @@ object AppConfigLoader {
             sensitivePathProtection = sensitivePathProtection,
             contextWindowSize = contextWindowSize,
             userPrompt = userPrompt,
+            approvalMode = approvalMode,
         )
     }
 
@@ -91,6 +96,7 @@ object ConfigWriter {
             appendLine("deepseek.model=${config.model}")
             appendLine("deepseek.sensitive.path.protection=${config.sensitivePathProtection}")
             appendLine("deepseek.context.window.size=${config.contextWindowSize}")
+            appendLine("kzagent.approval.mode=${config.approvalMode.configValue}")
             if (config.userPrompt.isNotBlank()) {
                 appendLine("deepseek.user.prompt=${escapePropertyValue(config.userPrompt)}")
             }

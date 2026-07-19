@@ -69,7 +69,7 @@ class LocalTools(
 
     private fun readFileTool(): ToolDefinition = ToolDefinition(
         name = "read_file",
-        description = "Read a bounded range from a text file in the workspace.",
+        description = "Read a bounded range from a text file. Workspace files are read directly; external or protected sensitive files use the configured approval mode.",
         parameters = objectSchema(
             properties = mapOf(
                 "path" to stringSchema("Workspace-relative file path."),
@@ -82,11 +82,39 @@ class LocalTools(
         cost = 1,
     ) { args ->
         runCatching {
-            val path = pathGuard.resolveWritableExistingFile(args.requiredString("path"))
-            rejectSensitivePath(path)
+            val resolved = pathGuard.resolveReadableExistingFile(args.requiredString("path"))
+            val path = resolved.path
             rejectLargeFile(path)
-            val startLine = (args.int("start_line") ?: 1).coerceAtLeast(1)
-            val maxLines = (args.int("max_lines") ?: 200).coerceAtLeast(1)
+            val startLine = args.int("start_line") ?: 1
+            val maxLines = args.int("max_lines") ?: 200
+            require(startLine >= 1) { "start_line must be at least 1." }
+            require(maxLines >= 1) { "max_lines must be at least 1." }
+            val sensitive = sensitivePathProtection && isSensitivePath(path)
+            var approvalSource: ApprovalSource? = null
+            if (!resolved.insideWorkspace || sensitive) {
+                val reasons = buildList {
+                    if (!resolved.insideWorkspace) add("目标文件位于工作区外")
+                    if (sensitive) add("目标是受保护的敏感文件")
+                }
+                val approval = approvalPolicy.approve(
+                    ApprovalRequest.ExternalFileRead(
+                        path = path,
+                        startLine = startLine,
+                        maxLines = maxLines,
+                        outsideWorkspace = !resolved.insideWorkspace,
+                        sensitive = sensitive,
+                        workspace = pathGuard.root,
+                        risk = RiskAssessment(reasons),
+                    ),
+                )
+                approvalSource = approval.source
+                if (!approval.allowed) {
+                    return@runCatching ToolResult.error(
+                        approval.denialMessage("read_file"),
+                        approval.source,
+                    )
+                }
+            }
             val lines = readTextLines(path)
             val selected = lines.drop(startLine - 1).take(maxLines)
             val numbered = selected.mapIndexed { index, line -> "${startLine + index}: $line" }
@@ -98,7 +126,9 @@ class LocalTools(
                         numbered.joinToString("\n")
                     },
                 ),
-                readPaths = listOf(path),
+                // External paths must never participate in scoped AGENTS.md discovery.
+                readPaths = if (resolved.insideWorkspace) listOf(path) else emptyList(),
+                approvalSource = approvalSource,
             )
         }.getOrElse { ToolResult.error(it.message ?: it.toString()) }
     }
@@ -206,7 +236,7 @@ class LocalTools(
 
     private fun runCommandTool(): ToolDefinition = ToolDefinition(
         name = "run_command",
-        description = "Run a shell command in the workspace. Requires approval and blocks dangerous commands.",
+        description = "Run a bounded shell command from the workspace using the configured manual, automatic, or full approval mode.",
         parameters = objectSchema(
             properties = mapOf(
                 "command" to stringSchema("Shell command to run from the workspace root."),
@@ -219,12 +249,27 @@ class LocalTools(
     ) { args ->
         runCatching {
             val command = args.requiredString("command")
-            val timeoutSeconds = (args.int("timeout_seconds") ?: 30).coerceIn(1, 120)
-            validateCommand(command)
-            if (!approvalPolicy.approve("run_command", "Command: $command\nTimeout: ${timeoutSeconds}s")) {
-                return@runCatching ToolResult.error("User denied run_command.")
+            val timeoutSeconds = args.int("timeout_seconds") ?: 30
+            validateBasicCommand(command, timeoutSeconds)
+            val timeout = Duration.ofSeconds(timeoutSeconds.toLong())
+            val approval = approvalPolicy.approve(
+                ApprovalRequest.CommandExecution(
+                    command = command,
+                    timeout = timeout,
+                    workspace = pathGuard.root,
+                    risk = CommandRiskAnalyzer.assess(command, sensitivePathProtection),
+                ),
+            )
+            if (!approval.allowed) {
+                return@runCatching ToolResult.error(
+                    approval.denialMessage("run_command"),
+                    approval.source,
+                )
             }
-            ToolResult.ok(truncate(runShell(command, Duration.ofSeconds(timeoutSeconds.toLong()))))
+            ToolResult.ok(
+                truncate(runShell(command, timeout)),
+                approvalSource = approval.source,
+            )
         }.getOrElse { ToolResult.error(it.message ?: it.toString()) }
     }
 
@@ -263,23 +308,10 @@ class LocalTools(
         "Exit code: ${process.exitValue()}\n${output}"
     }
 
-    private fun validateCommand(command: String) {
+    private fun validateBasicCommand(command: String, timeoutSeconds: Int) {
         val trimmed = command.trim()
         if (trimmed.isEmpty()) throw IllegalArgumentException("command must not be empty.")
-        if (trimmed.contains('\n')) throw IllegalArgumentException("multi-line shell commands are blocked.")
-        val dangerous = Regex("""(^|[;&|]\s*|\s)(rm|sudo|chmod|chown|mkfs|dd|shutdown|reboot)\b""")
-        if (dangerous.containsMatchIn(trimmed)) {
-            throw IllegalArgumentException("blocked dangerous command: $trimmed")
-        }
-        if (Regex("""[<>]{1,2}\s*/""").containsMatchIn(trimmed)) {
-            throw IllegalArgumentException("blocked redirection to absolute path.")
-        }
-        if (Regex("""(^|\s)\.\./""").containsMatchIn(trimmed)) {
-            throw IllegalArgumentException("blocked path escape using ../")
-        }
-        if (sensitivePathProtection && SENSITIVE_NAMES.any { trimmed.contains(it) }) {
-            throw IllegalArgumentException("blocked command referencing sensitive local config.")
-        }
+        require(timeoutSeconds in 1..120) { "timeout_seconds must be between 1 and 120." }
     }
 
     private fun readTextLines(path: Path): List<String> {
@@ -300,11 +332,13 @@ class LocalTools(
 
     private fun rejectSensitivePath(path: Path) {
         if (!sensitivePathProtection) return
-        val parts = path.map { it.toString() }.toSet()
-        if (parts.any { it in SENSITIVE_NAMES }) {
+        if (isSensitivePath(path)) {
             throw IllegalArgumentException("Access to sensitive local config is blocked: ${pathGuard.display(path)}")
         }
     }
+
+    private fun isSensitivePath(path: Path): Boolean =
+        path.any { part -> SENSITIVE_NAMES.any { it.equals(part.toString(), ignoreCase = true) } }
 
     private fun isIgnoredPath(path: Path): Boolean {
         val parts = path.map { it.toString() }.toSet()
@@ -326,10 +360,16 @@ class LocalTools(
     private fun JsonObject.int(name: String): Int? =
         (this[name] as? JsonPrimitive)?.intOrNull
 
+    private fun ApprovalResult.denialMessage(operation: String): String =
+        when (source) {
+            ApprovalSource.APPROVAL_AGENT -> "Approval agent denied $operation: $reason"
+            else -> "User denied $operation: $reason"
+        }
+
     companion object {
         private const val MAX_TEXT_FILE_BYTES = 1_000_000L
         private val IGNORED_NAMES = setOf(".git", ".gradle", "build", "out", ".kagent")
-        private val SENSITIVE_NAMES = setOf("local.properties", ".env", ".env.local", ".envrc")
+        internal val SENSITIVE_NAMES = setOf("local.properties", ".env", ".env.local", ".envrc")
     }
 }
 

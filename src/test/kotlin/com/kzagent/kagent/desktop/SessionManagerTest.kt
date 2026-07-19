@@ -1,6 +1,9 @@
 package com.kzagent.kagent.desktop
 
 import com.kzagent.kagent.tools.ApprovalPolicy
+import com.kzagent.kagent.tools.ApprovalDecision
+import com.kzagent.kagent.tools.ApprovalResult
+import com.kzagent.kagent.tools.ApprovalSource
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
@@ -11,7 +14,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SessionManagerTest {
-    private val denyAll = ApprovalPolicy { _, _ -> false }
+    private val denyAll = ApprovalPolicy {
+        ApprovalResult(ApprovalDecision.DENY, ApprovalSource.HUMAN, "test")
+    }
 
     @Test
     fun emptySessionAndRenamedTitleSurviveReload() {

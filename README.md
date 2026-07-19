@@ -67,6 +67,7 @@ export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 | `deepseek.base.url` | `https://api.deepseek.com` | API 端点地址（兼容 OpenAI 格式的均可） |
 | `deepseek.sensitive.path.protection` | `false` | 敏感路径保护开关。开启后拦截对 `local.properties`、`.env` 等本地敏感配置文件的访问 |
 | `deepseek.context.window.size` | `1000000` | 上下文窗口大小（tokens），用于计算压缩阈值 |
+| `kzagent.approval.mode` | `auto` | 审批模式：`auto`、`manual` 或 `full` |
 
 ### 2. 运行
 
@@ -104,9 +105,10 @@ export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 - 加载最新 `.kagent/sessions/` 历史用于续聊，支持多会话管理
 - 会话列表、消息历史、设置和审批详情等滚动区域均提供可拖拽的桌面滚动条
 - 侧边栏提供**设置面板**：配置 DeepSeek API Key、Base URL、模型、上下文窗口等
+- 主聊天页顶部提供常驻的**审批模式下拉菜单**，可立即切换自动、手动或全部放行模式
 - 启动时自动检测配置：如未设置 API Key 将**默认跳转到设置界面**
 - 在状态栏显示模型请求、工具执行和审批状态
-- 当模型请求执行 `run_command` 时，通过弹窗审批
+- 支持自动、手动和全部放行三种审批模式；高风险人工审批使用单独的警告弹窗
 
 ### `ask` — 单次提问模式
 
@@ -143,7 +145,7 @@ Chat ended.
 KZAgent 支持使用工作区中的 `AGENTS.md` 为 Agent 提供持久的项目约定：
 
 - 每个 session 创建时读取工作区根目录的 `AGENTS.md`，并将完整内容固化到基础系统提示词中。根指令不会受上下文压缩影响，session 中途修改后需新建或重建 session 才会生效。
-- 当 `read_file` 成功读取子目录中的文件时，从工作区根目录下一层到目标文件父目录逐层发现 `AGENTS.md`，按浅到深顺序加载；越接近目标文件的规则优先级越高。
+- 当 `read_file` 成功读取工作区子目录中的文件时，从工作区根目录下一层到目标文件父目录逐层发现 `AGENTS.md`，按浅到深顺序加载；越接近目标文件的规则优先级越高。经审批读取的工作区外文件不会触发外部 `AGENTS.md` 加载。
 - 空的 `AGENTS.md` 会被忽略。KZAgent 不限制单个指令文件大小，也不会截断或自动压缩文件内容。
 - 同一份非空子目录指令在两次上下文压缩之间只加载一次。压缩成功后会开启新的加载周期，再次读取相应目录时允许重新加载，即使旧指令仍在最近消息窗口中。
 - 子目录指令会记录到 session JSONL，并作为系统消息发送给模型，但不会显示在桌面对话列表中。落入压缩摘要区的子目录指令会被丢弃。
@@ -182,10 +184,10 @@ workspace/
     │
     └── LocalTools
          ├── list_files     (只读，无需审批)
-         ├── read_file      (只读，无需审批)
+         ├── read_file      (工作区内只读；外部或敏感文件按策略审批)
          ├── search_text    (只读，无需审批)
          ├── apply_patch (Git 补丁编辑，无需审批)
-         └── run_command    (需终端确认，阻止危险命令)
+         └── run_command    (按自动 / 手动 / 全部放行策略审批)
 ```
 
 ### 主要组件
@@ -201,8 +203,8 @@ workspace/
 | **DesktopApp** | `desktop/DesktopApp.kt` | Compose Desktop 桌面聊天界面 |
 | **AppConfigLoader** | `config/AppConfig.kt` | 从用户配置文件 / 环境变量加载配置 |
 | **LocalTools** | `tools/LocalTools.kt` | 5 个本地工具的注册与实现 |
-| **PathGuard** | `tools/PathGuard.kt` | 路径安全守卫，防止逃逸出工作区 |
-| **ApprovalPolicy** | `tools/Approval.kt` | 审批策略接口及终端确认实现 |
+| **PathGuard** | `tools/PathGuard.kt` | 路径解析与工作区边界判断 |
+| **ApprovalPolicy** | `tools/Approval.kt` | 通用审批策略、风险分析与专用审批 Agent |
 
 ---
 
@@ -213,19 +215,19 @@ Agent 可以通过以下工具与本地文件系统交互：
 | 工具名称 | 需要审批 | 功能描述 |
 |-----------|:--------:|----------|
 | `list_files` | ❌ | 列出工作区目录结构（深度 1–8，最多 500 项） |
-| `read_file` | ❌ | 读取文本文件中指定行范围（最多 500 行） |
+| `read_file` | 条件 | 工作区内直接读取；外部或受保护文件按审批模式处理 |
 | `search_text` | ❌ | 在文本文件中大小写不敏感搜索子串（最多 200 个结果） |
 | `apply_patch` | ❌ | 用单个 Git unified diff 更新、创建或删除多个文件 |
-| `run_command` | ✅ | 在终端执行 shell 命令，需用户输入 `yes` 确认 |
+| `run_command` | ✅ | 按全局审批模式执行有超时限制的 shell 命令 |
 
 ### 工具设计原则
 
-- **只读工具**（`list_files` / `read_file` / `search_text`）直接执行，无需人工干预
+- **只读工具**中 `list_files` / `search_text` 严格限制在工作区；`read_file` 可在审批后读取单个工作区外文件
 - **文件编辑工具**（`apply_patch`）不要求审批，使用单个 `patch` 参数传递标准 Git unified diff
   - 可在一次调用中更新、创建或删除多个文件
   - 自动识别 UTF-8（含 BOM）、UTF-16、UTF-32、GB18030/GBK 和 Windows-1252
   - 编辑已有文件时保留原编码、BOM 与换行符风格
-- **命令执行**（`run_command`）必须经用户确认，且有严格的安全校验
+- **命令执行**（`run_command`）统一经过当前审批模式；风险分析用于决定自动判断或人工确认，不再直接剥夺用户授权执行的能力
 
 ---
 
@@ -233,25 +235,25 @@ Agent 可以通过以下工具与本地文件系统交互：
 
 ### 🔒 路径安全（PathGuard）
 
-所有文件操作路径都会被**归一化**和**校验**，确保不会逃逸出工作区根目录。无论是绝对路径还是包含 `../` 的相对路径，都会被拦截。
+所有写操作、目录枚举和批量搜索路径都会被**归一化**和**校验**，确保不会逃逸出工作区根目录。`read_file` 是唯一例外：绝对路径、`../` 或符号链接指向的工作区外普通文件会进入统一审批流程；批准后只读取本次指定的行范围。
 
 ### 🚫 敏感路径保护
 
-自动拒绝访问以下敏感文件/目录：
+启用敏感路径保护后，以下文件会从直接读取改为按审批模式处理：
 
 - `.env`、`local.properties`（历史本地敏感配置文件）
 - 密钥文件、密码文件等
 
 ### 🛡️ 命令安全校验
 
-`run_command` 执行前会进行多重安全检查：
+`run_command` 执行前会识别危险程序、多行脚本、Shell 组合语法、路径逃逸和敏感引用，并按审批模式处理：
 
-1. **用户确认**：必须输入 `yes` 才能执行
-2. **危险命令拦截**：阻止 `rm`、`sudo`、`chmod`、`dd`、`shutdown` 等危险命令
-3. **路径逃逸拦截**：阻止 `../` 和重定向到绝对路径
-4. **敏感引用拦截**：阻止命令中引用密钥文件
-5. **超时控制**：默认 30 秒超时，可配 1–120 秒
-6. **禁止多行命令**：防止注入复杂脚本
+1. **自动审批（默认）**：明确安全的常见只读、构建和测试命令由静态规则放行；其他普通命令由无工具、无会话历史的专用审批 Agent 判断；高风险命令或 Agent 无法判断时转人工。
+2. **手动审批**：所有命令和受保护读取都由用户逐次确认。
+3. **全部放行**：视为持续授权，不再调用审批 Agent 或人工弹窗，并以当前应用用户权限执行。
+4. **超时控制**：命令默认 30 秒超时，可配置为 1–120 秒。
+
+桌面端高风险审批必须点击“仍然执行”，Enter 不会批准；CLI 必须输入完整的 `yes`。
 
 ### 🔑 API Key 脱敏
 
@@ -299,7 +301,7 @@ src/main/kotlin/com/kzagent/kagent/
 └── tools/
     ├── Tool.kt             # 工具定义、注册表、JSON Schema 构建
     ├── LocalTools.kt       # 5 个本地工具实现
-    ├── Approval.kt         # 审批策略（终端确认 / 始终批准 / 始终拒绝）
+    ├── Approval.kt         # 通用审批模式、风险分析、静态规则与审批 Agent
     ├── PathGuard.kt        # 路径安全守卫
     ├── TextFileCodec.kt    # 多编码文本文件读写（UTF-8/16/32、GBK、Windows-1252）
     ├── UnifiedPatch.kt     # Git unified diff 解析与应用引擎
@@ -318,6 +320,7 @@ deepseek.model=deepseek-v4-pro                # 模型名称（可选）
 deepseek.base.url=https://api.deepseek.com    # API 地址（可选）
 deepseek.sensitive.path.protection=false      # 敏感路径保护（可选）
 deepseek.context.window.size=1000000          # 上下文窗口 tokens（可选）
+kzagent.approval.mode=auto                    # auto | manual | full（可选，默认 auto）
 ```
 
 ### 环境变量

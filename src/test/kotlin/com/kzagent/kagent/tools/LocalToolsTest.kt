@@ -7,7 +7,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class LocalToolsTest {
@@ -189,16 +191,21 @@ class LocalToolsTest {
     }
 
     @Test
-    fun runCommandBlocksDangerousCommands() = runBlocking {
+    fun dangerousCommandUsesApprovalInsteadOfBeingBlocked() = runBlocking {
         val dir = Files.createTempDirectory("kagent-command-test")
-        val registry = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry()
+        var request: ApprovalRequest? = null
+        val policy = ApprovalPolicy {
+            request = it
+            ApprovalResult(ApprovalDecision.ALLOW, ApprovalSource.HUMAN, "approved")
+        }
+        val registry = LocalTools(PathGuard(dir), policy).registry()
 
         val result = registry.get("run_command")!!.handler(buildJsonObject {
-            put("command", "rm -rf .")
+            put("command", "rm --version")
         })
 
-        assertTrue(result.isError)
-        assertContains(result.content, "blocked dangerous command")
+        assertFalse(result.isError)
+        assertTrue(assertIs<ApprovalRequest.CommandExecution>(request).risk.isHighRisk)
     }
 
     @Test
@@ -206,7 +213,7 @@ class LocalToolsTest {
         val dir = Files.createTempDirectory("kagent-sensitive-test")
         Files.writeString(dir.resolve("local.properties"), "deepseek.api.key=sk-secret")
         Files.writeString(dir.resolve("safe.txt"), "hello")
-        val registry = LocalTools(PathGuard(dir), AlwaysApprovePolicy, sensitivePathProtection = true).registry()
+        val registry = LocalTools(PathGuard(dir), AlwaysDenyPolicy, sensitivePathProtection = true).registry()
 
         val list = registry.get("list_files")!!.handler(buildJsonObject {
             put("path", ".")
@@ -225,6 +232,90 @@ class LocalToolsTest {
         })
         assertTrue(command.isError)
         assertFalse(command.content.contains("sk-secret"))
+    }
+
+    @Test
+    fun approvedExternalFileReadDoesNotExposeInstructionDiscoveryPath() = runBlocking {
+        val workspace = Files.createTempDirectory("kagent-external-read-workspace")
+        val externalDir = Files.createTempDirectory("kagent-external-read-target")
+        val external = externalDir.resolve("outside.txt")
+        Files.writeString(external, "outside content")
+        Files.writeString(externalDir.resolve("AGENTS.md"), "untrusted external instructions")
+        var request: ApprovalRequest? = null
+        val policy = ApprovalPolicy {
+            request = it
+            ApprovalResult(ApprovalDecision.ALLOW, ApprovalSource.HUMAN, "approved")
+        }
+        val registry = LocalTools(PathGuard(workspace), policy).registry()
+
+        val result = registry.get("read_file")!!.handler(buildJsonObject {
+            put("path", external.toString())
+        })
+
+        assertFalse(result.isError)
+        assertContains(result.content, "outside content")
+        assertTrue(result.readPaths.isEmpty())
+        assertTrue(assertIs<ApprovalRequest.ExternalFileRead>(request).outsideWorkspace)
+    }
+
+    @Test
+    fun deniedExternalFileReadReturnsError() = runBlocking {
+        val workspace = Files.createTempDirectory("kagent-external-read-denied-workspace")
+        val external = Files.createTempFile("kagent-external-read-denied", ".txt")
+        Files.writeString(external, "outside content")
+        val registry = LocalTools(PathGuard(workspace), AlwaysDenyPolicy).registry()
+
+        val result = registry.get("read_file")!!.handler(buildJsonObject {
+            put("path", external.toString())
+        })
+
+        assertTrue(result.isError)
+        assertFalse(result.content.contains("outside content"))
+    }
+
+    @Test
+    fun ordinaryWorkspaceReadDoesNotInvokeApproval() = runBlocking {
+        val workspace = Files.createTempDirectory("kagent-workspace-read")
+        Files.writeString(workspace.resolve("inside.txt"), "inside content")
+        var approvalCalls = 0
+        val registry = LocalTools(
+            PathGuard(workspace),
+            ApprovalPolicy {
+                approvalCalls++
+                ApprovalResult(ApprovalDecision.DENY, ApprovalSource.HUMAN, "unexpected")
+            },
+        ).registry()
+
+        val result = registry.get("read_file")!!.handler(buildJsonObject {
+            put("path", "inside.txt")
+        })
+
+        assertFalse(result.isError)
+        assertEquals(0, approvalCalls)
+        assertEquals(1, result.readPaths.size)
+    }
+
+    @Test
+    fun invalidReadRangeFailsBeforeApproval() = runBlocking {
+        val workspace = Files.createTempDirectory("kagent-invalid-read-range")
+        Files.writeString(workspace.resolve("inside.txt"), "inside content")
+        var approvalCalls = 0
+        val registry = LocalTools(
+            PathGuard(workspace),
+            ApprovalPolicy {
+                approvalCalls++
+                ApprovalResult(ApprovalDecision.ALLOW, ApprovalSource.HUMAN, "unexpected")
+            },
+        ).registry()
+
+        val result = registry.get("read_file")!!.handler(buildJsonObject {
+            put("path", "inside.txt")
+            put("start_line", 0)
+        })
+
+        assertTrue(result.isError)
+        assertContains(result.content, "start_line")
+        assertEquals(0, approvalCalls)
     }
 
     @Test

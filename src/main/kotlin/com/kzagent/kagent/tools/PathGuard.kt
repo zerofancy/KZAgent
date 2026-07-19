@@ -3,6 +3,11 @@ package com.kzagent.kagent.tools
 import java.nio.file.Files
 import java.nio.file.Path
 
+data class ResolvedReadPath(
+    val path: Path,
+    val insideWorkspace: Boolean,
+)
+
 class PathGuard(workspace: Path) {
     val root: Path = workspace.toAbsolutePath().normalize().toRealPath()
 
@@ -22,6 +27,26 @@ class PathGuard(workspace: Path) {
             throw IllegalArgumentException("Path is not a regular file: ${display(path)}")
         }
         return path
+    }
+
+    /**
+     * Resolves a single existing file without enforcing the workspace boundary.
+     * Callers must obtain approval before accessing a result outside [root].
+     */
+    fun resolveReadableExistingFile(input: String?): ResolvedReadPath {
+        val raw = input?.trim().orEmpty()
+        require(raw.isNotEmpty()) { "Path must not be empty." }
+        val supplied = Path.of(raw)
+        val candidate = if (supplied.isAbsolute) supplied else root.resolve(supplied)
+        val normalized = candidate.toAbsolutePath().normalize()
+        if (!Files.exists(normalized)) {
+            throw IllegalArgumentException("Path does not exist: $normalized")
+        }
+        val real = normalized.toRealPath()
+        if (!Files.isRegularFile(real)) {
+            throw IllegalArgumentException("Path is not a regular file: $real")
+        }
+        return ResolvedReadPath(real, real.startsWith(root))
     }
 
     fun resolveWritableFile(input: String?): Path {

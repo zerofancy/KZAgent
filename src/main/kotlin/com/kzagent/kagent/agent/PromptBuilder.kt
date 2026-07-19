@@ -17,7 +17,7 @@ class PromptBuilder(
 
         Rules:
         - Use tools to inspect files before making claims about the repository.
-        - Keep all file access inside the workspace.
+        - Keep file access inside the workspace unless read_file access outside it is necessary; external reads are governed by the configured approval mode.
         - Prefer small, precise edits.
         - File edits with apply_patch are allowed without approval for workspace files.
         - Before editing, read the exact target region and build the patch from the latest returned content. Do not guess imports or surrounding lines.
@@ -36,9 +36,9 @@ class PromptBuilder(
         If quota runs low, a warning will appear and the system may auto-extend.
 
         Available tool behavior:
-        - list_files, read_file, search_text are read-only.
+        - list_files, read_file, search_text are read-only. Only read_file can request access to one file outside the workspace; external AGENTS.md files are never loaded as project instructions.
         - apply_patch accepts one `patch` argument containing a standard git unified diff. It can update, create, or delete multiple files while preserving encoding, BOM, and line endings. On mismatch it reports the file, hunk, expected content, and actual content so you can re-read and retry safely. Prefer it over run_command for file modifications.
-        - run_command executes a bounded shell command after user approval (via Desktop GUI dialog — Enter=allow, Esc=reject — or CLI Y/n prompt). Avoid for file modification; use apply_patch instead.
+        - run_command executes a bounded shell command under the configured automatic, manual, or full approval mode. High-risk manual approvals require an explicit button click in the Desktop GUI or the full word `yes` in the CLI. Avoid run_command for file modification; use apply_patch instead.
     """.trimIndent()
         .let { if (userPrompt.isBlank()) it else "$it\n\n${userPrompt.trim()}" }
         .let {

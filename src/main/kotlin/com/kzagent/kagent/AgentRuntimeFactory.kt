@@ -12,6 +12,8 @@ import com.kzagent.kagent.config.AppConfigLoader
 import com.kzagent.kagent.llm.DeepSeekClient
 import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.LocalTools
+import com.kzagent.kagent.tools.ModeApprovalPolicy
+import com.kzagent.kagent.tools.ModelApprovalAgent
 import com.kzagent.kagent.tools.PathGuard
 import java.nio.file.Path
 
@@ -32,6 +34,12 @@ object AgentRuntimeFactory {
         val root = workspace.toAbsolutePath().normalize()
         val sessionsDir = AppDataDir.ensureSessionsDir(root)
         val config = AppConfigLoader.load()
+        val model = DeepSeekClient(config)
+        val effectiveApprovalPolicy = ModeApprovalPolicy(
+            mode = config.approvalMode,
+            humanPolicy = approvalPolicy,
+            approvalAgent = ModelApprovalAgent(model),
+        )
         val pathGuard = PathGuard(root)
         val instructionsLoader = AgentsInstructionsLoader(pathGuard.root)
         // Root guidance is a session-level snapshot. Rebuilding the runtime is
@@ -43,10 +51,10 @@ object AgentRuntimeFactory {
             SessionWriter.createNew(sessionsDir)
         }
         val agent = CodingAgent(
-            model = DeepSeekClient(config),
+            model = model,
             tools = LocalTools(
                 pathGuard = pathGuard,
-                approvalPolicy = approvalPolicy,
+                approvalPolicy = effectiveApprovalPolicy,
                 sensitivePathProtection = config.sensitivePathProtection,
             ).registry(),
             promptBuilder = PromptBuilder(

@@ -19,12 +19,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +41,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.ConfigWriter
+import com.kzagent.kagent.tools.ApprovalMode
 
 @Composable
 fun SettingsPanel(
@@ -47,6 +51,7 @@ fun SettingsPanel(
     initialContextWindowSize: Int,
     initialSensitivePathProtection: Boolean,
     initialUserPrompt: String,
+    initialApprovalMode: ApprovalMode,
     onSave: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -56,8 +61,10 @@ fun SettingsPanel(
     var contextWindowSizeText by remember { mutableStateOf(initialContextWindowSize.toString()) }
     var sensitivePathProtection by remember { mutableStateOf(initialSensitivePathProtection) }
     var userPrompt by remember { mutableStateOf(initialUserPrompt) }
+    var approvalMode by remember { mutableStateOf(initialApprovalMode) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var saved by remember { mutableStateOf(false) }
+    var confirmFullMode by remember { mutableStateOf(false) }
 
     fun validate(): Boolean {
         if (apiKey.isBlank()) {
@@ -80,8 +87,7 @@ fun SettingsPanel(
         return true
     }
 
-    fun doSave() {
-        if (!validate()) return
+    fun persistConfig() {
         val config = AppConfig(
             apiKey = apiKey.trim(),
             baseUrl = baseUrl.trim().trimEnd('/'),
@@ -89,10 +95,20 @@ fun SettingsPanel(
             sensitivePathProtection = sensitivePathProtection,
             contextWindowSize = contextWindowSizeText.toInt(),
             userPrompt = userPrompt.trim(),
+            approvalMode = approvalMode,
         )
         ConfigWriter.save(config)
         saved = true
         onSave()
+    }
+
+    fun doSave() {
+        if (!validate()) return
+        if (requiresFullModeConfirmation(initialApprovalMode, approvalMode)) {
+            confirmFullMode = true
+        } else {
+            persistConfig()
+        }
     }
 
     val scrollState = rememberScrollState()
@@ -176,6 +192,44 @@ fun SettingsPanel(
                 }
                 Spacer(Modifier.height(20.dp))
 
+                Text("命令与外部读取审批", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                ApprovalMode.entries.forEach { mode ->
+                    val title = when (mode) {
+                        ApprovalMode.AUTO -> "自动审批（默认）"
+                        ApprovalMode.MANUAL -> "手动审批"
+                        ApprovalMode.FULL -> "全部放行"
+                    }
+                    val description = when (mode) {
+                        ApprovalMode.AUTO -> "安全操作自动放行，其余由审批 Agent 或人工判断。"
+                        ApprovalMode.MANUAL -> "所有命令和受保护文件读取都由人工确认。"
+                        ApprovalMode.FULL -> "以当前系统用户权限直接执行，并允许读取工作区外文件。"
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = approvalMode == mode,
+                            onClick = { approvalMode = mode },
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(title, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (mode == ApprovalMode.FULL) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                                },
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
+
                 // User Prompt
                 Text("用户提示词", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(2.dp))
@@ -215,6 +269,32 @@ fun SettingsPanel(
                 modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 8.dp),
             )
         }
+    }
+
+    if (confirmFullMode) {
+        AlertDialog(
+            onDismissRequest = { confirmFullMode = false },
+            title = { Text("确认全部放行") },
+            text = {
+                Text(
+                    "全部放行模式会以当前系统用户权限直接执行命令，并允许读取工作区外或敏感文件，" +
+                        "不会再调用审批 Agent 或弹出人工确认。确定保存吗？",
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    confirmFullMode = false
+                    persistConfig()
+                }) {
+                    Text("我了解风险，继续")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmFullMode = false }) {
+                    Text("取消")
+                }
+            },
+        )
     }
 }
 

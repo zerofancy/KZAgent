@@ -135,6 +135,7 @@ fun printUsage() {
           deepseek.model=deepseek-v4-pro
           deepseek.base.url=https://api.deepseek.com
           deepseek.sensitive.path.protection=false
+          kzagent.approval.mode=auto  # auto | manual | full
 
         DEEPSEEK_API_KEY can also be provided and takes priority over the config file.
         """.trimIndent(),

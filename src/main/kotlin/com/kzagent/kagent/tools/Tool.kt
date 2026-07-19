@@ -19,12 +19,23 @@ data class ToolResult(
     val isError: Boolean = false,
     /** Internal metadata consumed by CodingAgent; never included in model-visible tool output. */
     val readPaths: List<Path> = emptyList(),
+    /** Internal metadata used by the desktop status UI; never sent to the model. */
+    val approvalSource: ApprovalSource? = null,
 ) {
     companion object {
-        fun ok(content: String, readPaths: List<Path> = emptyList()) =
-            ToolResult(content = content, isError = false, readPaths = readPaths)
+        fun ok(
+            content: String,
+            readPaths: List<Path> = emptyList(),
+            approvalSource: ApprovalSource? = null,
+        ) = ToolResult(
+            content = content,
+            isError = false,
+            readPaths = readPaths,
+            approvalSource = approvalSource,
+        )
 
-        fun error(content: String) = ToolResult(content = content, isError = true)
+        fun error(content: String, approvalSource: ApprovalSource? = null) =
+            ToolResult(content = content, isError = true, approvalSource = approvalSource)
     }
 }
 
