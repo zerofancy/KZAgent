@@ -1,5 +1,6 @@
 package com.kzagent.kagent.desktop
 
+import androidx.compose.ui.unit.dp
 import java.nio.file.Files
 import kotlin.io.path.createDirectories
 import kotlin.io.path.createFile
@@ -11,6 +12,20 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class MarkdownMessageContentTest {
+    @Test
+    fun wideMarkdownTablesRequireHorizontalScrolling() {
+        assertTrue(shouldScrollMarkdownTable(tableWidth = 800.dp, viewportWidth = 640.dp))
+        assertFalse(shouldScrollMarkdownTable(tableWidth = 640.dp, viewportWidth = 640.dp))
+        assertFalse(shouldScrollMarkdownTable(tableWidth = 0.dp, viewportWidth = 640.dp))
+    }
+
+    @Test
+    fun markdownTableColumnsAdaptToContentWithinReadableBounds() {
+        assertEquals(160.dp, constrainMarkdownTableColumnWidth(40.dp, 16.dp, 160.dp, 480.dp))
+        assertEquals(232.dp, constrainMarkdownTableColumnWidth(200.dp, 16.dp, 160.dp, 480.dp))
+        assertEquals(480.dp, constrainMarkdownTableColumnWidth(600.dp, 16.dp, 160.dp, 480.dp))
+    }
+
     @Test
     fun onlyConversationMessagesRenderAsMarkdown() {
         assertTrue(shouldRenderMarkdown("user"))
