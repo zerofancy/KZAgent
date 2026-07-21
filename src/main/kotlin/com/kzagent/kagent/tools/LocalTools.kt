@@ -20,16 +20,37 @@ class LocalTools(
     private val approvalPolicy: ApprovalPolicy,
     private val maxToolOutputChars: Int = 48_000,
     private val sensitivePathProtection: Boolean = false,
+    private val webPageService: WebPageService? = null,
 ) {
     fun registry(): ToolRegistry = ToolRegistry(
-        listOf(
-            listFilesTool(),
-            readFileTool(),
-            searchTextTool(),
-            applyPatchTool(),
-            runCommandTool(),
-        ),
+        buildList {
+            addAll(
+                listOf(
+                    listFilesTool(),
+                    readFileTool(),
+                    searchTextTool(),
+                    applyPatchTool(),
+                    runCommandTool(),
+                ),
+            )
+            webPageService?.let { add(fetchWebPageTool(it)) }
+        },
     )
+
+    private fun fetchWebPageTool(service: WebPageService): ToolDefinition = ToolDefinition(
+        name = "fetch_web_page",
+        description = "Fetch and extract the main content of a public static HTTP(S) page. Returns metadata, Markdown content, and key links; it cannot execute JavaScript, authenticate, or access private networks.",
+        parameters = objectSchema(
+            properties = mapOf(
+                "url" to stringSchema("Complete public http:// or https:// URL to fetch."),
+            ),
+            required = listOf("url"),
+        ),
+        requiresApproval = false,
+        cost = 5,
+    ) { args ->
+        service.fetch(args.requiredString("url"))
+    }
 
     private fun listFilesTool(): ToolDefinition = ToolDefinition(
         name = "list_files",

@@ -1,6 +1,6 @@
 # KZAgent — Kotlin AI Coding Agent (MVP)
 
-**KZAgent** 是一个用 **Kotlin/JVM + Compose Desktop** 构建的轻量级 AI 编程助手。它通过调用 **DeepSeek API**（兼容 OpenAI 格式）的推理能力，结合一组本地文件操作和命令执行工具，提供桌面聊天界面，并保留 `ask` / `chat` 命令行模式。
+**KZAgent** 是一个用 **Kotlin/JVM + Compose Desktop** 构建的轻量级 AI 编程助手。它通过调用 **DeepSeek API**（兼容 OpenAI 格式）的推理能力，结合本地文件、命令执行和静态网页获取工具，提供桌面聊天界面，并保留 `ask` / `chat` 命令行模式。
 
 ---
 
@@ -30,7 +30,7 @@ KZAgent 的核心思想是让大语言模型（LLM）通过工具调用（Tool C
 4. **结果反馈** → 工具执行结果返回给模型，继续推理
 5. **输出答案** → 模型给出最终回答
 
-工具调用采用**积分配额（Tool Quota）**控制：每个工具消耗不同积分（只读操作 1 分、`apply_patch` 2 分、`run_command` 5 分），初始配额 100 分；
+工具调用采用**积分配额（Tool Quota）**控制：每个工具消耗不同积分（本地只读操作 1 分、`apply_patch` 2 分、`run_command` / `fetch_web_page` 5 分），初始配额 100 分；
 配额偏低时模型会收到警告并自动扩容 50 分，不限扩容次数，从而灵活限制资源消耗而无需硬编码轮数上限。
 
 ---
@@ -186,8 +186,9 @@ workspace/
          ├── list_files     (只读，无需审批)
          ├── read_file      (工作区内只读；外部或敏感文件按策略审批)
          ├── search_text    (只读，无需审批)
-         ├── apply_patch (Git 补丁编辑，无需审批)
-         └── run_command    (按自动 / 手动 / 全部放行策略审批)
+         ├── apply_patch    (Git 补丁编辑，无需审批)
+         ├── run_command    (按自动 / 手动 / 全部放行策略审批)
+         └── fetch_web_page (公开静态网页获取，无需审批)
 ```
 
 ### 主要组件
@@ -203,7 +204,8 @@ workspace/
 | **DesktopApp** | `desktop/DesktopApp.kt` | Compose Desktop 桌面聊天界面 |
 | **SessionManager** | `desktop/SessionManager.kt` | 桌面端多会话管理：新建、切换、重命名、删除 |
 | **AppConfigLoader** | `config/AppConfig.kt` | 从用户配置文件 / 环境变量加载配置 |
-| **LocalTools** | `tools/LocalTools.kt` | 5 个本地工具的注册与实现 |
+| **LocalTools** | `tools/LocalTools.kt` | 本地及网页工具的统一注册 |
+| **WebPageService** | `tools/WebPageService.kt` | 公网静态页面请求、SSRF 防护、解析与正文提取子代理 |
 | **PathGuard** | `tools/PathGuard.kt` | 路径解析与工作区边界判断 |
 | **ApprovalPolicy** | `tools/Approval.kt` | 通用审批策略、风险分析与专用审批 Agent |
 
@@ -211,7 +213,7 @@ workspace/
 
 ## 工具列表
 
-Agent 可以通过以下工具与本地文件系统交互：
+Agent 可以通过以下工具与工作区和公开网页交互：
 
 | 工具名称 | 需要审批 | 功能描述 |
 |-----------|:--------:|----------|
@@ -220,6 +222,7 @@ Agent 可以通过以下工具与本地文件系统交互：
 | `search_text` | ❌ | 在文本文件中大小写不敏感搜索子串（最多 200 个结果） |
 | `apply_patch` | ❌ | 用单个 Git unified diff 更新、创建或删除多个文件 |
 | `run_command` | ✅ | 按全局审批模式执行有超时限制的 shell 命令 |
+| `fetch_web_page` | ❌ | 获取公开静态 HTTP(S) 页面，返回请求元数据、Markdown 正文和最多 20 个关键链接 |
 
 ### 工具设计原则
 
@@ -229,6 +232,11 @@ Agent 可以通过以下工具与本地文件系统交互：
   - 自动识别 UTF-8（含 BOM）、UTF-16、UTF-32、GB18030/GBK 和 Windows-1252
   - 编辑已有文件时保留原编码、BOM 与换行符风格
 - **命令执行**（`run_command`）统一经过当前审批模式；风险分析用于决定自动判断或人工确认，不再直接剥夺用户授权执行的能力
+- **网页获取**（`fetch_web_page`）仅接受单个公开 HTTP(S) URL。HTML 会先清理脚本、样式、表单和页面框架，再由一次无工具、无历史的专用子代理提取正文；完整 HTML 不会返回主 Agent
+
+### 当前网页能力限制
+
+`fetch_web_page` 只处理服务器直接返回的 HTML、纯文本、JSON、XML、RSS 和 Atom 内容。它不会执行 JavaScript，也不支持点击、滚动、Cookie、登录态、验证码、自定义请求头、二进制下载或内网页面。遇到 SPA 空壳或要求启用 JavaScript 的页面时，结果会包含能力限制警告。
 
 ---
 
@@ -253,6 +261,10 @@ Agent 可以通过以下工具与本地文件系统交互：
 2. **手动审批**：所有命令和受保护读取都由用户逐次确认。
 3. **全部放行**：视为持续授权，不再调用审批 Agent 或人工弹窗，并以当前应用用户权限执行。
 4. **超时控制**：命令默认 30 秒超时，可配置为 1–120 秒。
+
+### 🌐 网页请求安全
+
+`fetch_web_page` 在建立连接时检查 DNS 解析结果，拒绝 localhost、环回、私网、链路本地、组播和保留地址；每次重定向都会重新校验。请求最多跟随 5 次重定向、总耗时最多 30 秒，解压后的响应体最多 2 MiB，并拒绝二进制内容。网页内容始终视为不可信数据，正文提取子代理不能调用任何工具。
 
 桌面端高风险审批必须点击“仍然执行”，Enter 不会批准；CLI 必须输入完整的 `yes`。
 
@@ -327,12 +339,13 @@ src/main/kotlin/com/kzagent/kagent/
 │   └── Messages.kt         # 消息模型定义
 └── tools/
     ├── Tool.kt             # 工具定义、注册表、JSON Schema 构建
-    ├── LocalTools.kt       # 5 个本地工具实现
+    ├── LocalTools.kt       # 本地及网页工具注册
     ├── Approval.kt         # 通用审批模式、风险分析、静态规则与审批 Agent
     ├── PathGuard.kt        # 路径安全守卫
     ├── TextFileCodec.kt    # 多编码文本文件读写（UTF-8/16/32、GBK、Windows-1252）
     ├── UnifiedPatch.kt     # Git unified diff 解析与应用引擎
-    └── ToolQuota.kt        # 工具调用配额系统（含自动扩容）
+    ├── ToolQuota.kt        # 工具调用配额系统（含自动扩容）
+    └── WebPageService.kt   # 静态网页请求、解析、安全校验与正文提取
 ```
 
 ---
@@ -368,6 +381,8 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx    # 优先级高于 config.properties
 | **kotlinx-coroutines** | 异步编程（协程） |
 | **kotlinx-serialization** | JSON 序列化/反序列化 |
 | **Java HttpClient** | 调用 DeepSeek API |
+| **OkHttp 4.12.0** | 静态网页请求、重定向与压缩传输 |
+| **Jsoup 1.22.2** | HTML/XML 解析、清理和链接解析 |
 | **DeepSeek API** (OpenAI 兼容) | LLM 推理后端 |
 
 ---

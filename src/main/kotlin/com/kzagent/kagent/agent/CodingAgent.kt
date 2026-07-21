@@ -337,6 +337,7 @@ private fun buildQuotaWarning(): String = buildString {
     appendLine("- 读操作（list_files, read_file, search_text）: 1 积分")
     appendLine("- 写操作（apply_patch）: 2 积分")
     appendLine("- 终端操作（run_command）: 5 积分")
+    appendLine("- 静态网页获取（fetch_web_page）: 5 积分")
     appendLine()
     append("剩余积分较少，请评估任务进度：")
     append("如果接近完成请尽快收尾；如果还需要多次操作请继续，系统将自动扩容。")

@@ -459,6 +459,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                         com.kzagent.kagent.tools.ApprovalMode.FULL -> "读取文件..."
                         else -> "检查文件读取权限..."
                     }
+                    "fetch_web_page" -> "正在获取并解析网页..."
                     else -> "执行工具：$name"
                 }
             }
@@ -1387,7 +1388,7 @@ fun List<AgentMessage>.toDisplayMessages(): List<DisplayMessage> {
 }
 
 /** Format a tool invocation into a human-readable one-liner. */
-private fun formatToolCallSummary(name: String, argsJson: String): String {
+internal fun formatToolCallSummary(name: String, argsJson: String): String {
     return if (name == "run_command") {
         val command = extractArg(argsJson, "command")
         "运行命令: $command"
@@ -1403,6 +1404,9 @@ private fun formatToolCallSummary(name: String, argsJson: String): String {
     } else if (name == "apply_patch") {
         val files = extractPatchedFiles(argsJson)
         "应用文件补丁 " + files.joinToString(", ")
+    } else if (name == "fetch_web_page") {
+        val url = extractArg(argsJson, "url")
+        "获取网页: $url"
     } else {
         "$name($argsJson)"
     }

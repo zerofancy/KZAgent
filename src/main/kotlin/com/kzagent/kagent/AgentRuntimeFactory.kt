@@ -15,6 +15,8 @@ import com.kzagent.kagent.tools.LocalTools
 import com.kzagent.kagent.tools.ModeApprovalPolicy
 import com.kzagent.kagent.tools.ModelApprovalAgent
 import com.kzagent.kagent.tools.PathGuard
+import com.kzagent.kagent.tools.WebContentExtractor
+import com.kzagent.kagent.tools.WebPageService
 import java.nio.file.Path
 
 data class AgentRuntime(
@@ -56,6 +58,7 @@ object AgentRuntimeFactory {
                 pathGuard = pathGuard,
                 approvalPolicy = effectiveApprovalPolicy,
                 sensitivePathProtection = config.sensitivePathProtection,
+                webPageService = WebPageService(WebContentExtractor(model)),
             ).registry(),
             promptBuilder = PromptBuilder(
                 workspace = pathGuard.root,

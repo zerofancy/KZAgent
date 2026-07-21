@@ -54,9 +54,12 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
     implementation("io.coil-kt.coil3:coil-svg:3.5.0")
     implementation("io.github.vinceglb:filekit-dialogs:0.14.2")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.jsoup:jsoup:1.22.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation(kotlin("test"))
 }
 

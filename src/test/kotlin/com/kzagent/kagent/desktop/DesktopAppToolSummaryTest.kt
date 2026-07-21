@@ -30,6 +30,13 @@ class DesktopAppToolSummaryTest {
     }
 
     @Test
+    fun formatsStaticWebFetchSummary() {
+        val args = buildJsonObject { put("url", "https://example.com/docs") }.toString()
+
+        assertEquals("获取网页: https://example.com/docs", formatToolCallSummary("fetch_web_page", args))
+    }
+
+    @Test
     fun scopedInstructionsAreHiddenFromConversationDisplay() {
         val messages = listOf(
             AgentMessage.ScopedInstruction("src/AGENTS.md", "src", "guidance"),
