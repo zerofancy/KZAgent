@@ -93,6 +93,7 @@ compose.desktop {
                 project.file("okio.pro"),
                 project.file("filekit.pro"),
                 project.file("coil3.pro"),
+                project.file("jsoup.pro"),
                 //project.file("decompose.pro")
             )
         }
