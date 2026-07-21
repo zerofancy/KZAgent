@@ -198,9 +198,10 @@ workspace/
 | **AgentsInstructionsLoader** | `agent/AgentsInstructionsLoader.kt` | 加载根目录与子目录 `AGENTS.md` 项目指令 |
 | **PromptBuilder** | `agent/PromptBuilder.kt` | 构建系统提示词（定义 Agent 行为规则） |
 | **DeepSeekClient** | `llm/DeepSeekClient.kt` | 调用 DeepSeek Chat Completions API |
-| **SessionWriter** | `agent/SessionWriter.kt` | 将会话记录写入 `.kagent/sessions/` |
-| **SessionReader** | `agent/SessionReader.kt` | 从磁盘读取历史会话，支持断点续聊 |
+| **SessionWriter** | `agent/SessionWriter.kt` | 以 JSONL 格式将消息流写入会话文件 |
+| **SessionReader** | `agent/SessionReader.kt` | 从会话文件读取历史消息，恢复对话上下文 |
 | **DesktopApp** | `desktop/DesktopApp.kt` | Compose Desktop 桌面聊天界面 |
+| **SessionManager** | `desktop/SessionManager.kt` | 桌面端多会话管理：新建、切换、重命名、删除 |
 | **AppConfigLoader** | `config/AppConfig.kt` | 从用户配置文件 / 环境变量加载配置 |
 | **LocalTools** | `tools/LocalTools.kt` | 5 个本地工具的注册与实现 |
 | **PathGuard** | `tools/PathGuard.kt` | 路径解析与工作区边界判断 |
@@ -263,15 +264,41 @@ Agent 可以通过以下工具与本地文件系统交互：
 
 ## 会话持久化
 
-每次交互都会被自动记录到 `.kagent/sessions/` 目录下的 JSONL 格式文件中：
+每次交互通过 **SessionWriter** 自动以 **JSONL 格式**（每行一条 JSON）写入会话文件，保存在平台应用数据目录中，按工作区隔离：
 
 ```
-.kagent/
+{AppDataDir}/
 └── sessions/
-    └── session-2025-01-01T120000Z.jsonl
+    ├── {workspace1}-{sha256hash}/
+    │   ├── session-{uuid}.jsonl
+    │   ├── session-{uuid}.jsonl.name      # 用户自定义会话名
+    │   └── session-{uuid}.jsonl.workspace  # 对应的工作区路径
+    └── {workspace2}-{sha256hash}/
+        └── ...
 ```
 
-每条记录包含：时间戳、消息角色、内容、工具调用信息等。`chat` 模式启动时会自动加载最近一次会话，实现**断点续聊**。
+**每条记录格式：**
+
+| 字段 | 说明 |
+|------|------|
+| `time` | ISO-8601 时间戳，记录消息写入时间 |
+| `role` | 消息角色：`system`、`user`、`assistant`、`tool`、`summary`、`context_snapshot` 等 |
+| `content` | 消息正文 |
+| `tool_calls` | （仅 assistant）模型请求的工具调用列表，含 `id`、`name`、`arguments` |
+| `tool_call_id` / `name` / `is_error` | （仅 tool）工具执行结果对应的调用 ID、工具名和错误标记 |
+| `context_tokens` | （仅 assistant / context_snapshot）写入时的累计上下文 token 数 |
+
+**启动恢复行为：**
+
+| 模式 | 行为 |
+|------|------|
+| 桌面端 | 自动加载所有历史会话，按最近修改排序，默认激活最新会话；支持侧边栏**多会话管理**（新建、切换、重命名、删除） |
+| CLI `chat` | 无初始问题时加载**最近一次会话历史**，实现断点续聊；带初始问题时从空白上下文开始 |
+| CLI `ask` | **不加载历史**，每次独立执行 |
+
+**上下文压缩：** 当上下文超过 80% 窗口大小时自动触发，旧消息被 LLM 总结后以 `context_snapshot` 行写入会话文件。恢复时以此行为界，清空之前的消息并替换为摘要。
+
+**会话元数据：** 每个 `.jsonl` 文件旁可存在两个辅助文件 — `.name`（用户自定义会话名）和 `.workspace`（所属工作区路径），由桌面端 `SessionManager` 读写；CLI 不使用。
 
 ---
 
