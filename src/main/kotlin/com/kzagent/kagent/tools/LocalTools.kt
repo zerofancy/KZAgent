@@ -257,11 +257,11 @@ class LocalTools(
 
     private fun runCommandTool(): ToolDefinition = ToolDefinition(
         name = "run_command",
-        description = "Run a bounded shell command from the workspace using the configured manual, automatic, or full approval mode.",
+        description = "Run a shell command with a bounded execution time from the workspace using the configured manual, automatic, or full approval mode.",
         parameters = objectSchema(
             properties = mapOf(
                 "command" to stringSchema("Shell command to run from the workspace root."),
-                "timeout_seconds" to intSchema("Timeout in seconds, 1 to 120. Defaults to 30."),
+                "timeout_seconds" to intSchema("Maximum command execution time in seconds, 1 to 120. Defaults to 30."),
             ),
             required = listOf("command"),
         ),
@@ -323,7 +323,7 @@ class LocalTools(
         if (!completed) {
             process.destroyForcibly()
             readerThread.join(1_000)
-            return@withContext "Command timed out after ${timeout.seconds}s.\n${output}"
+            return@withContext "Command execution timed out after ${timeout.seconds}s.\n${output}"
         }
         readerThread.join(1_000)
         "Exit code: ${process.exitValue()}\n${output}"

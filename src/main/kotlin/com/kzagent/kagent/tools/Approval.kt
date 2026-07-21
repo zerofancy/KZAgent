@@ -79,7 +79,7 @@ fun ApprovalRequest.actionLabel(): String = when (this) {
 fun ApprovalRequest.details(): String = when (this) {
     is ApprovalRequest.CommandExecution -> buildString {
         appendLine("命令：${SecretRedactor.redact(command)}")
-        append("超时：${timeout.seconds} 秒")
+        append("命令执行超时：${timeout.seconds} 秒")
     }
     is ApprovalRequest.ExternalFileRead -> buildString {
         appendLine("路径：${SecretRedactor.redact(path.toString())}")

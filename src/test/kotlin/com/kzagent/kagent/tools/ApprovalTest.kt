@@ -14,6 +14,11 @@ import kotlin.test.assertTrue
 
 class ApprovalTest {
     @Test
+    fun commandApprovalDetailsClarifyThatTimeoutAppliesToExecution() {
+        assertEquals("命令：echo ok\n命令执行超时：30 秒", commandRequest("echo ok").details())
+    }
+
+    @Test
     fun manualModeAlwaysUsesHumanPolicy() = runBlocking {
         var humanCalls = 0
         var agentCalls = 0
