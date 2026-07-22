@@ -1,6 +1,8 @@
 package com.kzagent.kagent.desktop
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.VerticalScrollbar
@@ -18,11 +20,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -35,7 +39,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
@@ -82,6 +85,9 @@ import com.kzagent.kagent.tools.ToolResult
 import io.github.vinceglb.filekit.FileKit
 import io.github.vinceglb.filekit.PlatformFile
 import io.github.vinceglb.filekit.dialogs.openDirectoryPicker
+import io.github.composefluent.component.AccentButton as FluentAccentButton
+import io.github.composefluent.component.Button as FluentButton
+import io.github.composefluent.component.Text as FluentText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -527,58 +533,64 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
         }
     }
 
-    MaterialTheme {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                // ---- Sidebar ----
-                SessionSidebar(
-                    sessions = sessionManager.sessions,
-                    activeIndex = sessionManager.activeSessionIndex,
-                    onSelect = { sessionManager.switchTo(it) },
-                    onAdd = { sessionManager.addNewSession() },
-                    onDelete = { showDeleteConfirmIndex = it },
-                    onRename = { idx ->
-                        renameText = sessionManager.sessions[idx].name
-                        showRenameDialogIndex = idx
-                    },
-                    onChooseWorkspace = {
-                        scope.launch {
-                            val session = sessionManager.activeSession()
-                            chooseWorkspace(session.workspace)?.let { newWs ->
-                                sessionManager.changeWorkspace(session, newWs)
-                            }
+    KZAgentFluentTheme {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+        ) {
+            // ---- Sidebar ----
+            SessionSidebar(
+                sessions = sessionManager.sessions,
+                activeIndex = sessionManager.activeSessionIndex,
+                onSelect = { sessionManager.switchTo(it) },
+                onAdd = { sessionManager.addNewSession() },
+                onDelete = { showDeleteConfirmIndex = it },
+                onRename = { idx ->
+                    renameText = sessionManager.sessions[idx].name
+                    showRenameDialogIndex = idx
+                },
+                onChooseWorkspace = {
+                    scope.launch {
+                        val session = sessionManager.activeSession()
+                        chooseWorkspace(session.workspace)?.let { newWs ->
+                            sessionManager.changeWorkspace(session, newWs)
+                        }
+                    }
+                },
+                onSettings = {
+                    showSettings = true
+                },
+                modifier = Modifier.width(264.dp).fillMaxSize(),
+            )
+
+            // ---- Divider ----
+            VerticalDivider(
+                modifier = Modifier.fillMaxHeight(),
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+
+            // ---- Main Chat Area ----
+            if (showSettings) {
+                val (defaultApiKey, defaultBaseUrl) = settingsDefaults()
+                SettingsPanel(
+                    initialApiKey = defaultApiKey,
+                    initialBaseUrl = defaultBaseUrl,
+                    initialModel = savedConfig?.model ?: AppConfig.DEFAULT_MODEL,
+                    initialContextWindowSize = savedConfig?.contextWindowSize ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
+                    initialSensitivePathProtection = savedConfig?.sensitivePathProtection ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION,
+                    initialUserPrompt = savedConfig?.userPrompt ?: "",
+                    initialApprovalMode = savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE,
+                    onSave = { onSettingsSaved() },
+                    onCancel = {
+                        if (savedConfig != null) {
+                            showSettings = false
                         }
                     },
-                    onSettings = {
-                        showSettings = true
-                    },
-                    modifier = Modifier.width(240.dp).fillMaxSize(),
                 )
-
-                // ---- Divider ----
-                VerticalDivider(modifier = Modifier.fillMaxHeight())
-
-                // ---- Main Chat Area ----
-                if (showSettings) {
-                    val (defaultApiKey, defaultBaseUrl) = settingsDefaults()
-                    SettingsPanel(
-                        initialApiKey = defaultApiKey,
-                        initialBaseUrl = defaultBaseUrl,
-                        initialModel = savedConfig?.model ?: AppConfig.DEFAULT_MODEL,
-                        initialContextWindowSize = savedConfig?.contextWindowSize ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
-                        initialSensitivePathProtection = savedConfig?.sensitivePathProtection ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION,
-                        initialUserPrompt = savedConfig?.userPrompt ?: "",
-                        initialApprovalMode = savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE,
-                        onSave = { onSettingsSaved() },
-                        onCancel = {
-                            if (savedConfig != null) {
-                                showSettings = false
-                            }
-                        },
-                    )
-                } else {
+            } else {
                 val session = sessionManager.activeSession()
-                Column(modifier = Modifier.weight(1f).fillMaxHeight().padding(16.dp)) {
+                Column(modifier = Modifier.weight(1f).fillMaxHeight().padding(20.dp)) {
                     Header(
                         workspace = session.workspace,
                         status = session.status,
@@ -588,17 +600,17 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                         onApprovalModeChanged = { onApprovalModeChanged(it) },
                         onCompressContext = { showCompressConfirm = true },
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(16.dp))
                     session.error?.let {
                         ErrorBanner(it)
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(12.dp))
                     }
                     MessageList(
                         messages = session.messages,
                         workspace = session.workspace,
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(12.dp))
                     Composer(
                         input = input,
                         isBusy = session.isBusy,
@@ -658,7 +670,6 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                             session.status = "正在终止..."
                         },
                     )
-                }
                 }
             }
         }
@@ -758,48 +769,53 @@ private fun SessionSidebar(
     val listState = rememberLazyListState()
     Column(
         modifier = modifier
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-            .padding(10.dp),
+            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.94f))
+            .padding(horizontal = 12.dp, vertical = 14.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                "会话列表",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Row {
-                OutlinedButton(
-                    onClick = onAdd,
-                    modifier = Modifier.height(32.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .background(MaterialTheme.colorScheme.primary, MaterialTheme.shapes.small),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Text("+", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "K",
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
                 }
+                Spacer(Modifier.width(9.dp))
+                Text("KZAgent", style = MaterialTheme.typography.titleMedium)
+            }
+            FluentAccentButton(
+                onClick = onAdd,
+                modifier = Modifier.height(32.dp),
+            ) {
+                FluentText("＋ 新建", maxLines = 1)
             }
         }
-        Spacer(Modifier.height(6.dp))
-        OutlinedButton(
+        Spacer(Modifier.height(16.dp))
+        FluentButton(
             onClick = onChooseWorkspace,
-            modifier = Modifier.fillMaxWidth().height(32.dp),
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            modifier = Modifier.fillMaxWidth().height(34.dp),
+            contentArrangement = Arrangement.Start,
         ) {
-            Text("切换工作区", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            FluentText("▣  切换工作区", maxLines = 1)
         }
-        Spacer(Modifier.height(6.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(6.dp))
-        OutlinedButton(
-            onClick = onSettings,
-            modifier = Modifier.fillMaxWidth().height(32.dp),
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-        ) {
-            Text("⚙ 设置", style = MaterialTheme.typography.bodySmall, maxLines = 1)
-        }
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(18.dp))
+        Text(
+            "最近会话",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        )
+        Spacer(Modifier.height(8.dp))
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
@@ -808,84 +824,107 @@ private fun SessionSidebar(
             ) {
                 itemsIndexed(sessions, key = { _, s -> s.id }) { index, session ->
                     val isActive = index == activeIndex
-                    val bgColor = if (isActive)
-                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                    else
+                    val itemColor = if (isActive) {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
+                    } else {
                         Color.Transparent
+                    }
+                    val itemBorder = if (isActive) {
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+                    } else {
+                        Color.Transparent
+                    }
 
-                    Column(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onSelect(index) }
-                            .background(bgColor, shape = MaterialTheme.shapes.small)
-                            .padding(8.dp),
+                            .background(itemColor, shape = MaterialTheme.shapes.medium)
+                            .border(1.dp, itemBorder, MaterialTheme.shapes.medium)
+                            .padding(horizontal = 10.dp, vertical = 9.dp),
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                session.name,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                                maxLines = 1,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (session.isBusy) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(14.dp),
-                                    strokeWidth = 1.5.dp,
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            session.workspace.toString(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                            maxLines = 1,
+                        Box(
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(40.dp)
+                                .background(
+                                    if (isActive) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                    CircleShape,
+                                ),
                         )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            session.status,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                            maxLines = 1,
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                        ) {
-                            TextButton(
-                                onClick = { onRename(index) },
-                                modifier = Modifier.height(24.dp),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                            ) {
-                                Text("✎", style = MaterialTheme.typography.bodySmall)
-                            }
-                            Spacer(Modifier.width(4.dp))
-                            TextButton(
-                                onClick = { onDelete(index) },
-                                modifier = Modifier.height(24.dp),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        Spacer(Modifier.width(9.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    "✕",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFFE53935),
+                                    session.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f),
                                 )
+                                if (session.isBusy) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 1.5.dp,
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                "${session.status}  ·  ${session.workspace.fileName ?: session.workspace}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                            if (isActive) {
+                                Spacer(Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                ) {
+                                    TextButton(
+                                        onClick = { onRename(index) },
+                                        modifier = Modifier.height(24.dp),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                    ) {
+                                        Text("重命名", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                    TextButton(
+                                        onClick = { onDelete(index) },
+                                        modifier = Modifier.height(24.dp),
+                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                    ) {
+                                        Text(
+                                            "删除",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(7.dp))
                 }
             }
             VerticalScrollbar(
                 adapter = rememberScrollbarAdapter(listState),
                 modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
             )
+        }
+        Spacer(Modifier.height(10.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Spacer(Modifier.height(10.dp))
+        FluentButton(
+            onClick = onSettings,
+            modifier = Modifier.fillMaxWidth().height(34.dp),
+            contentArrangement = Arrangement.Start,
+        ) {
+            FluentText("⚙  设置", maxLines = 1)
         }
     }
 }
@@ -900,33 +939,37 @@ private fun Header(
     onApprovalModeChanged: (ApprovalMode) -> Unit,
     onCompressContext: () -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                workspaceProjectName(workspace),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
-            Text(
-                workspace.toString(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
-                maxLines = 1,
-            )
-        }
-        Spacer(Modifier.width(16.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (isBusy) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    workspaceProjectName(workspace),
+                    style = MaterialTheme.typography.headlineSmall,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    workspace.toString(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
             }
-            Text(status, style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(16.dp))
+            StatusPill(status = status, isBusy = isBusy)
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             ApprovalModeMenu(
                 approvalMode = approvalMode,
                 onApprovalModeChanged = onApprovalModeChanged,
@@ -935,16 +978,41 @@ private fun Header(
             Button(
                 onClick = onCompressContext,
                 enabled = !isBusy,
+                modifier = Modifier.height(36.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = when {
-                        contextPercent > 80 -> Color(0xFFE53935)
-                        else -> Color(0xFF5C6BC0)
+                        contextPercent > 80 -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.primary
                     },
                 ),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
             ) {
                 Text("上下文 $contextPercent%")
             }
         }
+    }
+}
+
+@Composable
+private fun StatusPill(status: String, isBusy: Boolean) {
+    Row(
+        modifier = Modifier
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+            .padding(horizontal = 11.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (isBusy) {
+            CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp)
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .background(Color(0xFF107C10), CircleShape),
+            )
+        }
+        Spacer(Modifier.width(7.dp))
+        Text(status, style = MaterialTheme.typography.labelMedium, maxLines = 1)
     }
 }
 
@@ -973,7 +1041,7 @@ private fun ApprovalModeMenu(
     Box {
         OutlinedButton(
             onClick = { expanded = true },
-            modifier = Modifier.height(40.dp),
+            modifier = Modifier.height(36.dp),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
         ) {
             Text("审批：${approvalModeLabel(approvalMode)} ▾", maxLines = 1)
@@ -1049,13 +1117,14 @@ private fun ErrorBanner(message: String) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFFFFEBEE))
-            .padding(12.dp),
+            .background(MaterialTheme.colorScheme.errorContainer, MaterialTheme.shapes.medium)
+            .border(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f), MaterialTheme.shapes.medium)
+            .padding(horizontal = 14.dp, vertical = 11.dp),
     ) {
         SelectionContainer {
             Text(
                 text = message,
-                color = Color(0xFFB71C1C),
+                color = MaterialTheme.colorScheme.onErrorContainer,
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -1072,26 +1141,44 @@ private fun MessageList(
     LaunchedEffect(messages.size) {
         scrollState.animateScrollTo(scrollState.maxValue)
     }
-    Box(modifier = modifier.background(Color(0xFFF7F7F8))) {
+    Box(
+        modifier = modifier
+            .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.large)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large),
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(start = 16.dp, top = 16.dp, end = 28.dp, bottom = 16.dp),
+                .padding(start = 22.dp, top = 22.dp, end = 34.dp, bottom = 22.dp),
         ) {
             if (messages.isEmpty()) {
-                Text(
-                    "暂无会话",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                )
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("✦", color = MaterialTheme.colorScheme.primary)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Text("开始一个新会话", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "描述你想在当前工作区完成的任务",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             } else {
                 messages.forEachIndexed { index, message ->
                     MessageRow(index, message, messages, workspace)
                     if (index != messages.lastIndex) {
-                        Spacer(Modifier.height(12.dp))
-                        HorizontalDivider()
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(14.dp))
                     }
                 }
             }
@@ -1110,12 +1197,31 @@ private fun MessageRow(
     messages: MutableList<DisplayMessage>,
     workspace: Path,
 ) {
-    val (title, bgColor) = when (message.role) {
-        "user" -> "You" to Color.Transparent
-        "assistant" -> "Assistant" to Color.Transparent
-        "tool_call" -> "🛠 工具调用" to Color(0xFFE3F2FD) // light blue
-        "tool_result" -> "📋 执行结果" to Color(0xFFF3E5F5) // light purple
-        else -> message.role to Color.Transparent
+    val (title, avatar) = when (message.role) {
+        "user" -> "你" to "你"
+        "assistant" -> "KZAgent" to "K"
+        "tool_call" -> "工具调用" to "⌘"
+        "tool_result" -> "执行结果" to "✓"
+        else -> message.role to "·"
+    }
+    val background = when (message.role) {
+        "user" -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.48f)
+        "tool_call", "tool_result" -> MaterialTheme.colorScheme.surfaceContainerHigh
+        else -> MaterialTheme.colorScheme.surface
+    }
+    val borderColor = when (message.role) {
+        "user" -> MaterialTheme.colorScheme.primary.copy(alpha = 0.24f)
+        else -> MaterialTheme.colorScheme.outlineVariant
+    }
+    val avatarBackground = when (message.role) {
+        "assistant" -> MaterialTheme.colorScheme.primary
+        "user" -> MaterialTheme.colorScheme.secondary
+        else -> MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val avatarForeground = when (message.role) {
+        "assistant" -> MaterialTheme.colorScheme.onPrimary
+        "user" -> MaterialTheme.colorScheme.onSecondary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
     val collapsedLabel = when (message.role) {
@@ -1124,37 +1230,47 @@ private fun MessageRow(
         else -> ""
     }
 
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(bgColor, shape = MaterialTheme.shapes.small)
-            .padding(8.dp)
+            .background(background, shape = MaterialTheme.shapes.medium)
+            .border(1.dp, borderColor, MaterialTheme.shapes.medium)
+            .padding(14.dp)
             .let { mod ->
                 if (message.collapsible) {
                     mod.clickable { toggleCollapse(index, messages) }
                 } else mod
             },
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-            if (message.collapsible) {
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    if (message.collapsed) "▶" else "▼",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                )
-            }
+        Box(
+            modifier = Modifier.size(28.dp).background(avatarBackground, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(avatar, color = avatarForeground, style = MaterialTheme.typography.labelMedium)
         }
-        Spacer(Modifier.height(6.dp))
-        if (message.collapsible && message.collapsed) {
-            Text(
-                collapsedLabel,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-            )
-        } else {
-            MessageContent(message, workspace)
+        Spacer(Modifier.width(11.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                if (message.collapsible) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (message.collapsed) "›" else "⌄",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.height(7.dp))
+            if (message.collapsible && message.collapsed) {
+                Text(
+                    collapsedLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                MessageContent(message, workspace)
+            }
         }
     }
 }
@@ -1172,12 +1288,19 @@ private fun Composer(
     onSend: () -> Unit,
     onTerminate: () -> Unit,
 ) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-        OutlinedTextField(
-            value = input,
-            onValueChange = onInputChange,
-            enabled = enabled,
-            modifier = Modifier.weight(1f).heightIn(min = 88.dp, max = 160.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.large)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large)
+            .padding(10.dp),
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+            OutlinedTextField(
+                value = input,
+                onValueChange = onInputChange,
+                enabled = enabled,
+                modifier = Modifier.weight(1f).heightIn(min = 68.dp, max = 148.dp)
                 // Text fields consume Enter while editing. Handle it in the preview
                 // phase so plain Enter can send before the field inserts a newline.
                 .onPreviewKeyEvent { event ->
@@ -1201,27 +1324,37 @@ private fun Composer(
                         ComposerKeyAction.PassThrough -> false
                     }
                 },
-            label = { Text("输入问题 (Enter 发送, Ctrl+Enter 换行)") },
-            maxLines = 6,
-        )
-        Spacer(Modifier.width(12.dp))
-        if (isBusy) {
-            Button(
-                onClick = onTerminate,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
-                modifier = Modifier.height(56.dp),
-            ) {
-                Text("终止")
-            }
-        } else {
-            Button(
-                onClick = onSend,
-                enabled = enabled && input.isNotBlank(),
-                modifier = Modifier.height(56.dp),
-            ) {
-                Text("发送")
+                placeholder = { Text("向 KZAgent 描述任务…") },
+                maxLines = 6,
+                shape = MaterialTheme.shapes.medium,
+            )
+            Spacer(Modifier.width(10.dp))
+            if (isBusy) {
+                Button(
+                    onClick = onTerminate,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.height(40.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
+                ) {
+                    Text("终止")
+                }
+            } else {
+                FluentAccentButton(
+                    onClick = onSend,
+                    disabled = !enabled || input.isBlank(),
+                    modifier = Modifier.height(40.dp).widthIn(min = 76.dp),
+                ) {
+                    FluentText("发送  ↑")
+                }
             }
         }
+        Spacer(Modifier.height(7.dp))
+        Text(
+            "Enter 发送  ·  Ctrl+Enter 换行",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
     }
 }
 

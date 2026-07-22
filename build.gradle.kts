@@ -48,6 +48,9 @@ java {
 dependencies {
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.compose.material3:material3:1.9.0")
+    // Compose Fluent is introduced as a shell/theme layer first. Material 3 remains
+    // available for the markdown renderer and complex dialogs during the staged migration.
+    implementation("io.github.compose-fluent:fluent:v0.1.0")
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.43.0")
     implementation("com.mikepenz:multiplatform-markdown-renderer-code:0.43.0")
     implementation("com.mikepenz:multiplatform-markdown-renderer-coil3:0.43.0")

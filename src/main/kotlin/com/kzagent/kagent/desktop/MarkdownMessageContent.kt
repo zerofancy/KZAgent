@@ -465,8 +465,9 @@ private fun resolveLocalImage(workspace: Path, imagePath: Path): ResolvedMarkdow
     val workspaceRoot = runCatching { workspace.toRealPath() }.getOrNull() ?: return null
     val candidate = if (imagePath.isAbsolute) imagePath else workspaceRoot.resolve(imagePath)
     val normalized = candidate.toAbsolutePath().normalize()
-    if (!normalized.startsWith(workspaceRoot)) return null
-
+    // Compare canonical paths so macOS aliases such as /var -> /private/var do
+    // not reject a file that is genuinely inside the workspace. The boundary
+    // remains enforced after symlink resolution, so escaping symlinks stay blocked.
     val realPath = runCatching { normalized.toRealPath() }.getOrNull() ?: return null
     if (!realPath.startsWith(workspaceRoot) || !Files.isRegularFile(realPath)) return null
     return ResolvedMarkdownImage.Local(realPath)
