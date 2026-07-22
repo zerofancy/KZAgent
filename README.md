@@ -87,6 +87,16 @@ export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 ./gradlew run --args="chat \"分析一下项目架构\""
 ```
 
+### 3. 打包桌面应用
+
+Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本覆盖已安装版本：
+
+```powershell
+.\gradlew.bat packageReleaseExe
+```
+
+产物位于 `build/compose/binaries/main-release/exe/`。`packageReleaseExe` 生成的是安装器；安装后的应用程序位于安装目录中的 `KZAgent.exe`。发布新版本时仍应同步提升 `build.gradle.kts` 中的 `windowsPackageVersion`，相同版本覆盖仅用于修复构建或重复安装。
+
 ---
 
 ## 使用方式

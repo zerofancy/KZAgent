@@ -1,13 +1,17 @@
 package com.kzagent.kagent.desktop
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.text.LocalTextContextMenu
+import androidx.compose.foundation.text.TextContextMenu
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -94,7 +98,7 @@ private val FluentShapes = Shapes(
  * intentionally nested so the existing markdown renderer and dialogs retain a
  * complete theme instead of falling back to library defaults.
  */
-@OptIn(ExperimentalFluentApi::class)
+@OptIn(ExperimentalFluentApi::class, ExperimentalFoundationApi::class)
 @Composable
 internal fun KZAgentFluentTheme(content: @Composable () -> Unit) {
     val darkTheme = isSystemInDarkTheme()
@@ -107,13 +111,20 @@ internal fun KZAgentFluentTheme(content: @Composable () -> Unit) {
         compactMode = true,
         useAcrylicPopup = false,
     ) {
-        MaterialTheme(
-            colorScheme = if (darkTheme) FluentDarkColorScheme else FluentLightColorScheme,
-            typography = FluentTypography,
-            shapes = FluentShapes,
+        // Compose Fluent v0.1.0 installs a TextContextMenu compiled against
+        // Compose 1.8. Compose 1.11 changed the action ABI, so keep Fluent's
+        // other locals but restore the current Compose implementation here.
+        CompositionLocalProvider(
+            LocalTextContextMenu provides TextContextMenu.Default,
         ) {
-            Mica(modifier = Modifier.fillMaxSize()) {
-                content()
+            MaterialTheme(
+                colorScheme = if (darkTheme) FluentDarkColorScheme else FluentLightColorScheme,
+                typography = FluentTypography,
+                shapes = FluentShapes,
+            ) {
+                Mica(modifier = Modifier.fillMaxSize()) {
+                    content()
+                }
             }
         }
     }
