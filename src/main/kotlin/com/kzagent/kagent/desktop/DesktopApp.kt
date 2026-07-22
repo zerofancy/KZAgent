@@ -96,9 +96,12 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.awt.BorderLayout
+import java.awt.Desktop
 import java.awt.Dimension
 import java.awt.EventQueue
+import java.awt.Frame
 import java.awt.Image
+import java.awt.desktop.AppReopenedListener
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -163,6 +166,7 @@ fun runDesktopApp() {
     val closed = CountDownLatch(1)
     val initialized = CountDownLatch(1)
     val windowShown = AtomicBoolean(false)
+    val windowLifecycle = desktopWindowLifecycle(System.getProperty("os.name"))
     var startupFailure: Throwable? = null
     startPackagedAppFallbackWatchdog(windowShown)
     SwingUtilities.invokeLater {
@@ -172,7 +176,10 @@ fun runDesktopApp() {
                 add(JLabel("KZAgent loading..."), BorderLayout.CENTER)
             }
             val frame = JFrame("KZAgent").apply {
-                defaultCloseOperation = WindowConstants.DISPOSE_ON_CLOSE
+                defaultCloseOperation = when (windowLifecycle) {
+                    DesktopWindowLifecycle.KEEP_RUNNING -> WindowConstants.HIDE_ON_CLOSE
+                    DesktopWindowLifecycle.EXIT_AFTER_CLOSE -> WindowConstants.DISPOSE_ON_CLOSE
+                }
                 minimumSize = Dimension(880, 600)
                 preferredSize = Dimension(1120, 760)
                 iconImage = loadAppIcon()
@@ -186,6 +193,7 @@ fun runDesktopApp() {
                 pack()
             }
             desktopLog("JFrame created")
+            installMacAppReopenHandler(frame, windowLifecycle)
             showWindowInForeground(frame)
             windowShown.set(true)
             desktopLog("JFrame visible")
@@ -221,6 +229,46 @@ fun runDesktopApp() {
     startupFailure?.let { throw it }
     closed.await()
     desktopLog("closed")
+}
+
+internal enum class DesktopWindowLifecycle {
+    KEEP_RUNNING,
+    EXIT_AFTER_CLOSE,
+}
+
+/**
+ * macOS applications conventionally stay alive after their last window closes. The
+ * existing Compose content is therefore hidden and later restored from the Dock;
+ * other desktop platforms retain their close-to-exit behavior.
+ */
+internal fun desktopWindowLifecycle(osName: String): DesktopWindowLifecycle =
+    if (osName.lowercase().contains("mac")) {
+        DesktopWindowLifecycle.KEEP_RUNNING
+    } else {
+        DesktopWindowLifecycle.EXIT_AFTER_CLOSE
+    }
+
+private fun installMacAppReopenHandler(
+    window: JFrame,
+    lifecycle: DesktopWindowLifecycle,
+) {
+    if (lifecycle != DesktopWindowLifecycle.KEEP_RUNNING) return
+
+    runCatching {
+        check(Desktop.isDesktopSupported()) { "Desktop API is not supported" }
+        val desktop = Desktop.getDesktop()
+        check(desktop.isSupported(Desktop.Action.APP_EVENT_REOPENED)) {
+            "macOS application reopen events are not supported"
+        }
+        desktop.addAppEventListener(AppReopenedListener {
+            EventQueue.invokeLater {
+                desktopLog("Dock reopen requested")
+                restoreWindowInForeground(window)
+            }
+        })
+    }.onFailure {
+        desktopLog("failed to install Dock reopen handler: ${it.message ?: it}", it)
+    }
 }
 
 private fun loadAppIcon(): Image? = runCatching {
@@ -328,6 +376,13 @@ private fun showWindowInForeground(window: java.awt.Window) {
     window.minimumSize = Dimension(880, 600)
     window.setLocationRelativeTo(null)
     window.isAlwaysOnTop = true
+    restoreWindowInForeground(window)
+}
+
+private fun restoreWindowInForeground(window: java.awt.Window) {
+    if (window is Frame && window.extendedState and Frame.ICONIFIED != 0) {
+        window.extendedState = window.extendedState and Frame.ICONIFIED.inv()
+    }
     window.isVisible = true
     window.toFront()
     window.requestFocus()
