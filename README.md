@@ -101,16 +101,17 @@ export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 
 桌面端支持：
 
-- 使用 Compose Fluent + Material 3 双主题桥接的 Fluent UI 桌面界面；侧边导航、状态、消息卡片、输入命令栏和设置页支持亮/暗主题，并在三平台合理退化
+- 使用 Compose Fluent + Material 3 双主题桥接的 Fluent UI 桌面界面；完整 NavigationView 会在宽屏显示固定左栏、窄屏切换为紧凑浮层，并支持亮/暗主题
 - 默认使用启动目录作为工作区，并可任意切换目录
 - 加载最新 `.kagent/sessions/` 历史用于续聊，支持多会话管理
 - 会话列表、消息历史、设置和审批详情等滚动区域均提供可拖拽的桌面滚动条
 - Markdown 超宽表格提供独立、可拖拽的横向滚动条，单元格内容会换行完整展示
-- 侧边栏提供**设置面板**：配置 DeepSeek API Key、Base URL、模型、上下文窗口等
+- NavigationView 底部提供**设置面板**入口；会话重命名和删除集中在各会话的更多菜单中
 - 主聊天页顶部提供常驻的**审批模式下拉菜单**，可立即切换自动、手动或全部放行模式
 - 启动时自动检测配置：如未设置 API Key 将**默认跳转到设置界面**
 - 在状态栏显示模型请求、工具执行和审批状态
 - 支持自动、手动和全部放行三种审批模式；高风险人工审批使用单独的警告弹窗
+- 输入框使用 `Enter` 发送；macOS 使用 `Command + Enter` 换行，Windows 和 Linux 使用 `Ctrl + Enter` 换行
 - macOS 上关闭主窗口后应用会继续驻留；再次点击 Dock 图标可恢复原窗口和会话，使用 `Command + Q` 可完全退出
 
 ### `ask` — 单次提问模式

@@ -8,6 +8,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -21,9 +22,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
@@ -35,13 +33,11 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -85,9 +81,28 @@ import com.kzagent.kagent.tools.ToolResult
 import io.github.vinceglb.filekit.FileKit
 import io.github.vinceglb.filekit.PlatformFile
 import io.github.vinceglb.filekit.dialogs.openDirectoryPicker
+import io.github.composefluent.component.Icon as FluentIcon
+import io.github.composefluent.component.MenuFlyoutContainer
+import io.github.composefluent.component.MenuFlyoutItem
+import io.github.composefluent.component.MenuItem
+import io.github.composefluent.component.NavigationDisplayMode
+import io.github.composefluent.component.NavigationView
+import io.github.composefluent.component.ProgressRing
+import io.github.composefluent.component.ProgressRingSize
+import io.github.composefluent.component.SideNavHeader
+import io.github.composefluent.component.SubtleButton
+import io.github.composefluent.component.menuItemSeparator
+import io.github.composefluent.component.rememberNavigationState
 import io.github.composefluent.component.AccentButton as FluentAccentButton
-import io.github.composefluent.component.Button as FluentButton
 import io.github.composefluent.component.Text as FluentText
+import io.github.composefluent.icons.Icons
+import io.github.composefluent.icons.regular.Add
+import io.github.composefluent.icons.regular.Delete
+import io.github.composefluent.icons.regular.Document
+import io.github.composefluent.icons.regular.Folder
+import io.github.composefluent.icons.regular.MoreHorizontal
+import io.github.composefluent.icons.regular.Rename
+import io.github.composefluent.icons.regular.Settings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -589,43 +604,35 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     }
 
     KZAgentFluentTheme {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
-        ) {
-            // ---- Sidebar ----
-            SessionSidebar(
-                sessions = sessionManager.sessions,
-                activeIndex = sessionManager.activeSessionIndex,
-                onSelect = { sessionManager.switchTo(it) },
-                onAdd = { sessionManager.addNewSession() },
-                onDelete = { showDeleteConfirmIndex = it },
-                onRename = { idx ->
-                    renameText = sessionManager.sessions[idx].name
-                    showRenameDialogIndex = idx
-                },
-                onChooseWorkspace = {
-                    scope.launch {
-                        val session = sessionManager.activeSession()
-                        chooseWorkspace(session.workspace)?.let { newWs ->
-                            sessionManager.changeWorkspace(session, newWs)
-                        }
+        KZAgentNavigationView(
+            sessions = sessionManager.sessions,
+            activeIndex = sessionManager.activeSessionIndex,
+            settingsSelected = showSettings,
+            onSelectSession = { index ->
+                sessionManager.switchTo(index)
+                showSettings = false
+            },
+            onAddSession = {
+                sessionManager.addNewSession()
+                showSettings = false
+            },
+            onDeleteSession = { showDeleteConfirmIndex = it },
+            onRenameSession = { index ->
+                renameText = sessionManager.sessions[index].name
+                showRenameDialogIndex = index
+            },
+            onChooseWorkspace = {
+                scope.launch {
+                    val session = sessionManager.activeSession()
+                    chooseWorkspace(session.workspace)?.let { newWorkspace ->
+                        sessionManager.changeWorkspace(session, newWorkspace)
+                        showSettings = false
                     }
-                },
-                onSettings = {
-                    showSettings = true
-                },
-                modifier = Modifier.width(264.dp).fillMaxSize(),
-            )
-
-            // ---- Divider ----
-            VerticalDivider(
-                modifier = Modifier.fillMaxHeight(),
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
-
-            // ---- Main Chat Area ----
+                }
+            },
+            onSettings = { showSettings = true },
+            modifier = Modifier.fillMaxSize(),
+        ) {
             if (showSettings) {
                 val (defaultApiKey, defaultBaseUrl) = settingsDefaults()
                 SettingsPanel(
@@ -645,7 +652,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                 )
             } else {
                 val session = sessionManager.activeSession()
-                Column(modifier = Modifier.weight(1f).fillMaxHeight().padding(20.dp)) {
+                Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
                     Header(
                         workspace = session.workspace,
                         status = session.status,
@@ -809,177 +816,159 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     }
 }
 
+internal val NavigationCompactBreakpoint = 1000.dp
+
+internal fun navigationDisplayModeForWidth(width: androidx.compose.ui.unit.Dp): NavigationDisplayMode =
+    if (width < NavigationCompactBreakpoint) {
+        NavigationDisplayMode.LeftCompact
+    } else {
+        NavigationDisplayMode.Left
+    }
+
+internal fun isSessionNavigationSelected(
+    settingsSelected: Boolean,
+    activeIndex: Int,
+    sessionIndex: Int,
+): Boolean = !settingsSelected && activeIndex == sessionIndex
+
+internal fun shouldCollapseNavigationAfterDestination(displayMode: NavigationDisplayMode): Boolean =
+    displayMode == NavigationDisplayMode.LeftCompact
+
 @Composable
-private fun SessionSidebar(
+private fun KZAgentNavigationView(
     sessions: List<SessionData>,
     activeIndex: Int,
-    onSelect: (Int) -> Unit,
-    onAdd: () -> Unit,
-    onDelete: (Int) -> Unit,
-    onRename: (Int) -> Unit,
+    settingsSelected: Boolean,
+    onSelectSession: (Int) -> Unit,
+    onAddSession: () -> Unit,
+    onDeleteSession: (Int) -> Unit,
+    onRenameSession: (Int) -> Unit,
     onChooseWorkspace: () -> Unit,
     onSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    pane: @Composable () -> Unit,
 ) {
-    val listState = rememberLazyListState()
-    Column(
-        modifier = modifier
-            .background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.94f))
-            .padding(horizontal = 12.dp, vertical = 14.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .background(MaterialTheme.colorScheme.primary, MaterialTheme.shapes.small),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "K",
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        style = MaterialTheme.typography.titleSmall,
+    BoxWithConstraints(modifier = modifier) {
+        val displayMode = navigationDisplayModeForWidth(maxWidth)
+        val navigationState = rememberNavigationState(
+            initialExpanded = displayMode == NavigationDisplayMode.Left,
+        )
+
+        fun runDestinationAction(action: () -> Unit) {
+            action()
+            if (shouldCollapseNavigationAfterDestination(displayMode)) {
+                navigationState.expanded = false
+            }
+        }
+
+        NavigationView(
+            modifier = Modifier.fillMaxSize(),
+            displayMode = displayMode,
+            state = navigationState,
+            title = { FluentText("KZAgent", maxLines = 1) },
+            menuItems = {
+                item(key = "new-session") {
+                    MenuItem(
+                        selected = false,
+                        onClick = { runDestinationAction(onAddSession) },
+                        text = { FluentText("新建会话", maxLines = 1) },
+                        icon = { FluentIcon(Icons.Default.Add, contentDescription = null) },
                     )
                 }
-                Spacer(Modifier.width(9.dp))
-                Text("KZAgent", style = MaterialTheme.typography.titleMedium)
-            }
-            FluentAccentButton(
-                onClick = onAdd,
-                modifier = Modifier.height(32.dp),
-            ) {
-                FluentText("＋ 新建", maxLines = 1)
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-        FluentButton(
-            onClick = onChooseWorkspace,
-            modifier = Modifier.fillMaxWidth().height(34.dp),
-            contentArrangement = Arrangement.Start,
-        ) {
-            FluentText("▣  切换工作区", maxLines = 1)
-        }
-        Spacer(Modifier.height(18.dp))
-        Text(
-            "最近会话",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 8.dp),
-        )
-        Spacer(Modifier.height(8.dp))
-
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize().padding(end = 12.dp),
-            ) {
-                itemsIndexed(sessions, key = { _, s -> s.id }) { index, session ->
-                    val isActive = index == activeIndex
-                    val itemColor = if (isActive) {
-                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
-                    } else {
-                        Color.Transparent
+                item(key = "choose-workspace") {
+                    MenuItem(
+                        selected = false,
+                        onClick = { runDestinationAction(onChooseWorkspace) },
+                        text = { FluentText("切换工作区", maxLines = 1) },
+                        icon = { FluentIcon(Icons.Default.Folder, contentDescription = null) },
+                    )
+                }
+                menuItemSeparator(key = "session-separator")
+                item(key = "recent-sessions-header") {
+                    SideNavHeader {
+                        FluentText("最近会话", maxLines = 1)
                     }
-                    val itemBorder = if (isActive) {
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-                    } else {
-                        Color.Transparent
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onSelect(index) }
-                            .background(itemColor, shape = MaterialTheme.shapes.medium)
-                            .border(1.dp, itemBorder, MaterialTheme.shapes.medium)
-                            .padding(horizontal = 10.dp, vertical = 9.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .width(3.dp)
-                                .height(40.dp)
-                                .background(
-                                    if (isActive) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                    CircleShape,
-                                ),
-                        )
-                        Spacer(Modifier.width(9.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    session.name,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                                    maxLines = 1,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                if (session.isBusy) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(14.dp),
-                                        strokeWidth = 1.5.dp,
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.height(3.dp))
-                            Text(
-                                "${session.status}  ·  ${session.workspace.fileName ?: session.workspace}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
+                }
+                items(
+                    count = sessions.size,
+                    key = { sessions[it].id },
+                    contentType = { "session" },
+                ) { index ->
+                    val session = sessions[index]
+                    MenuItem(
+                        selected = isSessionNavigationSelected(settingsSelected, activeIndex, index),
+                        onClick = { runDestinationAction { onSelectSession(index) } },
+                        text = { FluentText(session.name, maxLines = 1) },
+                        icon = { FluentIcon(Icons.Default.Document, contentDescription = null) },
+                        badge = {
+                            SessionNavigationBadge(
+                                busy = session.isBusy,
+                                showActions = navigationState.expanded,
+                                onRename = { onRenameSession(index) },
+                                onDelete = { onDeleteSession(index) },
                             )
-                            if (isActive) {
-                                Spacer(Modifier.height(4.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End,
-                                ) {
-                                    TextButton(
-                                        onClick = { onRename(index) },
-                                        modifier = Modifier.height(24.dp),
-                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                    ) {
-                                        Text("重命名", style = MaterialTheme.typography.labelSmall)
-                                    }
-                                    TextButton(
-                                        onClick = { onDelete(index) },
-                                        modifier = Modifier.height(24.dp),
-                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                    ) {
-                                        Text(
-                                            "删除",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.error,
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(7.dp))
+                        },
+                    )
+                }
+            },
+            footerItems = {
+                item(key = "settings") {
+                    MenuItem(
+                        selected = settingsSelected,
+                        onClick = { runDestinationAction(onSettings) },
+                        text = { FluentText("设置", maxLines = 1) },
+                        icon = { FluentIcon(Icons.Default.Settings, contentDescription = null) },
+                    )
+                }
+            },
+            pane = pane,
+        )
+    }
+}
+
+@Composable
+private fun SessionNavigationBadge(
+    busy: Boolean,
+    showActions: Boolean,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (busy) {
+            ProgressRing(size = ProgressRingSize.Small)
+        }
+        if (showActions) {
+            MenuFlyoutContainer(
+                flyout = {
+                    MenuFlyoutItem(
+                        onClick = {
+                            isFlyoutVisible = false
+                            onRename()
+                        },
+                        text = { FluentText("重命名") },
+                        icon = { FluentIcon(Icons.Default.Rename, contentDescription = null) },
+                    )
+                    MenuFlyoutItem(
+                        onClick = {
+                            isFlyoutVisible = false
+                            onDelete()
+                        },
+                        text = { FluentText("删除") },
+                        icon = { FluentIcon(Icons.Default.Delete, contentDescription = null) },
+                    )
+                },
+            ) {
+                SubtleButton(
+                    onClick = { isFlyoutVisible = !isFlyoutVisible },
+                    modifier = Modifier.size(28.dp),
+                    iconOnly = true,
+                ) {
+                    FluentIcon(Icons.Default.MoreHorizontal, contentDescription = null)
                 }
             }
-            VerticalScrollbar(
-                adapter = rememberScrollbarAdapter(listState),
-                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-            )
-        }
-        Spacer(Modifier.height(10.dp))
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Spacer(Modifier.height(10.dp))
-        FluentButton(
-            onClick = onSettings,
-            modifier = Modifier.fillMaxWidth().height(34.dp),
-            contentArrangement = Arrangement.Start,
-        ) {
-            FluentText("⚙  设置", maxLines = 1)
         }
     }
 }
