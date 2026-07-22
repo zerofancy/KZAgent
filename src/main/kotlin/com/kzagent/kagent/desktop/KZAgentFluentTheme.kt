@@ -3,6 +3,7 @@ package com.kzagent.kagent.desktop
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.LocalTextContextMenu
 import androidx.compose.foundation.text.TextContextMenu
 import androidx.compose.material3.MaterialTheme
@@ -19,7 +20,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.shape.RoundedCornerShape
 import io.github.composefluent.ExperimentalFluentApi
 import io.github.composefluent.FluentTheme
 import io.github.composefluent.background.Mica

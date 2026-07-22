@@ -55,11 +55,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.AppConfigLoader
@@ -652,7 +656,11 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                 )
             } else {
                 val session = sessionManager.activeSession()
-                Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                ) {
                     Header(
                         workspace = session.workspace,
                         status = session.status,
@@ -662,7 +670,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                         onApprovalModeChanged = { onApprovalModeChanged(it) },
                         onCompressContext = { showCompressConfirm = true },
                     )
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(10.dp))
                     session.error?.let {
                         ErrorBanner(it)
                         Spacer(Modifier.height(12.dp))
@@ -983,56 +991,98 @@ private fun Header(
     onApprovalModeChanged: (ApprovalMode) -> Unit,
     onCompressContext: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    workspaceProjectName(workspace),
-                    style = MaterialTheme.typography.headlineSmall,
-                    maxLines = 1,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    workspace.toString(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
-            Spacer(Modifier.width(16.dp))
-            StatusPill(status = status, isBusy = isBusy)
-        }
-        Spacer(Modifier.height(14.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ApprovalModeMenu(
-                approvalMode = approvalMode,
-                onApprovalModeChanged = onApprovalModeChanged,
-            )
-            Spacer(Modifier.width(8.dp))
-            Button(
-                onClick = onCompressContext,
-                enabled = !isBusy,
-                modifier = Modifier.height(36.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = when {
-                        contextPercent > 80 -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.primary
-                    },
-                ),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val useSingleRow = maxWidth >= 720.dp
+        if (useSingleRow) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("上下文 $contextPercent%")
+                WorkspaceIdentity(workspace = workspace, modifier = Modifier.weight(1f))
+                StatusPill(status = status, isBusy = isBusy)
+                HeaderActions(
+                    approvalMode = approvalMode,
+                    contextPercent = contextPercent,
+                    isBusy = isBusy,
+                    onApprovalModeChanged = onApprovalModeChanged,
+                    onCompressContext = onCompressContext,
+                )
             }
+        } else {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    WorkspaceIdentity(workspace = workspace, modifier = Modifier.weight(1f))
+                    StatusPill(status = status, isBusy = isBusy)
+                }
+                Spacer(Modifier.height(8.dp))
+                HeaderActions(
+                    approvalMode = approvalMode,
+                    contextPercent = contextPercent,
+                    isBusy = isBusy,
+                    onApprovalModeChanged = onApprovalModeChanged,
+                    onCompressContext = onCompressContext,
+                    modifier = Modifier.align(Alignment.End),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceIdentity(workspace: Path, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(
+            workspaceProjectName(workspace),
+            style = MaterialTheme.typography.titleLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            workspace.toString(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun HeaderActions(
+    approvalMode: ApprovalMode,
+    contextPercent: Int,
+    isBusy: Boolean,
+    onApprovalModeChanged: (ApprovalMode) -> Unit,
+    onCompressContext: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ApprovalModeMenu(
+            approvalMode = approvalMode,
+            onApprovalModeChanged = onApprovalModeChanged,
+        )
+        Button(
+            onClick = onCompressContext,
+            enabled = !isBusy,
+            modifier = Modifier.height(32.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = when {
+                    contextPercent > 80 -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.primary
+                },
+            ),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+        ) {
+            Text("上下文 $contextPercent%", maxLines = 1)
         }
     }
 }
@@ -1041,9 +1091,10 @@ private fun Header(
 private fun StatusPill(status: String, isBusy: Boolean) {
     Row(
         modifier = Modifier
+            .widthIn(max = 180.dp)
             .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-            .padding(horizontal = 11.dp, vertical = 7.dp),
+            .padding(horizontal = 9.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (isBusy) {
@@ -1056,7 +1107,12 @@ private fun StatusPill(status: String, isBusy: Boolean) {
             )
         }
         Spacer(Modifier.width(7.dp))
-        Text(status, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+        Text(
+            status,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -1085,8 +1141,8 @@ private fun ApprovalModeMenu(
     Box {
         OutlinedButton(
             onClick = { expanded = true },
-            modifier = Modifier.height(36.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+            modifier = Modifier.height(32.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
         ) {
             Text("审批：${approvalModeLabel(approvalMode)} ▾", maxLines = 1)
         }
@@ -1332,6 +1388,15 @@ private fun Composer(
     onSend: () -> Unit,
     onTerminate: () -> Unit,
 ) {
+    val isMacOs = remember { System.getProperty("os.name").lowercase().contains("mac") }
+    var fieldValue by remember { mutableStateOf(TextFieldValue(input, TextRange(input.length))) }
+
+    LaunchedEffect(input) {
+        if (input != fieldValue.text) {
+            fieldValue = TextFieldValue(input, TextRange(input.length))
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1341,21 +1406,32 @@ private fun Composer(
     ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(
-                value = input,
-                onValueChange = onInputChange,
+                value = fieldValue,
+                onValueChange = {
+                    fieldValue = it
+                    onInputChange(it.text)
+                },
                 enabled = enabled,
                 modifier = Modifier.weight(1f).heightIn(min = 68.dp, max = 148.dp)
-                // Text fields consume Enter while editing. Handle it in the preview
-                // phase so plain Enter can send before the field inserts a newline.
+                // Handle Enter in the preview phase so plain Enter can send and the
+                // platform shortcut can insert a newline at the current selection.
                 .onPreviewKeyEvent { event ->
                     when (
                         resolveComposerKeyAction(
                             isEnter = event.key == Key.Enter,
                             isCtrlPressed = event.isCtrlPressed,
+                            isMetaPressed = event.isMetaPressed,
+                            isMacOs = isMacOs,
                             eventType = event.type,
                             isBusy = isBusy,
                         )
                     ) {
+                        ComposerKeyAction.InsertLineBreak -> {
+                            val updatedValue = insertLineBreak(fieldValue)
+                            fieldValue = updatedValue
+                            onInputChange(updatedValue.text)
+                            true
+                        }
                         ComposerKeyAction.Send -> {
                             onSend()
                             true
@@ -1394,7 +1470,11 @@ private fun Composer(
         }
         Spacer(Modifier.height(7.dp))
         Text(
-            "Enter 发送  ·  Ctrl+Enter 换行",
+            if (isMacOs) {
+                "Enter 发送  ·  Command+Enter 换行"
+            } else {
+                "Enter 发送  ·  Ctrl+Enter 换行"
+            },
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp),
@@ -1403,6 +1483,7 @@ private fun Composer(
 }
 
 internal enum class ComposerKeyAction {
+    InsertLineBreak,
     Send,
     Terminate,
     Consume,
@@ -1411,18 +1492,39 @@ internal enum class ComposerKeyAction {
 
 /**
  * Keeps keyboard behavior testable without constructing platform-specific key events.
- * Plain Enter is consumed on both phases; only KeyDown performs the action.
+ * Enter is consumed on both phases; only KeyDown performs a send or line-break action.
  */
 internal fun resolveComposerKeyAction(
     isEnter: Boolean,
     isCtrlPressed: Boolean,
+    isMetaPressed: Boolean,
+    isMacOs: Boolean,
     eventType: KeyEventType,
     isBusy: Boolean,
 ): ComposerKeyAction = when {
-    !isEnter || isCtrlPressed -> ComposerKeyAction.PassThrough
+    !isEnter -> ComposerKeyAction.PassThrough
+    (if (isMacOs) isMetaPressed else isCtrlPressed) -> {
+        if (eventType == KeyEventType.KeyDown) {
+            ComposerKeyAction.InsertLineBreak
+        } else {
+            ComposerKeyAction.Consume
+        }
+    }
+    isCtrlPressed -> ComposerKeyAction.PassThrough
     eventType != KeyEventType.KeyDown -> ComposerKeyAction.Consume
     isBusy -> ComposerKeyAction.Terminate
     else -> ComposerKeyAction.Send
+}
+
+internal fun insertLineBreak(value: TextFieldValue): TextFieldValue {
+    val selectionStart = minOf(value.selection.start, value.selection.end).coerceIn(0, value.text.length)
+    val selectionEnd = maxOf(value.selection.start, value.selection.end).coerceIn(0, value.text.length)
+    val updatedText = value.text.replaceRange(selectionStart, selectionEnd, "\n")
+    return value.copy(
+        text = updatedText,
+        selection = TextRange(selectionStart + 1),
+        composition = null,
+    )
 }
 
 internal enum class ApprovalKeyAction {
