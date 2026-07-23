@@ -17,30 +17,40 @@ internal data class TextFile(
 
 /** Decodes common Windows text formats and preserves their charset and BOM on write. */
 internal object TextFileCodec {
-    private val UTF32_LE = Charset.forName("UTF-32LE")
-    private val UTF32_BE = Charset.forName("UTF-32BE")
-    private val GB18030 = Charset.forName("GB18030")
-    private val WINDOWS_1252 = Charset.forName("windows-1252")
-
     fun read(path: Path): TextFile = decode(Files.readAllBytes(path), path.toString())
 
-    fun decode(bytes: ByteArray, displayName: String): TextFile {
+    fun decode(bytes: ByteArray, displayName: String): TextFile =
+        decode(bytes, displayName, Charset::forName)
+
+    /**
+     * Resolves optional charsets only when their input format is actually used.
+     *
+     * Native distributions may contain a reduced Java runtime. Keeping charset
+     * lookup out of the object initializer prevents one unavailable optional
+     * charset from making every later access fail with NoClassDefFoundError.
+     */
+    internal fun decode(
+        bytes: ByteArray,
+        displayName: String,
+        charsetResolver: (String) -> Charset,
+    ): TextFile {
         val signatures = listOf(
-            Signature(byteArrayOf(0x00, 0x00, 0xFE.toByte(), 0xFF.toByte()), UTF32_BE),
-            Signature(byteArrayOf(0xFF.toByte(), 0xFE.toByte(), 0x00, 0x00), UTF32_LE),
-            Signature(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()), StandardCharsets.UTF_8),
-            Signature(byteArrayOf(0xFE.toByte(), 0xFF.toByte()), StandardCharsets.UTF_16BE),
-            Signature(byteArrayOf(0xFF.toByte(), 0xFE.toByte()), StandardCharsets.UTF_16LE),
+            Signature(byteArrayOf(0x00, 0x00, 0xFE.toByte(), 0xFF.toByte()), "UTF-32BE"),
+            Signature(byteArrayOf(0xFF.toByte(), 0xFE.toByte(), 0x00, 0x00), "UTF-32LE"),
+            Signature(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()), "UTF-8"),
+            Signature(byteArrayOf(0xFE.toByte(), 0xFF.toByte()), "UTF-16BE"),
+            Signature(byteArrayOf(0xFF.toByte(), 0xFE.toByte()), "UTF-16LE"),
         )
         signatures.firstOrNull { bytes.startsWith(it.bytes) }?.let { signature ->
+            val charset = charsetResolver(signature.charsetName)
             val payload = bytes.copyOfRange(signature.bytes.size, bytes.size)
-            return TextFile(decodeStrict(payload, signature.charset, displayName), signature.charset, signature.bytes)
+            return TextFile(decodeStrict(payload, charset, displayName), charset, signature.bytes)
         }
 
         val charset = when {
             canDecode(bytes, StandardCharsets.UTF_8) -> StandardCharsets.UTF_8
-            canDecode(bytes, GB18030) -> GB18030
-            else -> WINDOWS_1252
+            else -> charsetResolver("GB18030").takeIf { canDecode(bytes, it) }
+                ?: charsetResolver("windows-1252")
         }
         return TextFile(decodeStrict(bytes, charset, displayName), charset, byteArrayOf())
     }
@@ -72,5 +82,5 @@ internal object TextFileCodec {
     private fun ByteArray.startsWith(prefix: ByteArray): Boolean =
         size >= prefix.size && prefix.indices.all { this[it] == prefix[it] }
 
-    private data class Signature(val bytes: ByteArray, val charset: Charset)
+    private data class Signature(val bytes: ByteArray, val charsetName: String)
 }

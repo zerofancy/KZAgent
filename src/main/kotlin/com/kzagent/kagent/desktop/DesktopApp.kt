@@ -368,7 +368,7 @@ private fun packagedAppPath(): Path =
     ).toAbsolutePath().normalize()
 
 private fun desktopLog(message: String, throwable: Throwable? = null) {
-    val line = "${OffsetDateTime.now()} KZAgent desktop: $message"
+    val line = "${OffsetDateTime.now()} KZAgent desktop: ${SecretRedactor.redact(message)}"
     println(line)
     val logPath = desktopLogPath()
     runCatching {
@@ -378,7 +378,7 @@ private fun desktopLog(message: String, throwable: Throwable? = null) {
             buildString {
                 appendLine(line)
                 if (throwable != null) {
-                    appendLine(throwable.stackTraceToString())
+                    appendLine(SecretRedactor.redact(throwable.stackTraceToString()))
                 }
             },
             StandardOpenOption.CREATE,
@@ -390,6 +390,21 @@ private fun desktopLog(message: String, throwable: Throwable? = null) {
 private fun desktopLogPath(): Path =
     System.getProperty("kzagent.logPath")?.let(Path::of)
         ?: AppDataDir.appDir().resolve("desktop.log")
+
+/**
+ * Class initialization and coroutine wrappers often hide the actionable error
+ * behind a class name. Prefer the deepest non-empty cause for the UI while the
+ * complete stack trace remains available in desktop.log.
+ */
+internal fun runtimeErrorMessage(throwable: Throwable): String {
+    val causes = generateSequence(throwable) { current ->
+        current.cause?.takeUnless { it === current }
+    }.toList()
+    return causes
+        .asReversed()
+        .firstNotNullOfOrNull { it.message?.takeIf(String::isNotBlank) }
+        ?: throwable.toString()
+}
 
 private fun showWindowInForeground(window: java.awt.Window) {
     window.minimumSize = Dimension(880, 600)
@@ -568,7 +583,11 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
         runCatching { sessionManager.ensureRuntime(session, observer) }
             .onSuccess { session.status = "就绪" }
             .onFailure {
-                session.error = SecretRedactor.redact(it.message ?: it.toString())
+                desktopLog(
+                    "failed to initialize session ${session.id}: ${runtimeErrorMessage(it)}",
+                    it,
+                )
+                session.error = SecretRedactor.redact(runtimeErrorMessage(it))
                 session.status = "配置不可用"
             }
     }

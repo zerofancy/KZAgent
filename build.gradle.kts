@@ -79,7 +79,9 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Exe, TargetFormat.Deb)
-            modules("java.net.http")
+            // TextFileCodec supports UTF-32 and East Asian/Windows encodings.
+            // Keep their providers in the reduced jlink runtime on every platform.
+            modules("java.net.http", "jdk.charsets")
             packageName = "KZAgent"
             packageVersion = windowsPackageVersion
             macOS {
