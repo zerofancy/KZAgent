@@ -91,6 +91,28 @@ class AppConfigLoaderTest {
     }
 
     @Test
+    fun rejectsInvalidContextWindowSizesFromConfigFile() {
+        val configFile = Files.createTempDirectory("kagent-invalid-context-test")
+            .resolve("config.properties")
+
+        Files.writeString(
+            configFile,
+            "deepseek.api.key=sk-test-local\ndeepseek.context.window.size=not-a-number\n",
+        )
+        assertFailsWith<IllegalArgumentException> {
+            AppConfigLoader.load(configFile, emptyMap())
+        }
+
+        Files.writeString(
+            configFile,
+            "deepseek.api.key=sk-test-local\ndeepseek.context.window.size=0\n",
+        )
+        assertFailsWith<IllegalArgumentException> {
+            AppConfigLoader.load(configFile, emptyMap())
+        }
+    }
+
+    @Test
     fun userPromptRoundTripsBackslashesAndNewlines() {
         val configFile = Files.createTempDirectory("kagent-prompt-roundtrip-test")
             .resolve("kzagent")

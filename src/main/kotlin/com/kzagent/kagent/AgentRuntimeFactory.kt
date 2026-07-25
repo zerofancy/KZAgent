@@ -68,6 +68,7 @@ object AgentRuntimeFactory {
             sessionWriter = writer,
             observer = observer,
             instructionsLoader = instructionsLoader,
+            contextWindowSize = config.contextWindowSize,
         )
         return AgentRuntime(
             workspace = pathGuard.root,

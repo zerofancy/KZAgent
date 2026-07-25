@@ -20,12 +20,24 @@ class CodingAgent(
     private val quota: ToolQuota = ToolQuota(),
     private val observer: AgentObserver = NoOpAgentObserver,
     private val instructionsLoader: AgentsInstructionsLoader? = null,
+    private val contextWindowSize: Int = DEFAULT_CONTEXT_WINDOW_SIZE,
+    private val autoCompressionThresholdPercent: Int = DEFAULT_COMPRESSION_THRESHOLD_PERCENT,
+    private val autoCompressionKeepLastN: Int = DEFAULT_COMPRESSION_KEEP_LAST_N,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+    private var lastKnownContextTokens = 0
     // Deduplicates scoped instructions between two successful compressions.
     // This is runtime state rather than conversation state so a compression can
     // deliberately start a fresh loading cycle even when recent copies survive.
     private val loadedScopedInstructionSources = mutableSetOf<java.nio.file.Path>()
+
+    init {
+        require(contextWindowSize > 0) { "contextWindowSize must be positive." }
+        require(autoCompressionThresholdPercent in 1..99) {
+            "autoCompressionThresholdPercent must be between 1 and 99."
+        }
+        require(autoCompressionKeepLastN >= 1) { "autoCompressionKeepLastN must be positive." }
+    }
 
     suspend fun run(userPrompt: String): String {
         return runConversation(userPrompt).answer
@@ -39,15 +51,43 @@ class CodingAgent(
         userPrompt: String,
         history: List<AgentMessage> = emptyList(),
     ): AgentRunResult {
-        val messages = history.filter { it !is AgentMessage.System }.toMutableList()
+        var messages = history.filter { it !is AgentMessage.System }.toMutableList()
         val system = AgentMessage.System(promptBuilder.build())
-        messages += AgentMessage.User(userPrompt)
+        val userMessage = AgentMessage.User(userPrompt)
+        val prospectiveTokens = estimateContextTokens(
+            buildList {
+                add(system)
+                addAll(messages)
+                add(userMessage)
+            },
+        )
+        val usageBeforeRun = maxOf(lastKnownContextTokens, prospectiveTokens)
+        if (
+            isAboveAutoCompressionThreshold(usageBeforeRun) &&
+            compressionSplitIndex(messages, autoCompressionKeepLastN) != null
+        ) {
+            observer.onContextCompressionStarted(
+                usagePercent = contextUsagePercent(usageBeforeRun, contextWindowSize),
+            )
+            messages = compressHistory(messages, autoCompressionKeepLastN).toMutableList()
+            observer.onContextCompressionCompleted(
+                estimatedTokens = estimateContextTokens(
+                    buildList {
+                        add(system)
+                        addAll(messages)
+                        add(userMessage)
+                    },
+                ),
+            )
+        }
+        messages += userMessage
         if (history.isEmpty()) {
             sessionWriter.append(system)
         }
         sessionWriter.append(messages.last())
         var contextTokens = 0
         val answer = runInternal(system, messages) { contextTokens = it }
+        lastKnownContextTokens = contextTokens
         return AgentRunResult(
             answer = answer,
             history = messages.toList(),
@@ -75,9 +115,17 @@ class CodingAgent(
                 addAll(messages)
             }
             val reply = model.chat(contextMessages, tools.toolSchemas())
-            contextTokens = maxOf(contextTokens, reply.promptTokens ?: contextTokens)
-            onTokens(contextTokens)
             val assistant = AgentMessage.Assistant(reply.content, reply.toolCalls)
+            val reportedTotalTokens = reply.totalTokens?.takeIf { it > 0 }
+            val reportedPromptTokens = reply.promptTokens?.takeIf { it > 0 }
+            val replyContextTokens = when {
+                reportedTotalTokens != null -> reportedTotalTokens
+                reportedPromptTokens != null ->
+                    reportedPromptTokens + estimateContextTokens(listOf(assistant))
+                else -> estimateContextTokens(contextMessages + assistant)
+            }
+            contextTokens = maxOf(contextTokens, replyContextTokens)
+            onTokens(contextTokens)
             messages += assistant
             sessionWriter.append(assistant, tokens = contextTokens)
 
@@ -204,23 +252,7 @@ class CodingAgent(
         keepLastN: Int = 6,
     ): List<AgentMessage> {
         require(keepLastN >= 1) { "keepLastN must be positive." }
-        if (history.size <= keepLastN) return history
-
-        // Never start the retained window with an orphaned tool result. Move the
-        // boundary back to the assistant message that issued the tool call(s).
-        var splitIndex = history.size - keepLastN
-        while (splitIndex > 0 && history[splitIndex] is AgentMessage.Tool) splitIndex--
-        val candidate = history[splitIndex]
-        if (candidate is AgentMessage.Assistant && candidate.toolCalls.isNotEmpty()) {
-            // The complete assistant + tool-results group is retained.
-        } else {
-            while (splitIndex > 0 && history[splitIndex - 1] is AgentMessage.Tool) splitIndex--
-            if (splitIndex > 0) {
-                val previous = history[splitIndex - 1]
-                if (previous is AgentMessage.Assistant && previous.toolCalls.isNotEmpty()) splitIndex--
-            }
-        }
-        if (splitIndex <= 0) return history
+        val splitIndex = compressionSplitIndex(history, keepLastN) ?: return history
         val toSummarize = history.take(splitIndex)
         val recentMessages = history.drop(splitIndex)
 
@@ -276,12 +308,24 @@ class CodingAgent(
             AgentMessage.Summary(summary),
         ) + recentMessages
 
-        sessionWriter.appendContextSnapshot(compressed, estimateContextTokens(compressed))
+        val compressedTokens = estimateContextTokens(compressed)
+        sessionWriter.appendContextSnapshot(compressed, compressedTokens)
+        lastKnownContextTokens = compressedTokens
         // A successful compression starts a new loading epoch by design. Scoped
         // instructions may therefore be loaded again on the next matching read.
         loadedScopedInstructionSources.clear()
 
         return compressed
+    }
+
+    private fun isAboveAutoCompressionThreshold(tokens: Int): Boolean =
+        tokens.toLong() * 100 >
+            contextWindowSize.toLong() * autoCompressionThresholdPercent
+
+    companion object {
+        private const val DEFAULT_CONTEXT_WINDOW_SIZE = 1_000_000
+        private const val DEFAULT_COMPRESSION_THRESHOLD_PERCENT = 80
+        private const val DEFAULT_COMPRESSION_KEEP_LAST_N = 6
     }
 
     /** Generate a concise session title from a user message or summary. */
@@ -324,6 +368,31 @@ fun estimateContextTokens(messages: List<AgentMessage>): Int =
         (characters + 2) / 3 + 8
     }
 
+internal fun contextUsagePercent(tokens: Int, contextWindowSize: Int): Int {
+    require(contextWindowSize > 0) { "contextWindowSize must be positive." }
+    return ((tokens.coerceAtLeast(0).toLong() * 100) / contextWindowSize)
+        .coerceAtMost(Int.MAX_VALUE.toLong())
+        .toInt()
+}
+
+private fun compressionSplitIndex(history: List<AgentMessage>, keepLastN: Int): Int? {
+    if (history.size <= keepLastN) return null
+
+    // Never start the retained window with an orphaned tool result. Move the
+    // boundary back to the assistant message that issued the tool call(s).
+    var splitIndex = history.size - keepLastN
+    while (splitIndex > 0 && history[splitIndex] is AgentMessage.Tool) splitIndex--
+    val candidate = history[splitIndex]
+    if (candidate !is AgentMessage.Assistant || candidate.toolCalls.isEmpty()) {
+        while (splitIndex > 0 && history[splitIndex - 1] is AgentMessage.Tool) splitIndex--
+        if (splitIndex > 0) {
+            val previous = history[splitIndex - 1]
+            if (previous is AgentMessage.Assistant && previous.toolCalls.isNotEmpty()) splitIndex--
+        }
+    }
+    return splitIndex.takeIf { it > 0 }
+}
+
 data class AgentRunResult(
     val answer: String,
     val history: List<AgentMessage>,
@@ -332,6 +401,8 @@ data class AgentRunResult(
 )
 
 interface AgentObserver {
+    suspend fun onContextCompressionStarted(usagePercent: Int) = Unit
+    suspend fun onContextCompressionCompleted(estimatedTokens: Int) = Unit
     suspend fun onModelRequest(turn: Int) = Unit
     suspend fun onAssistantMessage(content: String) = Unit
     suspend fun onToolCallStarted(name: String, argsJson: String) = Unit

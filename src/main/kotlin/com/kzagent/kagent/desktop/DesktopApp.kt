@@ -557,6 +557,25 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
 
     fun createObserver(session: SessionData): AgentObserver {
         return object : AgentObserver {
+            override suspend fun onContextCompressionStarted(usagePercent: Int) {
+                session.status = "上下文超 80%，自动压缩..."
+                session.messages.add(
+                    DisplayMessage(
+                        "tool_result",
+                        "⚠️ 上下文使用率达 $usagePercent%，自动触发压缩...",
+                    ),
+                )
+            }
+            override suspend fun onContextCompressionCompleted(estimatedTokens: Int) {
+                session.usedTokens = estimatedTokens
+                session.status = "上下文压缩完成"
+                session.messages.add(
+                    DisplayMessage(
+                        "tool_result",
+                        "✅ 上下文已自动压缩，保留最近消息并生成了历史摘要。",
+                    ),
+                )
+            }
             override suspend fun onModelRequest(turn: Int) {
                 session.status = "请求模型（第 ${turn} 轮）..."
             }
@@ -777,33 +796,26 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                             val titleRevision = session.titleRevision
                             val job = scope.launch {
                                 try {
-                                    // Auto-compress when context exceeds 80%
-                                    val ctxPct = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000)
-                                    if (ctxPct > 80) {
-                                        session.status = "上下文超 80%，自动压缩..."
-                                        session.messages.add(DisplayMessage("tool_result", "⚠️ 上下文使用率达 $ctxPct%，自动触发压缩..."))
-                                        if (!performCompression(session, manageBusyState = false)) return@launch
-                                    }
                                     val result = currentRuntime.agent.runConversation(prompt, session.conversationHistory)
                                     session.conversationHistory = result.history
                                     session.usedTokens = result.totalTokens
                                     session.status = "就绪"
                                     // Auto-title on first user message
-                                     if (result.history.count { it is AgentMessage.User } == 1) {
-                                         scope.launch {
-                                             try {
-                                                 val title = currentRuntime.agent.generateTitle(prompt)
-                                                 sessionManager.renameSessionIfRevisionMatches(
-                                                     sessionId,
-                                                     titleRevision,
-                                                     title,
-                                                 )
-                                             } catch (error: CancellationException) {
-                                                 throw error
-                                             } catch (_: Exception) {
-                                                 // Title generation is best-effort and does not fail the user request.
-                                             }
-                                         }
+                                    if (result.history.count { it is AgentMessage.User } == 1) {
+                                        scope.launch {
+                                            try {
+                                                val title = currentRuntime.agent.generateTitle(prompt)
+                                                sessionManager.renameSessionIfRevisionMatches(
+                                                    sessionId,
+                                                    titleRevision,
+                                                    title,
+                                                )
+                                            } catch (error: CancellationException) {
+                                                throw error
+                                            } catch (_: Exception) {
+                                                // Title generation is best-effort and does not fail the user request.
+                                            }
+                                        }
                                     }
                                 } catch (_: CancellationException) {
                                     session.status = "已终止"

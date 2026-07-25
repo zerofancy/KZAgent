@@ -85,6 +85,53 @@ class CodingAgentTest {
     }
 
     @Test
+    fun automaticallyCompressesHistoryBeforeARequestInSharedRuntime() = runBlocking {
+        val dir = Files.createTempDirectory("kagent-auto-compression-test")
+        val sessionFile = dir.resolve("session.jsonl")
+        val model = CompressionModel()
+        val observer = RecordingCompressionObserver()
+        val agent = CodingAgent(
+            model = model,
+            tools = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry(),
+            promptBuilder = PromptBuilder(dir),
+            sessionWriter = SessionWriter(sessionFile),
+            observer = observer,
+            contextWindowSize = 100,
+        )
+        val history = (1..8).map { AgentMessage.User("old message $it") }
+
+        val result = agent.runConversation("continue", history)
+
+        assertIs<AgentMessage.Summary>(result.history.first())
+        assertEquals(1, observer.started)
+        assertEquals(1, observer.completed)
+        assertTrue(observer.usagePercent > 80)
+        assertEquals(result.history, SessionReader(dir).loadFile(sessionFile))
+    }
+
+    @Test
+    fun tokenUsagePrefersApiTotalAndFallsBackToLocalEstimate() = runBlocking {
+        val dir = Files.createTempDirectory("kagent-token-usage-test")
+        val reportedAgent = CodingAgent(
+            model = FixedReplyModel(
+                AssistantReply(content = "done", totalTokens = 321, promptTokens = 123),
+            ),
+            tools = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry(),
+            promptBuilder = PromptBuilder(dir),
+            sessionWriter = SessionWriter(dir.resolve("reported.jsonl")),
+        )
+        val estimatedAgent = CodingAgent(
+            model = FixedReplyModel(AssistantReply(content = "done")),
+            tools = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry(),
+            promptBuilder = PromptBuilder(dir),
+            sessionWriter = SessionWriter(dir.resolve("estimated.jsonl")),
+        )
+
+        assertEquals(321, reportedAgent.runConversation("hello").totalTokens)
+        assertTrue(estimatedAgent.runConversation("hello").totalTokens > 0)
+    }
+
+    @Test
     fun generatedTitleIsCleanedAndLimitedToThirtyCharacters() = runBlocking {
         val dir = Files.createTempDirectory("kagent-title-test")
         val model = object : ChatModel {
@@ -109,6 +156,26 @@ class CodingAgentTest {
             return if (tools.isEmpty()) AssistantReply(content = "durable summary")
             else AssistantReply(content = "continued")
         }
+    }
+
+    private class RecordingCompressionObserver : AgentObserver {
+        var started = 0
+        var completed = 0
+        var usagePercent = 0
+
+        override suspend fun onContextCompressionStarted(usagePercent: Int) {
+            started++
+            this.usagePercent = usagePercent
+        }
+
+        override suspend fun onContextCompressionCompleted(estimatedTokens: Int) {
+            completed++
+            assertTrue(estimatedTokens > 0)
+        }
+    }
+
+    private class FixedReplyModel(private val reply: AssistantReply) : ChatModel {
+        override suspend fun chat(messages: List<AgentMessage>, tools: List<JsonObject>): AssistantReply = reply
     }
 
     private class FakeModel : ChatModel {

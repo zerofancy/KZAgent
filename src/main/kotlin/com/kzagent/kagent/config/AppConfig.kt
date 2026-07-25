@@ -21,6 +21,10 @@ data class AppConfig(
     val userPrompt: String = "",
     val approvalMode: ApprovalMode = DEFAULT_APPROVAL_MODE,
 ) {
+    init {
+        require(contextWindowSize > 0) { "Context window size must be a positive integer." }
+    }
+
     companion object {
         const val DEFAULT_BASE_URL = "https://api.deepseek.com"
         const val DEFAULT_MODEL = "deepseek-v4-pro"
@@ -60,8 +64,15 @@ object AppConfigLoader {
             ?.toBooleanStrictOrNull()
             ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION
 
-        val contextWindowSize = props.getProperty("deepseek.context.window.size")?.trim()
-            ?.toIntOrNull()
+        val contextWindowSize = props.getProperty("deepseek.context.window.size")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { raw ->
+                raw.toIntOrNull()
+                    ?: throw IllegalArgumentException(
+                        "deepseek.context.window.size must be a positive integer.",
+                    )
+            }
             ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE
 
         val userPrompt = props.getProperty("deepseek.user.prompt")?.trim() ?: ""
