@@ -22,7 +22,7 @@ import kotlinx.coroutines.sync.withLock
 class SessionData(
     val id: String,
     name: String,
-    workspace: Path,
+    val workspace: Path,
     val sessionFile: Path,
     runtime: AgentRuntime? = null,
     conversationHistory: List<AgentMessage> = emptyList(),
@@ -34,8 +34,6 @@ class SessionData(
     error: String? = null,
 ) {
     var name by mutableStateOf(name)
-    var workspace by mutableStateOf(workspace)
-        private set
     var titleRevision: Int = 0
         private set
     var runtime by mutableStateOf(runtime)
@@ -51,9 +49,6 @@ class SessionData(
         titleRevision++
     }
 
-    fun updateWorkspace(workspace: Path) {
-        this.workspace = workspace.toAbsolutePath().normalize()
-    }
 }
 
 class SessionManager internal constructor(
@@ -88,16 +83,23 @@ class SessionManager internal constructor(
         activeSessionIndex = 0
     }
 
-    suspend fun changeWorkspace(session: SessionData, workspace: Path) {
+    /**
+     * Starts a fresh session for a different workspace.
+     *
+     * A session's workspace is immutable because its history may contain source
+     * code, tool output, and scoped AGENTS.md instructions from that workspace.
+     * Rebinding the same session would send that old project context to the new
+     * runtime. Keeping the original session also avoids destructive history loss.
+     */
+    suspend fun startSessionInWorkspace(session: SessionData, workspace: Path): SessionData {
         val normalized = workspace.toAbsolutePath().normalize()
-        session.currentJob?.cancel()
-        repository.updateWorkspace(session.sessionFile, normalized)
-        session.currentJob = null
-        session.isBusy = false
-        session.runtime = null
-        session.error = null
-        session.updateWorkspace(normalized)
-        session.status = "正在加载..."
+        if (normalized == session.workspace) return session
+
+        val stored = repository.create(normalized, "新会话 ${sessions.size + 1}")
+        val created = toSessionData(stored)
+        sessions.add(0, created)
+        activeSessionIndex = 0
+        return created
     }
 
     fun switchTo(index: Int) {

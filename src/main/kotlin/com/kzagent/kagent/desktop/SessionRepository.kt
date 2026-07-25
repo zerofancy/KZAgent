@@ -29,7 +29,6 @@ internal interface SessionRepository {
     suspend fun loadAll(defaultWorkspace: Path): List<StoredSession>
     suspend fun create(workspace: Path, name: String): StoredSession
     suspend fun updateName(sessionFile: Path, name: String)
-    suspend fun updateWorkspace(sessionFile: Path, workspace: Path)
     suspend fun delete(sessionFile: Path)
 }
 
@@ -72,12 +71,6 @@ internal class FileSessionRepository(
     override suspend fun updateName(sessionFile: Path, name: String) {
         withContext(ioDispatcher) {
             writeMetadata(nameFile(sessionFile), name)
-        }
-    }
-
-    override suspend fun updateWorkspace(sessionFile: Path, workspace: Path) {
-        withContext(ioDispatcher) {
-            writeMetadata(workspaceFile(sessionFile), workspace.toAbsolutePath().normalize().toString())
         }
     }
 

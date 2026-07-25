@@ -1,5 +1,7 @@
 package com.kzagent.kagent.desktop
 
+import com.kzagent.kagent.agent.SessionWriter
+import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.ApprovalDecision
 import com.kzagent.kagent.tools.ApprovalResult
@@ -8,10 +10,13 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
 import java.util.UUID
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class SessionManagerTest {
@@ -78,24 +83,38 @@ class SessionManagerTest {
     }
 
     @Test
-    fun workspacesAreIndependentAndNewSessionInheritsActiveWorkspace() = runBlocking {
+    fun switchingWorkspaceCreatesAnIsolatedSessionAndPreservesTheOriginal() = runBlocking {
         val firstWorkspace = testWorkspace()
         val secondWorkspace = testWorkspace()
         val sessionsRoot = Files.createTempDirectory("kagent-sessions-test")
         val manager = SessionManager(denyAll, sessionsRoot)
         manager.loadOrCreate(firstWorkspace)
         val original = manager.activeSession()
+        val originalMessage = AgentMessage.User("first workspace context")
+        SessionWriter(original.sessionFile).append(originalMessage)
+        original.conversationHistory = listOf(originalMessage)
+        original.messages.add(DisplayMessage("user", "first workspace context"))
+        original.usedTokens = 123
+        val originalJob = Job()
+        original.currentJob = originalJob
+        original.isBusy = true
         assertEquals(sessionsRoot, original.sessionFile.parent)
 
-        manager.addNewSession()
-        val changed = manager.activeSession()
-        val sessionIdsBeforeWorkspaceChange = manager.sessions.map { it.id }
-        manager.changeWorkspace(changed, secondWorkspace)
+        val switched = manager.startSessionInWorkspace(original, secondWorkspace)
 
-        assertEquals(sessionIdsBeforeWorkspaceChange, manager.sessions.map { it.id })
+        assertEquals(2, manager.sessions.size)
+        assertSame(switched, manager.activeSession())
         assertEquals(firstWorkspace, original.workspace)
-        assertEquals(secondWorkspace, changed.workspace)
-        assertEquals(sessionsRoot, changed.sessionFile.parent)
+        assertEquals(listOf(originalMessage), original.conversationHistory)
+        assertEquals(123, original.usedTokens)
+        assertTrue(originalJob.isActive)
+        assertTrue(original.isBusy)
+        assertEquals(secondWorkspace, switched.workspace)
+        assertTrue(switched.conversationHistory.isEmpty())
+        assertTrue(switched.messages.isEmpty())
+        assertEquals(0, switched.usedTokens)
+        assertEquals(sessionsRoot, switched.sessionFile.parent)
+        assertFalse(original.sessionFile == switched.sessionFile)
 
         manager.addNewSession()
         val inherited = manager.activeSession()
@@ -105,8 +124,73 @@ class SessionManagerTest {
         val reloaded = SessionManager(denyAll, sessionsRoot)
         reloaded.loadOrCreate(firstWorkspace)
         assertEquals(firstWorkspace, reloaded.sessions.single { it.id == original.id }.workspace)
-        assertEquals(secondWorkspace, reloaded.sessions.single { it.id == changed.id }.workspace)
+        assertEquals(listOf(originalMessage), reloaded.sessions.single { it.id == original.id }.conversationHistory)
+        assertEquals(secondWorkspace, reloaded.sessions.single { it.id == switched.id }.workspace)
         assertEquals(secondWorkspace, reloaded.sessions.single { it.id == inherited.id }.workspace)
+        originalJob.cancel()
+    }
+
+    @Test
+    fun selectingTheCurrentWorkspaceKeepsTheExistingSession() = runBlocking {
+        val workspace = testWorkspace()
+        val repository = InMemorySessionRepository(
+            listOf(
+                StoredSession(
+                    id = "first",
+                    name = "First",
+                    workspace = workspace,
+                    sessionFile = workspace.resolve("first.jsonl"),
+                ),
+            ),
+        )
+        val manager = SessionManager(
+            approvalPolicy = denyAll,
+            sessionsRoot = workspace,
+            repository = repository,
+        )
+        manager.loadOrCreate(workspace)
+        val original = manager.activeSession()
+
+        val selected = manager.startSessionInWorkspace(original, workspace)
+
+        assertSame(original, selected)
+        assertEquals(1, manager.sessions.size)
+        assertEquals(0, repository.createCalls)
+    }
+
+    @Test
+    fun failedWorkspaceSessionCreationLeavesTheOriginalSessionUntouched() = runBlocking {
+        val firstWorkspace = testWorkspace()
+        val secondWorkspace = testWorkspace()
+        val stored = StoredSession(
+            id = "first",
+            name = "First",
+            workspace = firstWorkspace,
+            sessionFile = firstWorkspace.resolve("first.jsonl"),
+        )
+        val repository = InMemorySessionRepository(
+            initial = listOf(stored),
+            createFailure = IllegalStateException("create failed"),
+        )
+        val manager = SessionManager(
+            approvalPolicy = denyAll,
+            sessionsRoot = firstWorkspace,
+            repository = repository,
+        )
+        manager.loadOrCreate(firstWorkspace)
+        val original = manager.activeSession()
+        original.conversationHistory = listOf(AgentMessage.User("keep me"))
+        original.usedTokens = 42
+
+        assertFailsWith<IllegalStateException> {
+            manager.startSessionInWorkspace(original, secondWorkspace)
+        }
+
+        assertEquals(1, manager.sessions.size)
+        assertSame(original, manager.activeSession())
+        assertEquals(firstWorkspace, original.workspace)
+        assertEquals(listOf(AgentMessage.User("keep me")), original.conversationHistory)
+        assertEquals(42, original.usedTokens)
     }
 
     @Test
@@ -150,20 +234,28 @@ class SessionManagerTest {
 
     private class InMemorySessionRepository(
         private val initial: List<StoredSession>,
+        private val createFailure: Exception? = null,
     ) : SessionRepository {
         var loadCalls = 0
+        var createCalls = 0
 
         override suspend fun loadAll(defaultWorkspace: Path): List<StoredSession> {
             loadCalls++
             return initial
         }
 
-        override suspend fun create(workspace: Path, name: String): StoredSession =
-            StoredSession("created", name, workspace, workspace.resolve("created.jsonl"))
+        override suspend fun create(workspace: Path, name: String): StoredSession {
+            createFailure?.let { throw it }
+            createCalls++
+            return StoredSession(
+                "created-$createCalls",
+                name,
+                workspace,
+                workspace.resolve("created-$createCalls.jsonl"),
+            )
+        }
 
         override suspend fun updateName(sessionFile: Path, name: String) = Unit
-
-        override suspend fun updateWorkspace(sessionFile: Path, workspace: Path) = Unit
 
         override suspend fun delete(sessionFile: Path) = Unit
     }

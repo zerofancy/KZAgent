@@ -711,7 +711,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                         ?: return@launch
                     try {
                         chooseWorkspace(session.workspace)?.let { newWorkspace ->
-                            sessionManager.changeWorkspace(session, newWorkspace)
+                            sessionManager.startSessionInWorkspace(session, newWorkspace)
                             showSettings = false
                         }
                     } catch (error: CancellationException) {
