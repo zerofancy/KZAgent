@@ -119,10 +119,12 @@ Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本�
 - NavigationView 底部提供**设置面板**入口；会话重命名和删除集中在各会话的更多菜单中
 - 主聊天页顶部提供常驻的**审批模式下拉菜单**，可立即切换自动、手动或全部放行模式
 - 启动时自动检测配置：如未设置 API Key 将**默认跳转到设置界面**
+- 配置、历史会话和本地文件工具均在后台 IO 调度器中读写，加载或搜索大型工作区时不会阻塞桌面 UI
 - 在状态栏显示模型请求、工具执行和审批状态
 - 支持自动、手动和全部放行三种审批模式；高风险人工审批使用单独的警告弹窗
 - 输入框使用 `Enter` 发送；macOS 使用 `Command + Enter` 换行，Windows 和 Linux 使用 `Ctrl + Enter` 换行
 - macOS 上关闭主窗口后应用会继续驻留；再次点击 Dock 图标可恢复原窗口和会话，使用 `Command + Q` 可完全退出
+- 点击终止会取消正在进行的 Retrofit 模型请求；若正在执行命令，还会终止对应进程树
 
 ### `ask` — 单次提问模式
 
@@ -212,7 +214,7 @@ workspace/
 | **CodingAgent** | `agent/CodingAgent.kt` | Agent 核心循环：调度模型推理与工具执行 |
 | **AgentsInstructionsLoader** | `agent/AgentsInstructionsLoader.kt` | 加载根目录与子目录 `AGENTS.md` 项目指令 |
 | **PromptBuilder** | `agent/PromptBuilder.kt` | 构建系统提示词（定义 Agent 行为规则） |
-| **DeepSeekClient** | `llm/DeepSeekClient.kt` | 调用 DeepSeek Chat Completions API |
+| **DeepSeekClient** | `llm/DeepSeekClient.kt` | 通过 Retrofit + OkHttp 调用 DeepSeek Chat Completions API，支持协程取消 |
 | **SessionWriter** | `agent/SessionWriter.kt` | 以 JSONL 格式将消息流写入会话文件 |
 | **SessionReader** | `agent/SessionReader.kt` | 从会话文件读取历史消息，恢复对话上下文 |
 | **DesktopApp** | `desktop/DesktopApp.kt` | Compose Desktop 桌面聊天界面 |
@@ -343,6 +345,7 @@ src/main/kotlin/com/kzagent/kagent/
 ├── desktop/
 │   ├── DesktopApp.kt       # 桌面应用 UI（主界面、侧边栏、消息列表、审批弹窗）
 │   ├── SessionManager.kt   # 多会话管理（新建、切换、改名、删除）
+│   ├── SessionRepository.kt # 后台 IO 会话存储
 │   └── SettingsPanel.kt    # 设置面板（API Key、模型、URL 等 GUI 配置）
 ├── Main.kt                 # 根入口：无参数桌面；有参数 CLI
 ├── AgentRuntimeFactory.kt  # 共享运行时创建
@@ -350,6 +353,7 @@ src/main/kotlin/com/kzagent/kagent/
 │   └── AppConfig.kt        # 配置加载（AppConfigLoader）、保存（ConfigWriter）与密钥脱敏
 ├── llm/
 │   ├── DeepSeekClient.kt   # DeepSeek API 客户端
+│   ├── DeepSeekApi.kt      # Retrofit 接口与 OkHttp 客户端工厂
 │   └── Messages.kt         # 消息模型定义
 └── tools/
     ├── Tool.kt             # 工具定义、注册表、JSON Schema 构建
@@ -394,8 +398,8 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx    # 优先级高于 config.properties
 | **Gradle** | 构建工具 |
 | **kotlinx-coroutines** | 异步编程（协程） |
 | **kotlinx-serialization** | JSON 序列化/反序列化 |
-| **Java HttpClient** | 调用 DeepSeek API |
-| **OkHttp 4.12.0** | 静态网页请求、重定向与压缩传输 |
+| **Retrofit 3.0.0 + OkHttp 4.12.0** | DeepSeek API 的类型安全、可取消网络请求 |
+| **OkHttp 4.12.0** | 静态网页请求、受控重定向与压缩传输 |
 | **Jsoup 1.22.2** | HTML/XML 解析、清理和链接解析 |
 | **DeepSeek API** (OpenAI 兼容) | LLM 推理后端 |
 

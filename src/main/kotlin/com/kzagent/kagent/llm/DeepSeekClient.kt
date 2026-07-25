@@ -2,74 +2,80 @@ package com.kzagent.kagent.llm
 
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.SecretRedactor
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlin.math.min
 
-class DeepSeekClient(
-    private val config: AppConfig,
-    private val httpClient: HttpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(30))
-        .build(),
-    private val json: Json = Json {
-        ignoreUnknownKeys = true
-    },
-) : ChatModel {
-    override suspend fun chat(messages: List<AgentMessage>, tools: List<JsonObject>): AssistantReply =
-        withContext(Dispatchers.IO) {
-            val body = buildJsonObject {
-                put("model", config.model)
-                put("temperature", 0.2)
-                put("messages", JsonArray(messages.map { it.toDeepSeekJson() }))
-                if (tools.isNotEmpty()) {
-                    put("tools", JsonArray(tools))
-                    put("tool_choice", "auto")
-                }
+class DeepSeekClient : ChatModel {
+    private val config: AppConfig
+    private val api: DeepSeekApi
+
+    constructor(config: AppConfig) {
+        this.config = config
+        this.api = DeepSeekApiFactory.create(config)
+    }
+
+    internal constructor(config: AppConfig, api: DeepSeekApi) {
+        this.config = config
+        this.api = api
+    }
+
+    override suspend fun chat(messages: List<AgentMessage>, tools: List<JsonObject>): AssistantReply {
+        val response = api.createChatCompletion(
+            ChatCompletionRequest(
+                model = config.model,
+                temperature = 0.2,
+                messages = messages.map { it.toDeepSeekJson() },
+                tools = tools.takeIf { it.isNotEmpty() },
+                toolChoice = "auto".takeIf { tools.isNotEmpty() },
+            ),
+        )
+        if (!response.isSuccessful) {
+            val errorBody = withContext(Dispatchers.IO) {
+                response.errorBody()?.use(::readBoundedErrorBody).orEmpty()
             }
-
-            val request = HttpRequest.newBuilder()
-                .uri(URI.create("${config.baseUrl}/chat/completions"))
-                .timeout(Duration.ofSeconds(120))
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer ${config.apiKey}")
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                .build()
-
-            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-            if (response.statusCode() !in 200..299) {
-                throw DeepSeekException(
-                    "DeepSeek API HTTP ${response.statusCode()}: ${SecretRedactor.redact(response.body())}"
-                )
-            }
-
-            val parsed = json.decodeFromString<ChatCompletionResponse>(response.body())
-            val message = parsed.choices.firstOrNull()?.message
-                ?: throw DeepSeekException("DeepSeek API returned no choices.")
-
-            AssistantReply(
-                content = message.content,
-                toolCalls = message.toolCalls.orEmpty().map {
-                    ModelToolCall(
-                        id = it.id,
-                        name = it.function.name,
-                        argumentsJson = it.function.arguments,
-                    )
-                },
-                totalTokens = parsed.usage?.totalTokens,
-                promptTokens = parsed.usage?.promptTokens,
+            val suffix = errorBody.takeIf(String::isNotBlank)?.let { ": ${SecretRedactor.redact(it)}" }.orEmpty()
+            throw DeepSeekException(
+                message = "DeepSeek API HTTP ${response.code()}$suffix",
+                statusCode = response.code(),
             )
         }
+
+        val parsed = response.body()
+            ?: throw DeepSeekException("DeepSeek API returned an empty response body.")
+        val message = parsed.choices.firstOrNull()?.message
+            ?: throw DeepSeekException("DeepSeek API returned no choices.")
+
+        return AssistantReply(
+            content = message.content,
+            toolCalls = message.toolCalls.orEmpty().map {
+                ModelToolCall(
+                    id = it.id,
+                    name = it.function.name,
+                    argumentsJson = it.function.arguments,
+                )
+            },
+            totalTokens = parsed.usage?.totalTokens,
+            promptTokens = parsed.usage?.promptTokens,
+        )
+    }
+
+    private fun readBoundedErrorBody(body: okhttp3.ResponseBody): String {
+        val source = body.source()
+        source.request(MAX_ERROR_BODY_BYTES + 1L)
+        val truncated = source.buffer.size > MAX_ERROR_BODY_BYTES
+        val text = source.readUtf8(min(source.buffer.size, MAX_ERROR_BODY_BYTES.toLong()))
+        return if (truncated) "$text\n...[truncated]" else text
+    }
+
+    private companion object {
+        const val MAX_ERROR_BODY_BYTES = 16 * 1024
+    }
 }
 
 internal fun AgentMessage.toDeepSeekJson(): JsonObject = buildJsonObject {
@@ -131,4 +137,8 @@ internal fun AgentMessage.toDeepSeekJson(): JsonObject = buildJsonObject {
     }
 }
 
-class DeepSeekException(message: String) : RuntimeException(message)
+class DeepSeekException(
+    message: String,
+    val statusCode: Int? = null,
+    cause: Throwable? = null,
+) : RuntimeException(message, cause)

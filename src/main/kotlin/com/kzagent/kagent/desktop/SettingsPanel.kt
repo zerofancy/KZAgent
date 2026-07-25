@@ -34,7 +34,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.AppConfig
-import com.kzagent.kagent.config.ConfigWriter
 import com.kzagent.kagent.tools.ApprovalMode
 import io.github.composefluent.FluentTheme
 import io.github.composefluent.background.Layer
@@ -58,7 +57,9 @@ fun SettingsPanel(
     initialSensitivePathProtection: Boolean,
     initialUserPrompt: String,
     initialApprovalMode: ApprovalMode,
-    onSave: () -> Unit,
+    saving: Boolean = false,
+    saveError: String? = null,
+    onSave: (AppConfig) -> Unit,
     onCancel: () -> Unit,
 ) {
     var apiKey by remember { mutableStateOf(initialApiKey) }
@@ -69,7 +70,6 @@ fun SettingsPanel(
     var userPrompt by remember { mutableStateOf(initialUserPrompt) }
     var approvalMode by remember { mutableStateOf(initialApprovalMode) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var saved by remember { mutableStateOf(false) }
     var confirmFullMode by remember { mutableStateOf(false) }
 
     fun validate(): Boolean {
@@ -93,7 +93,7 @@ fun SettingsPanel(
         return true
     }
 
-    fun persistConfig() {
+    fun submitConfig() {
         val config = AppConfig(
             apiKey = apiKey.trim(),
             baseUrl = baseUrl.trim().trimEnd('/'),
@@ -103,9 +103,7 @@ fun SettingsPanel(
             userPrompt = userPrompt.trim(),
             approvalMode = approvalMode,
         )
-        ConfigWriter.save(config)
-        saved = true
-        onSave()
+        onSave(config)
     }
 
     fun doSave() {
@@ -113,7 +111,7 @@ fun SettingsPanel(
         if (requiresFullModeConfirmation(initialApprovalMode, approvalMode)) {
             confirmFullMode = true
         } else {
-            persistConfig()
+            submitConfig()
         }
     }
 
@@ -215,7 +213,7 @@ fun SettingsPanel(
                     )
                 }
 
-                errorMessage?.let { message ->
+                (errorMessage ?: saveError)?.let { message ->
                     InfoBar(
                         title = { Text("无法保存设置") },
                         message = { Text(message) },
@@ -253,8 +251,8 @@ fun SettingsPanel(
                     Text("返回")
                 }
                 Spacer(Modifier.width(8.dp))
-                AccentButton(onClick = { doSave() }) {
-                    Text(if (saved) "已保存" else "保存设置")
+                AccentButton(onClick = { if (!saving) doSave() }) {
+                    Text(if (saving) "正在保存..." else "保存设置")
                 }
             }
         }
@@ -274,7 +272,7 @@ fun SettingsPanel(
         onButtonClick = { button ->
             confirmFullMode = false
             if (button == ContentDialogButton.Primary) {
-                persistConfig()
+                submitConfig()
             }
         },
     )

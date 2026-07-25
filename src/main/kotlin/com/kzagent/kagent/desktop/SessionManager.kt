@@ -1,28 +1,23 @@
 package com.kzagent.kagent.desktop
 
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.kzagent.kagent.AgentRuntime
 import com.kzagent.kagent.AgentRuntimeFactory
-import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.agent.AgentObserver
-import com.kzagent.kagent.agent.SessionReader
+import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalPolicy
-import kotlinx.coroutines.Job
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardOpenOption
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.util.UUID
-import java.util.stream.Collectors
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class SessionData(
     val id: String,
@@ -61,100 +56,48 @@ class SessionData(
     }
 }
 
-class SessionManager(
+class SessionManager internal constructor(
     private val approvalPolicy: ApprovalPolicy,
-    private val sessionsRoot: Path = AppDataDir.ensureSessionsRoot(),
+    sessionsRoot: Path = AppDataDir.sessionsRoot(),
+    private val repository: SessionRepository = FileSessionRepository(sessionsRoot),
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     val sessions: SnapshotStateList<SessionData> = mutableStateListOf()
     var activeSessionIndex by mutableStateOf(0)
+        private set
+    var initialized by mutableStateOf(false)
+        private set
+    private val renameMutex = Mutex()
 
-    /** Load all existing sessions from disk, or create one using [defaultWorkspace]. */
-    fun loadOrCreate(defaultWorkspace: Path) {
-        Files.createDirectories(sessionsRoot)
-        if (Files.isDirectory(sessionsRoot)) {
-            val sessionFiles = Files.walk(sessionsRoot, 2).use { stream ->
-                stream
-                    .filter { Files.isRegularFile(it) && it.toString().endsWith(".jsonl") }
-                    .sorted(compareByDescending { Files.getLastModifiedTime(it).toMillis() })
-                    .collect(Collectors.toList())
-            }
-            if (sessionFiles.isNotEmpty()) {
-                sessionFiles.forEach { file ->
-                    runCatching { createSessionFromFile(defaultWorkspace, file) }
-                        .onSuccess { session -> session?.let(sessions::add) }
-                }
-                if (sessions.isNotEmpty()) {
-                    // Activate the most recent readable session (first in reverse order)
-                    activeSessionIndex = 0
-                    return
-                }
-            }
+    /** Loads sessions once. Recomposition and configuration refreshes reuse this manager instance. */
+    suspend fun loadOrCreate(defaultWorkspace: Path) {
+        if (initialized) return
+        val stored = repository.loadAll(defaultWorkspace).ifEmpty {
+            listOf(repository.create(defaultWorkspace, "新会话 1"))
         }
-        // No existing sessions — create default
-        val newSession = createNewSession(defaultWorkspace)
-        sessions.add(newSession)
+        sessions.clear()
+        sessions.addAll(stored.map(::toSessionData))
+        activeSessionIndex = 0
+        initialized = true
+    }
+
+    suspend fun addNewSession() {
+        val active = activeSession()
+        val stored = repository.create(active.workspace, "新会话 ${sessions.size + 1}")
+        sessions.add(0, toSessionData(stored))
         activeSessionIndex = 0
     }
 
-    private fun createSessionFromFile(defaultWorkspace: Path, file: Path): SessionData? {
-        val sessionWorkspace = loadSessionWorkspace(file)
-            // Compatibility with sessions created before workspace became
-            // persistent session metadata.
-            ?: defaultWorkspace.takeIf {
-                file.parent.fileName.toString() == AppDataDir.workspaceKey(it)
-            }
-            ?: return null
-        val history = SessionReader(file.parent).loadFile(file)
-            .filter { it !is AgentMessage.System }
-        val tokens = loadTokenCount(file)
-        val displayMsgs = history.toDisplayMessages()
-        val id = file.fileName.toString().removeSuffix(".jsonl")
-        val name = loadSessionName(file) ?: sessionDisplayName(file)
-        return SessionData(
-            id = id,
-            name = name,
-            workspace = sessionWorkspace,
-            sessionFile = file,
-            conversationHistory = history,
-            messages = mutableStateListOf<DisplayMessage>().also { it.addAll(displayMsgs) },
-            usedTokens = tokens,
-            status = "就绪",
-        ).also { persistSessionWorkspace(it) }
-    }
-
-    fun createNewSession(workspace: Path): SessionData {
-        Files.createDirectories(sessionsRoot)
-        val id = "session-${UUID.randomUUID()}"
-        val file = sessionsRoot.resolve("$id.jsonl")
-        Files.createFile(file)
-        val session = SessionData(
-            id = id,
-            name = "新会话 ${sessions.size + 1}",
-            workspace = workspace,
-            sessionFile = file,
-            messages = mutableStateListOf(),
-            status = "就绪",
-        )
-        persistSessionName(session)
-        persistSessionWorkspace(session)
-        return session
-    }
-
-    fun addNewSession() {
-        val session = createNewSession(activeSession().workspace)
-        sessions.add(0, session)
-        activeSessionIndex = 0
-    }
-
-    fun changeWorkspace(session: SessionData, workspace: Path) {
+    suspend fun changeWorkspace(session: SessionData, workspace: Path) {
+        val normalized = workspace.toAbsolutePath().normalize()
         session.currentJob?.cancel()
+        repository.updateWorkspace(session.sessionFile, normalized)
         session.currentJob = null
         session.isBusy = false
         session.runtime = null
         session.error = null
-        session.updateWorkspace(workspace)
+        session.updateWorkspace(normalized)
         session.status = "正在加载..."
-        persistSessionWorkspace(session)
     }
 
     fun switchTo(index: Int) {
@@ -163,43 +106,49 @@ class SessionManager(
         }
     }
 
-    fun renameSession(index: Int, name: String): Boolean {
-        if (index !in sessions.indices || name.isBlank()) return false
-        sessions[index].updateName(name.trim())
-        persistSessionName(sessions[index])
-        return true
+    suspend fun renameSession(index: Int, name: String): Boolean = renameMutex.withLock {
+        if (index !in sessions.indices || name.isBlank()) return@withLock false
+        val session = sessions[index]
+        val normalized = name.trim()
+        repository.updateName(session.sessionFile, normalized)
+        session.updateName(normalized)
+        true
     }
 
-    fun renameSessionIfRevisionMatches(
+    suspend fun renameSessionIfRevisionMatches(
         sessionId: String,
         expectedRevision: Int,
         name: String,
-    ): Boolean {
-        if (name.isBlank()) return false
-        val session = sessions.firstOrNull { it.id == sessionId } ?: return false
-        if (session.titleRevision != expectedRevision) return false
-        session.updateName(name.trim())
-        persistSessionName(session)
-        return true
+    ): Boolean = renameMutex.withLock {
+        if (name.isBlank()) return@withLock false
+        val session = sessions.firstOrNull { it.id == sessionId } ?: return@withLock false
+        if (session.titleRevision != expectedRevision) return@withLock false
+        val normalized = name.trim()
+        repository.updateName(session.sessionFile, normalized)
+        session.updateName(normalized)
+        true
     }
 
     fun cancelAllSessions() {
         sessions.forEach { it.currentJob?.cancel() }
     }
 
-    fun deleteSession(index: Int): Boolean {
-        if (sessions.size <= 1) return false
-        if (index !in sessions.indices) return false
+    fun invalidateRuntimes() {
+        sessions.forEach { session ->
+            session.currentJob?.cancel()
+            session.currentJob = null
+            session.isBusy = false
+            session.runtime = null
+            session.error = null
+            session.status = "正在加载..."
+        }
+    }
 
+    suspend fun deleteSession(index: Int): Boolean {
+        if (sessions.size <= 1 || index !in sessions.indices) return false
         val session = sessions[index]
-        // Cancel any running job
         session.currentJob?.cancel()
-
-        // Remove session file from disk
-        runCatching { Files.deleteIfExists(session.sessionFile) }
-        runCatching { Files.deleteIfExists(nameFile(session.sessionFile)) }
-        runCatching { Files.deleteIfExists(workspaceFile(session.sessionFile)) }
-
+        repository.delete(session.sessionFile)
         sessions.removeAt(index)
         if (activeSessionIndex >= sessions.size) {
             activeSessionIndex = sessions.size - 1
@@ -211,92 +160,29 @@ class SessionManager(
 
     fun activeSession(): SessionData = sessions[activeSessionIndex]
 
-    fun ensureRuntime(session: SessionData, observer: AgentObserver) {
-        if (session.runtime == null) {
-            session.runtime = AgentRuntimeFactory.create(
+    suspend fun ensureRuntime(session: SessionData, observer: AgentObserver) {
+        if (session.runtime != null) return
+        val runtime = withContext(ioDispatcher) {
+            AgentRuntimeFactory.create(
                 workspace = session.workspace,
                 approvalPolicy = approvalPolicy,
                 observer = observer,
                 sessionFile = session.sessionFile,
             )
         }
+        session.runtime = runtime
     }
 
-    companion object {
-        private val displayDateFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm")
-            .withZone(ZoneId.systemDefault())
-
-        private fun nameFile(sessionFile: Path): Path =
-            sessionFile.resolveSibling("${sessionFile.fileName}.name")
-
-        private fun workspaceFile(sessionFile: Path): Path =
-            sessionFile.resolveSibling("${sessionFile.fileName}.workspace")
-
-        private fun loadSessionName(sessionFile: Path): String? = runCatching {
-            Files.readString(nameFile(sessionFile), java.nio.charset.StandardCharsets.UTF_8)
-                .trim()
-                .takeIf { it.isNotEmpty() }
-        }.getOrNull()
-
-        private fun persistSessionName(session: SessionData) {
-            Files.writeString(
-                nameFile(session.sessionFile),
-                session.name,
-                java.nio.charset.StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING,
-            )
-        }
-
-        private fun loadSessionWorkspace(sessionFile: Path): Path? = runCatching {
-            Path.of(Files.readString(workspaceFile(sessionFile), java.nio.charset.StandardCharsets.UTF_8).trim())
-                .toAbsolutePath()
-                .normalize()
-        }.getOrNull()
-
-        private fun persistSessionWorkspace(session: SessionData) {
-            Files.writeString(
-                workspaceFile(session.sessionFile),
-                session.workspace.toString(),
-                java.nio.charset.StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING,
-            )
-        }
-
-        private fun sessionDisplayName(file: Path): String {
-            val raw = file.fileName.toString().removeSuffix(".jsonl")
-            // Try to extract a readable timestamp from session-YYYYMMDDTHHMMSSZ style
-            val name = raw.removePrefix("session-")
-            return runCatching {
-                val instant = Instant.parse(
-                    name.replaceFirst(
-                        Regex("(\\d{4})(\\d{2})(\\d{2})T(\\d{2})(\\d{2})(\\d{2})(\\d{2,3})Z"),
-                        "$1-$2-$3T$4:$5:$6.$7Z"
-                    )
-                )
-                displayDateFormatter.format(instant)
-            }.getOrDefault(raw.take(19))
-        }
-
-        private fun loadTokenCount(file: Path): Int {
-            if (!Files.isRegularFile(file)) return 0
-            val lines = Files.readAllLines(file, java.nio.charset.StandardCharsets.UTF_8)
-            val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
-            for (i in lines.indices.reversed()) {
-                val line = lines[i].trim()
-                if (line.isBlank()) continue
-                try {
-                    val obj = json.parseToJsonElement(line).jsonObject
-                    val role = obj["role"]?.jsonPrimitive?.content.orEmpty()
-                    if (role != "assistant" && role != "context_snapshot") continue
-                    val tokens = obj["context_tokens"]?.jsonPrimitive?.content?.toIntOrNull()
-                        ?: obj["cumulative_tokens"]?.jsonPrimitive?.content?.toIntOrNull()
-                        ?: 0
-                    if (tokens > 0) return tokens
-                } catch (_: Exception) { continue }
-            }
-            return 0
-        }
-    }
+    private fun toSessionData(stored: StoredSession): SessionData = SessionData(
+        id = stored.id,
+        name = stored.name,
+        workspace = stored.workspace,
+        sessionFile = stored.sessionFile,
+        conversationHistory = stored.history,
+        messages = mutableStateListOf<DisplayMessage>().also {
+            it.addAll(stored.history.toDisplayMessages())
+        },
+        usedTokens = stored.usedTokens,
+        status = "就绪",
+    )
 }

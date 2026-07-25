@@ -10,14 +10,20 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-class SessionWriter(private val sessionPath: Path) {
+class SessionWriter(
+    private val sessionPath: Path,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+) {
 
-    fun append(message: AgentMessage, tokens: Int = 0) {
+    suspend fun append(message: AgentMessage, tokens: Int = 0) {
         writeLine(messageJson(message, tokens))
     }
 
-    fun appendContextSnapshot(history: List<AgentMessage>, tokens: Int) {
+    suspend fun appendContextSnapshot(history: List<AgentMessage>, tokens: Int) {
         writeLine(buildJsonObject {
             put("time", Instant.now().toString())
             put("role", "context_snapshot")
@@ -61,14 +67,16 @@ class SessionWriter(private val sessionPath: Path) {
             }
         }
 
-    private fun writeLine(value: JsonObject) {
-        Files.writeString(
-            sessionPath,
-            value.toString() + "\n",
-            StandardCharsets.UTF_8,
-            java.nio.file.StandardOpenOption.CREATE,
-            java.nio.file.StandardOpenOption.APPEND,
-        )
+    private suspend fun writeLine(value: JsonObject) {
+        withContext(ioDispatcher) {
+            Files.writeString(
+                sessionPath,
+                value.toString() + "\n",
+                StandardCharsets.UTF_8,
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.APPEND,
+            )
+        }
     }
 
     companion object {

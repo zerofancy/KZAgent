@@ -2,6 +2,7 @@ package com.kzagent.kagent.agent
 
 import com.kzagent.kagent.llm.AgentMessage
 import java.nio.file.Files
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -41,7 +42,7 @@ class SessionReaderTest {
     }
 
     @Test
-    fun scopedInstructionRoundTripsThroughSessionJsonl() {
+    fun scopedInstructionRoundTripsThroughSessionJsonl() = runBlocking {
         val dir = Files.createTempDirectory("kagent-scoped-instruction-session-test")
         val sessionFile = dir.resolve("session.jsonl")
         val instruction = AgentMessage.ScopedInstruction(

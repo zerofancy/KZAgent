@@ -8,6 +8,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
 import java.util.UUID
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -19,7 +20,7 @@ class SessionManagerTest {
     }
 
     @Test
-    fun emptySessionAndRenamedTitleSurviveReload() {
+    fun emptySessionAndRenamedTitleSurviveReload() = runBlocking {
         val workspace = testWorkspace()
         val sessionsRoot = Files.createTempDirectory("kagent-sessions-test")
         val manager = SessionManager(denyAll, sessionsRoot)
@@ -35,7 +36,7 @@ class SessionManagerTest {
     }
 
     @Test
-    fun mostRecentlyModifiedSessionLoadsFirst() {
+    fun mostRecentlyModifiedSessionLoadsFirst() = runBlocking {
         val workspace = testWorkspace()
         val sessionsRoot = Files.createTempDirectory("kagent-sessions-test")
         val manager = SessionManager(denyAll, sessionsRoot)
@@ -53,7 +54,7 @@ class SessionManagerTest {
     }
 
     @Test
-    fun conditionalRenameUsesStableIdAndPreservesNewerManualName() {
+    fun conditionalRenameUsesStableIdAndPreservesNewerManualName() = runBlocking {
         val workspace = testWorkspace()
         val manager = SessionManager(denyAll, Files.createTempDirectory("kagent-sessions-test"))
         manager.loadOrCreate(workspace)
@@ -77,7 +78,7 @@ class SessionManagerTest {
     }
 
     @Test
-    fun workspacesAreIndependentAndNewSessionInheritsActiveWorkspace() {
+    fun workspacesAreIndependentAndNewSessionInheritsActiveWorkspace() = runBlocking {
         val firstWorkspace = testWorkspace()
         val secondWorkspace = testWorkspace()
         val sessionsRoot = Files.createTempDirectory("kagent-sessions-test")
@@ -108,9 +109,62 @@ class SessionManagerTest {
         assertEquals(secondWorkspace, reloaded.sessions.single { it.id == inherited.id }.workspace)
     }
 
+    @Test
+    fun repeatedInitializationDoesNotReloadOrReplaceSessionState() = runBlocking {
+        val workspace = testWorkspace()
+        val first = StoredSession(
+            id = "first",
+            name = "First",
+            workspace = workspace,
+            sessionFile = workspace.resolve("first.jsonl"),
+        )
+        val second = StoredSession(
+            id = "second",
+            name = "Second",
+            workspace = workspace,
+            sessionFile = workspace.resolve("second.jsonl"),
+        )
+        val repository = InMemorySessionRepository(listOf(first, second))
+        val manager = SessionManager(
+            approvalPolicy = denyAll,
+            sessionsRoot = workspace,
+            repository = repository,
+        )
+
+        manager.loadOrCreate(workspace)
+        manager.switchTo(1)
+        val sessionObjects = manager.sessions.toList()
+        manager.loadOrCreate(workspace)
+        manager.invalidateRuntimes()
+
+        assertEquals(1, repository.loadCalls)
+        assertEquals(1, manager.activeSessionIndex)
+        assertTrue(manager.sessions.zip(sessionObjects).all { (actual, expected) -> actual === expected })
+    }
+
     private fun testWorkspace(): Path {
         val path = Path.of("build", "test-workspaces", UUID.randomUUID().toString())
         Files.createDirectories(path)
         return path.toAbsolutePath().normalize()
+    }
+
+    private class InMemorySessionRepository(
+        private val initial: List<StoredSession>,
+    ) : SessionRepository {
+        var loadCalls = 0
+
+        override suspend fun loadAll(defaultWorkspace: Path): List<StoredSession> {
+            loadCalls++
+            return initial
+        }
+
+        override suspend fun create(workspace: Path, name: String): StoredSession =
+            StoredSession("created", name, workspace, workspace.resolve("created.jsonl"))
+
+        override suspend fun updateName(sessionFile: Path, name: String) = Unit
+
+        override suspend fun updateWorkspace(sessionFile: Path, workspace: Path) = Unit
+
+        override suspend fun delete(sessionFile: Path) = Unit
     }
 }

@@ -2,7 +2,12 @@ package com.kzagent.kagent.tools
 
 import java.nio.file.Files
 import java.nio.charset.Charset
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
@@ -345,5 +350,27 @@ class LocalToolsTest {
 
         assertTrue(result.isError)
         assertContains(result.content, "User denied run_command")
+    }
+
+    @Test
+    fun cancellingRunCommandStopsToolExecution() = runBlocking {
+        val dir = Files.createTempDirectory("kagent-command-cancel-test")
+        val registry = LocalTools(PathGuard(dir), AlwaysApprovePolicy).registry()
+        val isWindows = System.getProperty("os.name").contains("windows", ignoreCase = true)
+        val command = if (isWindows) "ping -n 30 127.0.0.1" else "sleep 30"
+
+        val execution = async(start = CoroutineStart.UNDISPATCHED) {
+            registry.get("run_command")!!.handler(buildJsonObject {
+                put("command", command)
+                put("timeout_seconds", 120)
+            })
+        }
+        delay(200)
+
+        withTimeout(5_000) {
+            execution.cancelAndJoin()
+        }
+
+        assertTrue(execution.isCancelled)
     }
 }

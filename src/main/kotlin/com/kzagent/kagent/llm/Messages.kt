@@ -67,6 +67,16 @@ interface ChatModel {
 }
 
 @Serializable
+internal data class ChatCompletionRequest(
+    val model: String,
+    val temperature: Double,
+    val messages: List<JsonObject>,
+    val tools: List<JsonObject>? = null,
+    @SerialName("tool_choice")
+    val toolChoice: String? = null,
+)
+
+@Serializable
 data class ChatCompletionResponse(
     val choices: List<Choice> = emptyList(),
     val usage: ResponseUsage? = null,

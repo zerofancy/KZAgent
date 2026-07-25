@@ -4,9 +4,10 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
-import java.util.concurrent.TimeUnit
 import java.util.stream.Collectors
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -65,27 +66,29 @@ class LocalTools(
         requiresApproval = false,
         cost = 1,
     ) { args ->
-        runCatching {
-            val start = pathGuard.resolveExisting(args.string("path") ?: ".")
-            val maxDepth = (args.int("max_depth") ?: 3).coerceIn(1, 8)
-            if (!Files.isDirectory(start)) {
-                throw IllegalArgumentException("Path is not a directory: ${pathGuard.display(start)}")
-            }
+        safeToolResult {
+            withContext(Dispatchers.IO) {
+                val start = pathGuard.resolveExisting(args.string("path") ?: ".")
+                val maxDepth = (args.int("max_depth") ?: 3).coerceIn(1, 8)
+                if (!Files.isDirectory(start)) {
+                    throw IllegalArgumentException("Path is not a directory: ${pathGuard.display(start)}")
+                }
 
-            val lines = Files.walk(start, maxDepth).use { stream ->
-                stream
-                    .filter { it != start }
-                    .filter { !isIgnoredPath(it) }
-                    .sorted()
-                    .limit(500)
-                    .map { path ->
-                        val suffix = if (Files.isDirectory(path)) "/" else ""
-                        pathGuard.display(path) + suffix
-                    }
-                    .collect(Collectors.toList())
+                val lines = Files.walk(start, maxDepth).use { stream ->
+                    stream
+                        .filter { it != start }
+                        .filter { !isIgnoredPath(it) }
+                        .sorted()
+                        .limit(500)
+                        .map { path ->
+                            val suffix = if (Files.isDirectory(path)) "/" else ""
+                            pathGuard.display(path) + suffix
+                        }
+                        .collect(Collectors.toList())
+                }
+                ToolResult.ok(truncate(lines.joinToString("\n").ifBlank { "(empty)" }))
             }
-            ToolResult.ok(truncate(lines.joinToString("\n").ifBlank { "(empty)" }))
-        }.getOrElse { ToolResult.error(it.message ?: it.toString()) }
+        }
     }
 
     private fun readFileTool(): ToolDefinition = ToolDefinition(
@@ -102,14 +105,17 @@ class LocalTools(
         requiresApproval = false,
         cost = 1,
     ) { args ->
-        runCatching {
-            val resolved = pathGuard.resolveReadableExistingFile(args.requiredString("path"))
-            val path = resolved.path
-            rejectLargeFile(path)
+        safeToolResult {
             val startLine = args.int("start_line") ?: 1
             val maxLines = args.int("max_lines") ?: 200
             require(startLine >= 1) { "start_line must be at least 1." }
             require(maxLines >= 1) { "max_lines must be at least 1." }
+            val resolved = withContext(Dispatchers.IO) {
+                pathGuard.resolveReadableExistingFile(args.requiredString("path")).also {
+                    rejectLargeFile(it.path)
+                }
+            }
+            val path = resolved.path
             val sensitive = sensitivePathProtection && isSensitivePath(path)
             var approvalSource: ApprovalSource? = null
             if (!resolved.insideWorkspace || sensitive) {
@@ -130,13 +136,13 @@ class LocalTools(
                 )
                 approvalSource = approval.source
                 if (!approval.allowed) {
-                    return@runCatching ToolResult.error(
+                    return@safeToolResult ToolResult.error(
                         approval.denialMessage("read_file"),
                         approval.source,
                     )
                 }
             }
-            val lines = readTextLines(path)
+            val lines = withContext(Dispatchers.IO) { readTextLines(path) }
             val selected = lines.drop(startLine - 1).take(maxLines)
             val numbered = selected.mapIndexed { index, line -> "${startLine + index}: $line" }
             ToolResult.ok(
@@ -151,7 +157,7 @@ class LocalTools(
                 readPaths = if (resolved.insideWorkspace) listOf(path) else emptyList(),
                 approvalSource = approvalSource,
             )
-        }.getOrElse { ToolResult.error(it.message ?: it.toString()) }
+        }
     }
 
     private fun searchTextTool(): ToolDefinition = ToolDefinition(
@@ -168,36 +174,38 @@ class LocalTools(
         requiresApproval = false,
         cost = 1,
     ) { args ->
-        runCatching {
-            val query = args.requiredString("query")
-            val start = pathGuard.resolveExisting(args.string("path") ?: ".")
-            val maxResults = (args.int("max_results") ?: 50).coerceIn(1, 200)
-            val files = if (Files.isRegularFile(start)) {
-                rejectSensitivePath(start)
-                listOf(start)
-            } else {
-                Files.walk(start, 12).use { stream ->
-                    stream
-                        .filter { Files.isRegularFile(it) }
-                        .filter { !isIgnoredPath(it) }
-                        .limit(2_000)
-                        .collect(Collectors.toList())
-                }
-            }
-
-            val matches = mutableListOf<String>()
-            for (file in files) {
-                if (matches.size >= maxResults) break
-                if (Files.size(file) > MAX_TEXT_FILE_BYTES) continue
-                val lines = runCatching { readTextLines(file) }.getOrNull() ?: continue
-                lines.forEachIndexed { index, line ->
-                    if (matches.size < maxResults && line.contains(query, ignoreCase = true)) {
-                        matches += "${pathGuard.display(file)}:${index + 1}: $line"
+        safeToolResult {
+            withContext(Dispatchers.IO) {
+                val query = args.requiredString("query")
+                val start = pathGuard.resolveExisting(args.string("path") ?: ".")
+                val maxResults = (args.int("max_results") ?: 50).coerceIn(1, 200)
+                val files = if (Files.isRegularFile(start)) {
+                    rejectSensitivePath(start)
+                    listOf(start)
+                } else {
+                    Files.walk(start, 12).use { stream ->
+                        stream
+                            .filter { Files.isRegularFile(it) }
+                            .filter { !isIgnoredPath(it) }
+                            .limit(2_000)
+                            .collect(Collectors.toList())
                     }
                 }
+
+                val matches = mutableListOf<String>()
+                for (file in files) {
+                    if (matches.size >= maxResults) break
+                    if (Files.size(file) > MAX_TEXT_FILE_BYTES) continue
+                    val lines = runCatching { readTextLines(file) }.getOrNull() ?: continue
+                    lines.forEachIndexed { index, line ->
+                        if (matches.size < maxResults && line.contains(query, ignoreCase = true)) {
+                            matches += "${pathGuard.display(file)}:${index + 1}: $line"
+                        }
+                    }
+                }
+                ToolResult.ok(truncate(matches.joinToString("\n").ifBlank { "(no matches)" }))
             }
-            ToolResult.ok(truncate(matches.joinToString("\n").ifBlank { "(no matches)" }))
-        }.getOrElse { ToolResult.error(it.message ?: it.toString()) }
+        }
     }
 
     private fun applyPatchTool(): ToolDefinition = ToolDefinition(
@@ -212,40 +220,42 @@ class LocalTools(
         requiresApproval = false,
         cost = 2,
     ) { args ->
-        runCatching {
-            data class PendingChange(val path: Path, val content: TextFile?)
-            val changes = UnifiedPatch.parse(args.requiredString("patch")).map { filePatch ->
-                require(filePatch.oldPath == null || filePatch.newPath == null || filePatch.oldPath == filePatch.newPath) {
-                    "File renames are not supported by apply_patch."
-                }
-                val relativePath = filePatch.newPath ?: filePatch.oldPath!!
-                val path = pathGuard.resolveWritableFile(relativePath)
-                rejectSensitivePath(path)
-                if (filePatch.newPath == null) {
-                    require(Files.isRegularFile(path)) { "Cannot delete missing file: $relativePath" }
-                    rejectLargeFile(path)
-                    applyFilePatch(relativePath, TextFileCodec.read(path).text, filePatch)
-                    PendingChange(path, null)
-                } else {
-                    val original = if (Files.exists(path)) {
-                        rejectLargeFile(path)
-                        TextFileCodec.read(path)
-                    } else {
-                        require(filePatch.oldPath == null) { "File does not exist: $relativePath" }
-                        TextFile("", StandardCharsets.UTF_8, byteArrayOf())
+        safeToolResult {
+            withContext(Dispatchers.IO) {
+                data class PendingChange(val path: Path, val content: TextFile?)
+                val changes = UnifiedPatch.parse(args.requiredString("patch")).map { filePatch ->
+                    require(filePatch.oldPath == null || filePatch.newPath == null || filePatch.oldPath == filePatch.newPath) {
+                        "File renames are not supported by apply_patch."
                     }
-                    PendingChange(path, original.copy(text = applyFilePatch(relativePath, original.text, filePatch)))
+                    val relativePath = filePatch.newPath ?: filePatch.oldPath!!
+                    val path = pathGuard.resolveWritableFile(relativePath)
+                    rejectSensitivePath(path)
+                    if (filePatch.newPath == null) {
+                        require(Files.isRegularFile(path)) { "Cannot delete missing file: $relativePath" }
+                        rejectLargeFile(path)
+                        applyFilePatch(relativePath, TextFileCodec.read(path).text, filePatch)
+                        PendingChange(path, null)
+                    } else {
+                        val original = if (Files.exists(path)) {
+                            rejectLargeFile(path)
+                            TextFileCodec.read(path)
+                        } else {
+                            require(filePatch.oldPath == null) { "File does not exist: $relativePath" }
+                            TextFile("", StandardCharsets.UTF_8, byteArrayOf())
+                        }
+                        PendingChange(path, original.copy(text = applyFilePatch(relativePath, original.text, filePatch)))
+                    }
                 }
-            }
-            changes.forEach { change ->
-                if (change.content == null) Files.delete(change.path)
-                else {
-                    change.path.parent?.let { Files.createDirectories(it) }
-                    TextFileCodec.write(change.path, change.content)
+                changes.forEach { change ->
+                    if (change.content == null) Files.delete(change.path)
+                    else {
+                        change.path.parent?.let { Files.createDirectories(it) }
+                        TextFileCodec.write(change.path, change.content)
+                    }
                 }
+                ToolResult.ok("Applied patch to ${changes.size} file(s): ${changes.joinToString { pathGuard.display(it.path) }}")
             }
-            ToolResult.ok("Applied patch to ${changes.size} file(s): ${changes.joinToString { pathGuard.display(it.path) }}")
-        }.getOrElse { ToolResult.error(it.message ?: it.toString()) }
+        }
     }
 
     private fun applyFilePatch(relativePath: String, original: String, patch: FilePatch): String =
@@ -268,7 +278,7 @@ class LocalTools(
         requiresApproval = true,
         cost = 5,
     ) { args ->
-        runCatching {
+        safeToolResult {
             val command = args.requiredString("command")
             val timeoutSeconds = args.int("timeout_seconds") ?: 30
             validateBasicCommand(command, timeoutSeconds)
@@ -282,7 +292,7 @@ class LocalTools(
                 ),
             )
             if (!approval.allowed) {
-                return@runCatching ToolResult.error(
+                return@safeToolResult ToolResult.error(
                     approval.denialMessage("run_command"),
                     approval.source,
                 )
@@ -291,7 +301,7 @@ class LocalTools(
                 truncate(runShell(command, timeout)),
                 approvalSource = approval.source,
             )
-        }.getOrElse { ToolResult.error(it.message ?: it.toString()) }
+        }
     }
 
     private suspend fun runShell(command: String, timeout: Duration): String = withContext(Dispatchers.IO) {
@@ -319,9 +329,17 @@ class LocalTools(
         readerThread.isDaemon = true
         readerThread.start()
 
-        val completed = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)
-        if (!completed) {
-            process.destroyForcibly()
+        val deadline = System.nanoTime() + timeout.toNanos()
+        try {
+            while (process.isAlive && System.nanoTime() < deadline) {
+                delay(50)
+            }
+        } catch (error: CancellationException) {
+            destroyProcessTree(process)
+            throw error
+        }
+        if (process.isAlive) {
+            destroyProcessTree(process)
             readerThread.join(1_000)
             return@withContext "Command execution timed out after ${timeout.seconds}s.\n${output}"
         }
@@ -329,11 +347,27 @@ class LocalTools(
         "Exit code: ${process.exitValue()}\n${output}"
     }
 
+    private fun destroyProcessTree(process: Process) {
+        process.descendants().use { descendants ->
+            descendants.forEach { handle -> runCatching { handle.destroyForcibly() } }
+        }
+        process.destroyForcibly()
+    }
+
     private fun validateBasicCommand(command: String, timeoutSeconds: Int) {
         val trimmed = command.trim()
         if (trimmed.isEmpty()) throw IllegalArgumentException("command must not be empty.")
         require(timeoutSeconds in 1..120) { "timeout_seconds must be between 1 and 120." }
     }
+
+    private suspend fun safeToolResult(block: suspend () -> ToolResult): ToolResult =
+        try {
+            block()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            ToolResult.error(error.message ?: error.toString())
+        }
 
     private fun readTextLines(path: Path): List<String> {
         try {

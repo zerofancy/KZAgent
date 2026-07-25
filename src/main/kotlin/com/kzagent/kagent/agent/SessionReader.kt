@@ -83,16 +83,9 @@ class SessionReader(private val sessionsDir: Path) {
         return loadLatest()?.filter { it !is AgentMessage.System }
     }
 
-    fun loadLatestTokenCount(): Int {
-        if (!Files.isDirectory(sessionsDir)) return 0
-        val files = Files.list(sessionsDir).use { stream ->
-            stream
-                .filter { it.toString().endsWith(".jsonl") }
-                .sorted(Comparator.reverseOrder())
-                .collect(Collectors.toList())
-        }
-        val latest = files.firstOrNull() ?: return 0
-        val lines = Files.readAllLines(latest, StandardCharsets.UTF_8)
+    fun loadTokenCount(path: Path): Int {
+        if (!Files.isRegularFile(path)) return 0
+        val lines = Files.readAllLines(path, StandardCharsets.UTF_8)
         // 从后往前找最后一条有 context_tokens（或旧的 cumulative_tokens）的行
         var lastTokens = 0
         for (i in lines.indices.reversed()) {

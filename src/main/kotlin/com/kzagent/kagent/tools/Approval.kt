@@ -5,6 +5,7 @@ import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.llm.ChatModel
 import java.nio.file.Path
 import java.time.Duration
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -129,7 +130,7 @@ class ModelApprovalAgent(
     private val model: ChatModel,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : ApprovalAgent {
-    override suspend fun decide(request: ApprovalRequest): ApprovalResult = runCatching {
+    override suspend fun decide(request: ApprovalRequest): ApprovalResult = try {
         val reply = model.chat(
             messages = listOf(
                 AgentMessage.System(
@@ -161,7 +162,9 @@ class ModelApprovalAgent(
         val reason = parsed["reason"]?.jsonPrimitive?.content?.trim().orEmpty()
             .ifBlank { "审批 Agent 未提供原因。" }
         ApprovalResult(decision, ApprovalSource.APPROVAL_AGENT, SecretRedactor.redact(reason))
-    }.getOrElse { error ->
+    } catch (error: CancellationException) {
+        throw error
+    } catch (error: Exception) {
         ApprovalResult(
             ApprovalDecision.ASK_USER,
             ApprovalSource.APPROVAL_AGENT,

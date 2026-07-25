@@ -64,6 +64,8 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-svg:3.5.0")
     implementation("io.github.vinceglb:filekit-dialogs:0.14.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.retrofit2:retrofit:3.0.0")
+    implementation("com.squareup.retrofit2:converter-kotlinx-serialization:3.0.0")
     implementation("org.jsoup:jsoup:1.22.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")
@@ -106,6 +108,7 @@ compose.desktop {
                 project.file("coil3.pro"),
                 project.file("jsoup.pro"),
                 project.file("compose-fluent.pro"),
+                project.file("retrofit.pro"),
                 //project.file("decompose.pro")
             )
         }

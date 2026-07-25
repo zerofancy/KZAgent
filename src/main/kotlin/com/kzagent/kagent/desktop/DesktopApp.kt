@@ -108,8 +108,10 @@ import io.github.composefluent.icons.regular.MoreHorizontal
 import io.github.composefluent.icons.regular.Rename
 import io.github.composefluent.icons.regular.Settings
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -449,16 +451,21 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     var showCompressConfirm by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var savedConfig by remember { mutableStateOf<AppConfig?>(null) }
+    var settingsSaving by remember { mutableStateOf(false) }
+    var settingsSaveError by remember { mutableStateOf<String?>(null) }
+    var sessionLoadError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     // Check configuration on startup; if API key is missing, open settings
     LaunchedEffect(Unit) {
-        runCatching { AppConfigLoader.load() }
-            .onSuccess { savedConfig = it }
-            .onFailure {
-                savedConfig = null
-                showSettings = true
-            }
+        try {
+            savedConfig = withContext(Dispatchers.IO) { AppConfigLoader.load() }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            savedConfig = null
+            showSettings = true
+        }
     }
 
     // Helper to derive safe default values for settings panel
@@ -466,57 +473,73 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
         val existing = savedConfig
         return if (existing != null) {
             existing.apiKey to existing.baseUrl
-        } else {
-            // Try to load partial config to prefill what's available
-            runCatching {
-                val cfg = AppConfigLoader.load()
-                cfg.apiKey to cfg.baseUrl
-            }.getOrDefault("" to AppConfig.DEFAULT_BASE_URL)
-        }
+        } else "" to AppConfig.DEFAULT_BASE_URL
     }
 
-    val approvalPolicy = ApprovalPolicy { request ->
-        suspendCancellableCoroutine { continuation ->
-            lateinit var approval: PendingApproval
-            approval = PendingApproval(request) { allowed ->
-                pendingApprovals.remove(approval)
-                if (continuation.isActive) {
-                    continuation.resume(
-                        ApprovalResult(
-                            decision = if (allowed) ApprovalDecision.ALLOW else ApprovalDecision.DENY,
-                            source = ApprovalSource.HUMAN,
-                            reason = if (allowed) "用户已批准。" else "用户已拒绝。",
-                        ),
-                    )
+    val approvalPolicy = remember {
+        ApprovalPolicy { request ->
+            suspendCancellableCoroutine { continuation ->
+                lateinit var approval: PendingApproval
+                approval = PendingApproval(request) { allowed ->
+                    pendingApprovals.remove(approval)
+                    if (continuation.isActive) {
+                        continuation.resume(
+                            ApprovalResult(
+                                decision = if (allowed) ApprovalDecision.ALLOW else ApprovalDecision.DENY,
+                                source = ApprovalSource.HUMAN,
+                                reason = if (allowed) "用户已批准。" else "用户已拒绝。",
+                            ),
+                        )
+                    }
                 }
+                continuation.invokeOnCancellation { pendingApprovals.remove(approval) }
+                pendingApprovals.add(approval)
             }
-            continuation.invokeOnCancellation { pendingApprovals.remove(approval) }
-            pendingApprovals.add(approval)
         }
     }
 
-    val sessionManager = remember(savedConfig) {
-        SessionManager(approvalPolicy).also { it.loadOrCreate(initialWorkspace) }
+    val sessionManager = remember {
+        SessionManager(approvalPolicy)
     }
 
-    // When settings are saved, reset session runtimes so they pick up new config
-    fun onSettingsSaved() {
-        savedConfig = runCatching { AppConfigLoader.load() }.getOrNull()
-        // Clear all runtimes so they will be recreated with new config
-        sessionManager.sessions.forEach { session ->
-            session.currentJob?.cancel()
-            session.runtime = null
-            session.error = null
-            session.status = "正在加载..."
+    LaunchedEffect(sessionManager, initialWorkspace) {
+        try {
+            sessionManager.loadOrCreate(initialWorkspace)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            sessionLoadError = SecretRedactor.redact(error.message ?: error.toString())
         }
-        showSettings = false
+    }
+
+    // Persist configuration away from the UI dispatcher, then invalidate only the runtimes.
+    fun saveSettings(config: AppConfig) {
+        if (settingsSaving) return
+        settingsSaving = true
+        settingsSaveError = null
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) { ConfigWriter.save(config) }
+                savedConfig = withContext(Dispatchers.IO) { AppConfigLoader.load() }
+                sessionManager.invalidateRuntimes()
+                showSettings = false
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                settingsSaveError = SecretRedactor.redact(error.message ?: error.toString())
+                if (!showSettings) {
+                    sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)?.error =
+                        "保存设置失败：$settingsSaveError"
+                }
+            } finally {
+                settingsSaving = false
+            }
+        }
     }
 
     fun onApprovalModeChanged(mode: ApprovalMode) {
         val current = savedConfig ?: return
-        if (current.approvalMode == mode) return
-        ConfigWriter.save(current.copy(approvalMode = mode))
-        onSettingsSaved()
+        if (current.approvalMode != mode) saveSettings(current.copy(approvalMode = mode))
     }
 
     // Auto-collapse tool messages when a session becomes idle
@@ -574,22 +597,25 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     }
 
     // Ensure active session has a runtime
-    val activeSession = sessionManager.activeSession()
-    LaunchedEffect(sessionManager, activeSession.id, activeSession.workspace, activeSession.runtime) {
-        val session = sessionManager.activeSession()
+    val activeSession = sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)
+    LaunchedEffect(sessionManager, activeSession?.id, activeSession?.workspace, activeSession?.runtime) {
+        val session = activeSession ?: return@LaunchedEffect
         session.status = "正在加载..."
         val observer = createObserver(session)
         session.error = null
-        runCatching { sessionManager.ensureRuntime(session, observer) }
-            .onSuccess { session.status = "就绪" }
-            .onFailure {
-                desktopLog(
-                    "failed to initialize session ${session.id}: ${runtimeErrorMessage(it)}",
-                    it,
-                )
-                session.error = SecretRedactor.redact(runtimeErrorMessage(it))
-                session.status = "配置不可用"
-            }
+        try {
+            sessionManager.ensureRuntime(session, observer)
+            session.status = "就绪"
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            desktopLog(
+                "failed to initialize session ${session.id}: ${runtimeErrorMessage(error)}",
+                error,
+            )
+            session.error = SecretRedactor.redact(runtimeErrorMessage(error))
+            session.status = "配置不可用"
+        }
     }
 
     // Reusable context compression helper
@@ -610,13 +636,19 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
             if (summary is AgentMessage.Summary) {
                 val agent = session.runtime!!.agent
                 scope.launch {
-                    runCatching { agent.generateTitle(summary.content) }
-                        .onSuccess { title ->
-                            sessionManager.renameSessionIfRevisionMatches(sessionId, titleRevision, title)
-                        }
+                    try {
+                        val title = agent.generateTitle(summary.content)
+                        sessionManager.renameSessionIfRevisionMatches(sessionId, titleRevision, title)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        // Title generation is best-effort and must not fail compression.
+                    }
                 }
             }
             true
+        } catch (error: CancellationException) {
+            throw error
         } catch (e: Exception) {
             session.error = "压缩失败: ${SecretRedactor.redact(e.message ?: e.toString())}"
             session.status = "压缩失败"
@@ -636,8 +668,18 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                 showSettings = false
             },
             onAddSession = {
-                sessionManager.addNewSession()
-                showSettings = false
+                if (sessionManager.initialized) {
+                    scope.launch {
+                        try {
+                            sessionManager.addNewSession()
+                            showSettings = false
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Exception) {
+                            sessionLoadError = SecretRedactor.redact(error.message ?: error.toString())
+                        }
+                    }
+                }
             },
             onDeleteSession = { showDeleteConfirmIndex = it },
             onRenameSession = { index ->
@@ -646,10 +688,17 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
             },
             onChooseWorkspace = {
                 scope.launch {
-                    val session = sessionManager.activeSession()
-                    chooseWorkspace(session.workspace)?.let { newWorkspace ->
-                        sessionManager.changeWorkspace(session, newWorkspace)
-                        showSettings = false
+                    val session = sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)
+                        ?: return@launch
+                    try {
+                        chooseWorkspace(session.workspace)?.let { newWorkspace ->
+                            sessionManager.changeWorkspace(session, newWorkspace)
+                            showSettings = false
+                        }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        session.error = SecretRedactor.redact(error.message ?: error.toString())
                     }
                 }
             },
@@ -666,13 +715,23 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                     initialSensitivePathProtection = savedConfig?.sensitivePathProtection ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION,
                     initialUserPrompt = savedConfig?.userPrompt ?: "",
                     initialApprovalMode = savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE,
-                    onSave = { onSettingsSaved() },
+                    saving = settingsSaving,
+                    saveError = settingsSaveError,
+                    onSave = ::saveSettings,
                     onCancel = {
                         if (savedConfig != null) {
                             showSettings = false
                         }
                     },
                 )
+            } else if (!sessionManager.initialized || sessionManager.sessions.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    if (sessionLoadError == null) {
+                        CircularProgressIndicator()
+                    } else {
+                        ErrorBanner(sessionLoadError!!)
+                    }
+                }
             } else {
                 val session = sessionManager.activeSession()
                 Column(
@@ -730,17 +789,21 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                                     session.usedTokens = result.totalTokens
                                     session.status = "就绪"
                                     // Auto-title on first user message
-                                    if (result.history.count { it is AgentMessage.User } == 1) {
-                                        scope.launch {
-                                            runCatching { currentRuntime.agent.generateTitle(prompt) }
-                                                .onSuccess { title ->
-                                                    sessionManager.renameSessionIfRevisionMatches(
-                                                        sessionId,
-                                                        titleRevision,
-                                                        title,
-                                                    )
-                                                }
-                                        }
+                                     if (result.history.count { it is AgentMessage.User } == 1) {
+                                         scope.launch {
+                                             try {
+                                                 val title = currentRuntime.agent.generateTitle(prompt)
+                                                 sessionManager.renameSessionIfRevisionMatches(
+                                                     sessionId,
+                                                     titleRevision,
+                                                     title,
+                                                 )
+                                             } catch (error: CancellationException) {
+                                                 throw error
+                                             } catch (_: Exception) {
+                                                 // Title generation is best-effort and does not fail the user request.
+                                             }
+                                         }
                                     }
                                 } catch (_: CancellationException) {
                                     session.status = "已终止"
@@ -805,8 +868,17 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
             text = { Text("确定要删除会话「$sessionName」吗？此操作不可撤销。") },
             confirmButton = {
                 Button(onClick = {
-                    sessionManager.deleteSession(showDeleteConfirmIndex)
+                    val index = showDeleteConfirmIndex
                     showDeleteConfirmIndex = -1
+                    scope.launch {
+                        try {
+                            sessionManager.deleteSession(index)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Exception) {
+                            sessionLoadError = SecretRedactor.redact(error.message ?: error.toString())
+                        }
+                    }
                 }) { Text("删除") }
             },
             dismissButton = {
@@ -830,10 +902,20 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
             },
             confirmButton = {
                 Button(onClick = {
-                    if (renameText.isNotBlank()) {
-                        sessionManager.renameSession(showRenameDialogIndex, renameText)
-                    }
+                    val index = showRenameDialogIndex
+                    val name = renameText
                     showRenameDialogIndex = -1
+                    if (name.isNotBlank()) {
+                        scope.launch {
+                            try {
+                                sessionManager.renameSession(index, name)
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                sessionLoadError = SecretRedactor.redact(error.message ?: error.toString())
+                            }
+                        }
+                    }
                 }) { Text("确定") }
             },
             dismissButton = {

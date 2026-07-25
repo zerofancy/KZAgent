@@ -6,6 +6,9 @@ import com.kzagent.kagent.llm.ChatModel
 import com.kzagent.kagent.tools.ToolQuota
 import com.kzagent.kagent.tools.ToolRegistry
 import com.kzagent.kagent.tools.ToolResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
@@ -124,12 +127,14 @@ class CodingAgent(
                 val rawResult = if (tool == null) {
                     ToolResult.error("Unknown tool: ${toolCall.name}")
                 } else {
-                    runCatching {
+                    try {
                         val args = json.parseToJsonElement(toolCall.argumentsJson) as? JsonObject
                             ?: throw IllegalArgumentException("Tool arguments must be a JSON object.")
                         tool.handler(args)
-                    }.getOrElse {
-                        ToolResult.error(it.message ?: it.toString())
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        ToolResult.error(error.message ?: error.toString())
                     }
                 }
                 val loader = instructionsLoader
@@ -140,7 +145,7 @@ class CodingAgent(
                 ) {
                     rawResult
                 } else {
-                    runCatching {
+                    try {
                         val discovered = mutableListOf<LoadedAgentsInstruction>()
                         for (readPath in rawResult.readPaths) {
                             // Include instructions discovered by earlier tool calls
@@ -150,15 +155,19 @@ class CodingAgent(
                                 addAll(pendingInstructions.map { it.source })
                                 addAll(discovered.map { it.source })
                             }
-                            discovered += loader.loadForRead(readPath, excluded)
+                            discovered += withContext(Dispatchers.IO) {
+                                loader.loadForRead(readPath, excluded)
+                            }
                         }
                         pendingInstructions += discovered
                         loadedScopedInstructionSources += discovered.map { it.source }
                         rawResult
-                    }.getOrElse {
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
                         ToolResult.error(
                             "File read completed, but applicable AGENTS.md instructions could not be loaded: " +
-                                (it.message ?: it.toString()),
+                                (error.message ?: error.toString()),
                         )
                     }
                 }
