@@ -1,6 +1,7 @@
 package com.kzagent.kagent.desktop
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -46,6 +47,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
@@ -101,6 +103,8 @@ import io.github.composefluent.component.AccentButton as FluentAccentButton
 import io.github.composefluent.component.Text as FluentText
 import io.github.composefluent.icons.Icons
 import io.github.composefluent.icons.regular.Add
+import io.github.composefluent.icons.regular.ArrowDown
+import io.github.composefluent.icons.regular.ArrowUp
 import io.github.composefluent.icons.regular.Delete
 import io.github.composefluent.icons.regular.Document
 import io.github.composefluent.icons.regular.Folder
@@ -773,6 +777,7 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                         Spacer(Modifier.height(12.dp))
                     }
                     MessageList(
+                        sessionId = session.id,
                         messages = session.messages,
                         workspace = session.workspace,
                         modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -1346,13 +1351,41 @@ private fun ErrorBanner(message: String) {
 
 @Composable
 private fun MessageList(
+    sessionId: String,
     messages: MutableList<DisplayMessage>,
     workspace: Path,
     modifier: Modifier = Modifier,
 ) {
-    val scrollState = rememberScrollState()
-    LaunchedEffect(messages.size) {
-        scrollState.animateScrollTo(scrollState.maxValue)
+    val scrollState = remember(sessionId) { ScrollState(initial = 0) }
+    val scope = rememberCoroutineScope()
+    var displayedSessionId by remember { mutableStateOf<String?>(null) }
+    var displayedMessageCount by remember { mutableStateOf(0) }
+
+    LaunchedEffect(sessionId, messages.size) {
+        val behavior = messageListScrollBehavior(
+            previousSessionId = displayedSessionId,
+            activeSessionId = sessionId,
+            previousMessageCount = displayedMessageCount,
+            currentMessageCount = messages.size,
+        )
+        displayedSessionId = sessionId
+        displayedMessageCount = messages.size
+
+        when (behavior) {
+            MessageListScrollBehavior.JUMP_TO_BOTTOM -> {
+                // Restored Markdown content can change height over several layout passes.
+                // First request the unknown bottom, then correct it after the measured
+                // range has remained stable so a session switch cannot stop part-way down.
+                scrollState.scrollTo(Int.MAX_VALUE)
+                scrollState.awaitStableMessageScrollRange()
+                scrollState.scrollTo(scrollState.maxValue)
+            }
+            MessageListScrollBehavior.ANIMATE_TO_BOTTOM -> {
+                withFrameNanos { }
+                scrollState.animateScrollTo(scrollState.maxValue)
+            }
+            MessageListScrollBehavior.NONE -> Unit
+        }
     }
     Box(
         modifier = modifier
@@ -1363,7 +1396,7 @@ private fun MessageList(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(start = 22.dp, top = 22.dp, end = 34.dp, bottom = 22.dp),
+                .padding(start = 22.dp, top = 22.dp, end = 70.dp, bottom = 70.dp),
         ) {
             if (messages.isEmpty()) {
                 Column(
@@ -1400,7 +1433,62 @@ private fun MessageList(
             adapter = rememberScrollbarAdapter(scrollState),
             modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 4.dp),
         )
+        Column(
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SubtleButton(
+                onClick = { scope.launch { scrollState.scrollTo(0) } },
+                modifier = Modifier.size(34.dp),
+                iconOnly = true,
+            ) {
+                FluentIcon(Icons.Default.ArrowUp, contentDescription = "跳转到顶部")
+            }
+            SubtleButton(
+                onClick = { scope.launch { scrollState.scrollTo(scrollState.maxValue) } },
+                modifier = Modifier.size(34.dp),
+                iconOnly = true,
+            ) {
+                FluentIcon(Icons.Default.ArrowDown, contentDescription = "跳转到底部")
+            }
+        }
     }
+}
+
+private suspend fun ScrollState.awaitStableMessageScrollRange() {
+    var previousMaxValue = Int.MIN_VALUE
+    var stableFrames = 0
+    while (stableFrames < 2) {
+        withFrameNanos { }
+        val currentMaxValue = maxValue
+        if (!isMeasuredMessageScrollRange(currentMaxValue)) continue
+        if (currentMaxValue == previousMaxValue) {
+            stableFrames++
+        } else {
+            previousMaxValue = currentMaxValue
+            stableFrames = 0
+        }
+    }
+}
+
+internal fun isMeasuredMessageScrollRange(maxValue: Int): Boolean =
+    maxValue != Int.MAX_VALUE
+
+internal enum class MessageListScrollBehavior {
+    NONE,
+    JUMP_TO_BOTTOM,
+    ANIMATE_TO_BOTTOM,
+}
+
+internal fun messageListScrollBehavior(
+    previousSessionId: String?,
+    activeSessionId: String,
+    previousMessageCount: Int,
+    currentMessageCount: Int,
+): MessageListScrollBehavior = when {
+    previousSessionId != activeSessionId -> MessageListScrollBehavior.JUMP_TO_BOTTOM
+    previousMessageCount != currentMessageCount -> MessageListScrollBehavior.ANIMATE_TO_BOTTOM
+    else -> MessageListScrollBehavior.NONE
 }
 
 @Composable
