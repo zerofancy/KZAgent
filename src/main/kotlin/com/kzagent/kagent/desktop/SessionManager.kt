@@ -65,10 +65,18 @@ class SessionManager internal constructor(
     private val renameMutex = Mutex()
 
     /** Loads sessions once. Recomposition and configuration refreshes reuse this manager instance. */
-    suspend fun loadOrCreate(defaultWorkspace: Path) {
+    suspend fun loadOrCreate(
+        defaultWorkspace: Path,
+        createStartupSession: Boolean = false,
+    ) {
         if (initialized) return
-        val stored = repository.loadAll(defaultWorkspace).ifEmpty {
-            listOf(repository.create(defaultWorkspace, "新会话 1"))
+        val existing = repository.loadAll(defaultWorkspace)
+        val stored = if (createStartupSession) {
+            listOf(repository.create(defaultWorkspace, "新会话 ${existing.size + 1}")) + existing
+        } else {
+            existing.ifEmpty {
+                listOf(repository.create(defaultWorkspace, "新会话 1"))
+            }
         }
         sessions.clear()
         sessions.addAll(stored.map(::toSessionData))

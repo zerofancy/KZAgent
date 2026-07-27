@@ -48,6 +48,24 @@ import io.github.composefluent.component.RadioButton
 import io.github.composefluent.component.Text
 import io.github.composefluent.component.TextField
 
+internal data class UserCommandButtonPresentation(
+    val text: String,
+    val disabled: Boolean,
+)
+
+internal fun userCommandButtonPresentation(
+    available: Boolean,
+    installed: Boolean,
+    installing: Boolean,
+): UserCommandButtonPresentation = UserCommandButtonPresentation(
+    text = when {
+        installing -> "正在安装..."
+        installed -> "重新安装 kza 命令"
+        else -> "安装 kza 命令"
+    },
+    disabled = !available || installing,
+)
+
 @Composable
 fun SettingsPanel(
     initialApiKey: String,
@@ -59,9 +77,22 @@ fun SettingsPanel(
     initialApprovalMode: ApprovalMode,
     saving: Boolean = false,
     saveError: String? = null,
+    commandAvailable: Boolean = false,
+    commandInstalled: Boolean = false,
+    commandPath: String? = null,
+    commandUnavailableReason: String? = null,
+    commandInstalling: Boolean = false,
+    commandInstallMessage: String? = null,
+    commandInstallFailed: Boolean = false,
+    onInstallCommand: () -> Unit = {},
     onSave: (AppConfig) -> Unit,
     onCancel: () -> Unit,
 ) {
+    val commandButton = userCommandButtonPresentation(
+        available = commandAvailable,
+        installed = commandInstalled,
+        installing = commandInstalling,
+    )
     var apiKey by remember { mutableStateOf(initialApiKey) }
     var baseUrl by remember { mutableStateOf(initialBaseUrl) }
     var model by remember { mutableStateOf(initialModel) }
@@ -211,6 +242,41 @@ fun SettingsPanel(
                         maxLines = 12,
                         isClearable = false,
                     )
+                }
+
+                SettingsSection(
+                    title = "命令行",
+                    description = "将 kza 安装为当前用户可用的全局命令，不修改系统级 PATH。",
+                ) {
+                    Text(
+                        when {
+                            commandPath != null && commandInstalled -> "当前安装位置：$commandPath"
+                            commandUnavailableReason != null -> commandUnavailableReason
+                            else -> "安装后可使用 kza、kza ask、kza chat 和 kza app。"
+                        },
+                        style = FluentTheme.typography.caption,
+                        color = FluentTheme.colors.text.text.secondary,
+                    )
+                    Button(
+                        onClick = onInstallCommand,
+                        disabled = commandButton.disabled,
+                    ) {
+                        Text(commandButton.text)
+                    }
+                    commandInstallMessage?.let { message ->
+                        InfoBar(
+                            title = {
+                                Text(if (commandInstallFailed) "安装失败" else "安装成功")
+                            },
+                            message = { Text(message) },
+                            severity = if (commandInstallFailed) {
+                                InfoBarSeverity.Critical
+                            } else {
+                                InfoBarSeverity.Success
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
 
                 (errorMessage ?: saveError)?.let { message ->

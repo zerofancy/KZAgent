@@ -3,27 +3,50 @@ package com.kzagent.kagent
 import com.kzagent.kagent.cli.runCli
 import com.kzagent.kagent.desktop.runDesktopApp
 import com.kzagent.kagent.config.FileKitPaths
+import java.nio.file.Path
 import kotlin.system.exitProcess
 
 fun main(args: Array<String>) {
     FileKitPaths.initialize()
-    when (LaunchModeResolver.resolve(args)) {
-        LaunchMode.Desktop -> runDesktopApp()
-        LaunchMode.Cli -> exitProcess(runCli(args))
+    when (val request = LaunchModeResolver.resolve(args)) {
+        is LaunchRequest.Desktop -> runDesktopApp(
+            initialWorkspace = request.initialWorkspace,
+            createStartupSession = request.createStartupSession,
+        )
+        is LaunchRequest.Cli -> {
+            WindowsParentConsole.attachIfNeeded()
+            exitProcess(runCli(request.args))
+        }
     }
 }
 
-enum class LaunchMode {
-    Desktop,
-    Cli,
+sealed interface LaunchRequest {
+    data class Desktop(
+        val initialWorkspace: Path,
+        val createStartupSession: Boolean,
+    ) : LaunchRequest
+
+    data class Cli(val args: Array<String>) : LaunchRequest
 }
 
 object LaunchModeResolver {
-    fun resolve(args: Array<String>): LaunchMode {
-        return if (args.isEmpty()) {
-            LaunchMode.Desktop
-        } else {
-            LaunchMode.Cli
+    fun resolve(
+        args: Array<String>,
+        currentDirectory: Path = Path.of("").toAbsolutePath().normalize(),
+        packagedAppPath: String? = System.getProperty("jpackage.app-path"),
+    ): LaunchRequest {
+        val workspace = currentDirectory.toAbsolutePath().normalize()
+        return when {
+            args.firstOrNull() == "app" -> LaunchRequest.Desktop(
+                initialWorkspace = workspace,
+                createStartupSession = true,
+            )
+            args.isEmpty() && !packagedAppPath.isNullOrBlank() -> LaunchRequest.Desktop(
+                initialWorkspace = workspace,
+                createStartupSession = false,
+            )
+            args.isEmpty() -> LaunchRequest.Cli(arrayOf("chat"))
+            else -> LaunchRequest.Cli(args.copyOf())
         }
     }
 }

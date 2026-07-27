@@ -59,6 +59,40 @@ class SessionManagerTest {
     }
 
     @Test
+    fun commandLineDesktopStartupCreatesFreshSessionInRequestedWorkspace() = runBlocking {
+        val previousWorkspace = testWorkspace()
+        val startupWorkspace = testWorkspace()
+        val existing = StoredSession(
+            id = "existing",
+            name = "Existing",
+            workspace = previousWorkspace,
+            sessionFile = previousWorkspace.resolve("existing.jsonl"),
+            history = listOf(AgentMessage.User("preserve me")),
+            usedTokens = 21,
+        )
+        val repository = InMemorySessionRepository(listOf(existing))
+        val manager = SessionManager(
+            approvalPolicy = denyAll,
+            sessionsRoot = startupWorkspace,
+            repository = repository,
+        )
+
+        manager.loadOrCreate(startupWorkspace, createStartupSession = true)
+
+        assertEquals(2, manager.sessions.size)
+        val created = manager.activeSession()
+        assertEquals(startupWorkspace, created.workspace)
+        assertTrue(created.conversationHistory.isEmpty())
+        assertTrue(created.messages.isEmpty())
+        assertEquals(0, created.usedTokens)
+        assertEquals(1, repository.createCalls)
+        val preserved = manager.sessions.single { it.id == "existing" }
+        assertEquals(previousWorkspace, preserved.workspace)
+        assertEquals(listOf(AgentMessage.User("preserve me")), preserved.conversationHistory)
+        assertEquals(21, preserved.usedTokens)
+    }
+
+    @Test
     fun conditionalRenameUsesStableIdAndPreservesNewerManualName() = runBlocking {
         val workspace = testWorkspace()
         val manager = SessionManager(denyAll, Files.createTempDirectory("kagent-sessions-test"))

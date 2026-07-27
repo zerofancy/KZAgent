@@ -1,6 +1,6 @@
 # KZAgent — Kotlin AI Coding Agent (MVP)
 
-**KZAgent** 是一个用 **Kotlin/JVM + Compose Desktop** 构建的轻量级 AI 编程助手。它通过调用 **DeepSeek API**（兼容 OpenAI 格式）的推理能力，结合本地文件、命令执行和静态网页获取工具，提供桌面聊天界面，并保留 `ask` / `chat` 命令行模式。
+**KZAgent** 是一个用 **Kotlin/JVM + Compose Desktop** 构建的轻量级 AI 编程助手。它通过调用 **DeepSeek API**（兼容 OpenAI 格式）的推理能力，结合本地文件、命令执行和静态网页获取工具，提供桌面聊天界面，并保留 `ask` / `chat` 命令行模式及 `app` 桌面启动命令。
 
 ---
 
@@ -74,13 +74,16 @@ export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 项目使用 Gradle 和 JVM 17+。如果系统默认 Java 不是 17+，请先设置 `JAVA_HOME`。
 
 ```bash
-# 启动桌面应用
+# 交互式多轮对话（等同于 chat）
 ./gradlew run
+
+# 启动桌面应用，在当前目录创建新会话
+./gradlew run --args="app"
 
 # 单次提问
 ./gradlew run --args="ask \"列出当前项目文件\""
 
-# 交互式多轮对话
+# 显式启动交互式多轮对话
 ./gradlew run --args="chat"
 
 # 携带初始问题的交互式对话
@@ -103,20 +106,23 @@ Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本�
 
 ### 桌面应用
 
-无参数运行会启动桌面窗口：
+使用 `app` 参数从命令行启动桌面窗口：
 
 ```bash
-./gradlew run
+./gradlew run --args="app"
 ```
+
+命令行启动 GUI 时会创建一个空白新会话，并把命令的启动目录设为该会话的工作区。从操作系统桌面图标启动已安装应用时则保持原有行为，加载历史并激活最近会话。
 
 桌面端支持：
 
 - 使用 Compose Fluent + Material 3 双主题桥接的 Fluent UI 桌面界面；完整 NavigationView 会在宽屏显示固定左栏、窄屏切换为紧凑浮层，并支持亮/暗主题
-- 默认使用启动目录作为工作区；切换到其他目录时会创建独立的新会话，原工作区会话及历史保持不变
+- 命令行启动 GUI 时使用启动目录作为新会话工作区；手动切换到其他目录时也会创建独立的新会话，原工作区会话及历史保持不变
 - 加载最新 `.kagent/sessions/` 历史用于续聊，支持多会话管理
 - 会话列表、消息历史、设置和审批详情等滚动区域均提供可拖拽的桌面滚动条；切换会话时消息历史自动定位到底部，聊天区还提供顶部/底部快捷跳转按钮
 - Markdown 超宽表格提供独立、可拖拽的横向滚动条，单元格内容会换行完整展示
 - NavigationView 底部提供**设置面板**入口；会话重命名和删除集中在各会话的更多菜单中
+- 设置面板可将 `kza` 安装为当前用户的全局命令；应用只维护用户级命令目录和 PATH，不修改系统级 PATH
 - 主聊天页顶部提供常驻的**审批模式下拉菜单**，可立即切换自动、手动或全部放行模式
 - 启动时自动检测配置：如未设置 API Key 将**默认跳转到设置界面**
 - 配置、历史会话和本地文件工具均在后台 IO 调度器中读写，加载或搜索大型工作区时不会阻塞桌面 UI
@@ -125,6 +131,19 @@ Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本�
 - 输入框使用 `Enter` 发送；macOS 使用 `Command + Enter` 换行，Windows 和 Linux 使用 `Ctrl + Enter` 换行
 - macOS 上关闭主窗口后应用会继续驻留；再次点击 Dock 图标可恢复原窗口和会话，使用 `Command + Q` 可完全退出
 - 点击终止会取消正在进行的 Retrofit 模型请求；若正在执行命令，还会终止对应进程树
+
+### `kza` — 用户级全局命令
+
+在已安装桌面应用的设置页点击「安装 kza 命令」。macOS 和 Linux 默认安装到 `~/.local/bin/kza`，Windows 默认安装到 `%LOCALAPPDATA%\KZAgent\bin\kza.cmd`；如果目录尚未加入 PATH，应用会为当前 shell 或 Windows 用户 PATH 添加配置，新打开的终端生效。
+
+```bash
+kza                         # 等同于 kza chat
+kza ask "分析当前项目"       # 单次提问
+kza chat                    # 交互式对话并恢复最近会话
+kza app                     # 在当前目录创建新会话并启动 GUI
+```
+
+应用可以幂等更新自己安装的命令。若 PATH 中已经存在其他来源的 `kza`，为避免覆盖用户文件，安装会停止并显示冲突路径。
 
 ### `ask` — 单次提问模式
 
@@ -136,7 +155,7 @@ Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本�
 
 ### `chat` — 交互式对话模式
 
-进入持续对话界面，可以连续追问。支持以下功能：
+无参数启动等同于 `chat`。进入持续对话界面后可以连续追问，并支持以下功能：
 
 - **断点续聊**：启动时自动加载最近一次会话历史
 - **多轮追问**：每次回答后可输入新的问题
@@ -320,7 +339,8 @@ Agent 可以通过以下工具与工作区和公开网页交互：
 
 | 模式 | 行为 |
 |------|------|
-| 桌面端 | 自动加载所有历史会话，按最近修改排序，默认激活最新会话；支持侧边栏**多会话管理**（新建、切换、重命名、删除） |
+| 桌面图标启动 | 自动加载所有历史会话，按最近修改排序，默认激活最新会话；支持侧边栏**多会话管理**（新建、切换、重命名、删除） |
+| CLI `app` | 自动创建一个空白会话，以启动目录作为工作区，并保留全部历史会话 |
 | CLI `chat` | 无初始问题时加载**最近一次会话历史**，实现断点续聊；带初始问题时从空白上下文开始 |
 | CLI `ask` | **不加载历史**，每次独立执行 |
 
@@ -341,13 +361,14 @@ src/main/kotlin/com/kzagent/kagent/
 │   ├── SessionReader.kt    # 会话历史读取
 │   └── SessionWriter.kt    # 会话历史写入
 ├── cli/
-│   └── Main.kt             # 入口：ask / chat 命令
+│   └── Main.kt             # CLI：ask / chat 命令
 ├── desktop/
 │   ├── DesktopApp.kt       # 桌面应用 UI（主界面、侧边栏、消息列表、审批弹窗）
 │   ├── SessionManager.kt   # 多会话管理（新建、切换、改名、删除）
 │   ├── SessionRepository.kt # 后台 IO 会话存储
-│   └── SettingsPanel.kt    # 设置面板（API Key、模型、URL 等 GUI 配置）
-├── Main.kt                 # 根入口：无参数桌面；有参数 CLI
+│   ├── SettingsPanel.kt    # 设置面板（API Key、模型、URL、命令安装）
+│   └── UserCommandInstaller.kt # 当前用户的 kza 命令与 PATH 安装
+├── Main.kt                 # 根入口：无参数 chat；app 桌面；ask/chat CLI
 ├── AgentRuntimeFactory.kt  # 共享运行时创建
 ├── config/
 │   └── AppConfig.kt        # 配置加载（AppConfigLoader）、保存（ConfigWriter）与密钥脱敏

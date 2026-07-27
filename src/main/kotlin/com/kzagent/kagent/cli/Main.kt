@@ -16,18 +16,14 @@ fun main(args: Array<String>) {
 }
 
 fun runCli(args: Array<String>): Int = runBlocking {
-    if (args.isEmpty()) {
-        printUsage()
-        return@runBlocking 0
-    }
-
-    val command = args[0]
+    val effectiveArgs = args.ifEmpty { arrayOf("chat") }
+    val command = effectiveArgs[0]
     val workspace = Path.of("").toAbsolutePath().normalize()
 
     try {
         when (command) {
             "ask" -> {
-                val prompt = args.drop(1).joinToString(" ")
+                val prompt = effectiveArgs.drop(1).joinToString(" ")
                 if (prompt.isBlank()) {
                     printUsage()
                     return@runBlocking 0
@@ -38,7 +34,7 @@ fun runCli(args: Array<String>): Int = runBlocking {
             }
             "chat" -> {
                 val runtime = AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy)
-                val initialPrompt = args.drop(1).joinToString(" ").takeIf { it.isNotBlank() }
+                val initialPrompt = effectiveArgs.drop(1).joinToString(" ").takeIf { it.isNotBlank() }
                 interactiveChat(workspace, runtime.agent, initialPrompt)
             }
             else -> printUsage()
@@ -119,14 +115,18 @@ fun printUsage() {
     println(
         """
         Usage:
+          ./gradlew run
+          ./gradlew run --args="app"
           ./gradlew run --args="ask \"列出当前项目文件\""
           ./gradlew run --args="chat"
           ./gradlew run --args="chat \"列出当前项目文件\""
 
         Commands:
+          app   - Launch the desktop application in a new session using the current directory.
           ask   - Ask a single question and get an answer.
           chat  - Interactive multi-turn chat. Provide an optional initial question.
                  After each answer, type your next question. Empty line to exit.
+          (no command) - Same as chat.
 
         Configuration (%APPDATA%\kzagent\config.properties on Windows,
         ~/Library/Application Support/kzagent/config.properties on macOS,

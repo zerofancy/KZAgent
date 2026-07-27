@@ -177,7 +177,10 @@ private fun applyLinuxDpiScale() {
     }
 }
 
-fun runDesktopApp() {
+fun runDesktopApp(
+    initialWorkspace: Path,
+    createStartupSession: Boolean,
+) {
     applyLinuxDpiScale()
     System.setProperty("apple.awt.application.name", "KZAgent")
     System.setProperty("apple.awt.UIElement", "false")
@@ -231,7 +234,10 @@ fun runDesktopApp() {
             desktopLog("creating ComposePanel")
             val panel = ComposePanel().apply {
                 setContent {
-                    KZAgentDesktopApp(initialWorkspace = Path.of("").toAbsolutePath().normalize())
+                    KZAgentDesktopApp(
+                        initialWorkspace = initialWorkspace,
+                        createStartupSession = createStartupSession,
+                    )
                 }
             }
             desktopLog("ComposePanel created")
@@ -446,7 +452,10 @@ private fun requestMacForeground() {
 }
 
 @Composable
-private fun KZAgentDesktopApp(initialWorkspace: Path) {
+private fun KZAgentDesktopApp(
+    initialWorkspace: Path,
+    createStartupSession: Boolean,
+) {
     var input by remember { mutableStateOf("") }
     val pendingApprovals = remember { mutableStateListOf<PendingApproval>() }
     var showDeleteConfirmIndex by remember { mutableStateOf(-1) }
@@ -457,8 +466,13 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     var savedConfig by remember { mutableStateOf<AppConfig?>(null) }
     var settingsSaving by remember { mutableStateOf(false) }
     var settingsSaveError by remember { mutableStateOf<String?>(null) }
+    var commandAvailability by remember { mutableStateOf<UserCommandAvailability?>(null) }
+    var commandInstalling by remember { mutableStateOf(false) }
+    var commandInstallMessage by remember { mutableStateOf<String?>(null) }
+    var commandInstallFailed by remember { mutableStateOf(false) }
     var sessionLoadError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val userCommandInstaller = remember { UserCommandInstaller() }
 
     // Check configuration on startup; if API key is missing, open settings
     LaunchedEffect(Unit) {
@@ -469,6 +483,12 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
         } catch (_: Exception) {
             savedConfig = null
             showSettings = true
+        }
+    }
+
+    LaunchedEffect(userCommandInstaller) {
+        commandAvailability = withContext(Dispatchers.IO) {
+            userCommandInstaller.availability()
         }
     }
 
@@ -506,9 +526,9 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
         SessionManager(approvalPolicy)
     }
 
-    LaunchedEffect(sessionManager, initialWorkspace) {
+    LaunchedEffect(sessionManager, initialWorkspace, createStartupSession) {
         try {
-            sessionManager.loadOrCreate(initialWorkspace)
+            sessionManager.loadOrCreate(initialWorkspace, createStartupSession)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -544,6 +564,36 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
     fun onApprovalModeChanged(mode: ApprovalMode) {
         val current = savedConfig ?: return
         if (current.approvalMode != mode) saveSettings(current.copy(approvalMode = mode))
+    }
+
+    fun installUserCommand() {
+        if (commandInstalling || commandAvailability?.available != true) return
+        commandInstalling = true
+        commandInstallMessage = null
+        commandInstallFailed = false
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    userCommandInstaller.install()
+                }
+                commandAvailability = withContext(Dispatchers.IO) {
+                    userCommandInstaller.availability()
+                }
+                commandInstallMessage = buildString {
+                    append("已安装到 ${result.commandPath}。")
+                    if (result.restartTerminalRequired) {
+                        append(" 请重新打开终端后使用。")
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                commandInstallFailed = true
+                commandInstallMessage = SecretRedactor.redact(error.message ?: error.toString())
+            } finally {
+                commandInstalling = false
+            }
+        }
     }
 
     // Auto-collapse tool messages when a session becomes idle
@@ -740,6 +790,15 @@ private fun KZAgentDesktopApp(initialWorkspace: Path) {
                     initialApprovalMode = savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE,
                     saving = settingsSaving,
                     saveError = settingsSaveError,
+                    commandAvailable = commandAvailability?.available == true,
+                    commandInstalled = commandAvailability?.installed == true,
+                    commandPath = commandAvailability?.commandPath?.toString(),
+                    commandUnavailableReason = commandAvailability?.unavailableReason
+                        ?: if (commandAvailability == null) "正在检测可用性..." else null,
+                    commandInstalling = commandInstalling,
+                    commandInstallMessage = commandInstallMessage,
+                    commandInstallFailed = commandInstallFailed,
+                    onInstallCommand = ::installUserCommand,
                     onSave = ::saveSettings,
                     onCancel = {
                         if (savedConfig != null) {
