@@ -28,6 +28,13 @@ internal data class UserCommandInstallResult(
     val restartTerminalRequired: Boolean,
 )
 
+private data class WindowsCliLaunchSpec(
+    val javaLauncher: Path,
+    val appDirectory: Path,
+    val mainJar: Path,
+    val mainClass: String,
+)
+
 internal fun interface WindowsUserPathStore {
     fun addIfMissing(directory: Path): Boolean
 }
@@ -63,6 +70,17 @@ internal class UserCommandInstaller(
                 commandPath = null,
                 unavailableReason = "找不到当前桌面应用的启动程序：$launcher",
             )
+        }
+        if (isWindows()) {
+            val cliFailure = runCatching { windowsCliLaunchSpec(launcher) }.exceptionOrNull()
+            if (cliFailure != null) {
+                return UserCommandAvailability(
+                    available = false,
+                    installed = false,
+                    commandPath = null,
+                    unavailableReason = cliFailure.message ?: "当前安装包不包含 Windows 命令行运行时。",
+                )
+            }
         }
 
         val target = managedCommandPath()
@@ -139,17 +157,76 @@ internal class UserCommandInstaller(
     """.trimIndent() + "\n"
 
     internal fun windowsWrapper(launcher: Path): String {
-        val escapedLauncher = launcher.toString().replace("%", "%%")
+        val escapedLauncher = batchEscape(launcher)
+        val cli = windowsCliLaunchSpec(launcher)
+        val javaLauncher = batchEscape(cli.javaLauncher)
+        val classpath = batchEscape(cli.mainJar) + ";" + batchEscape(cli.appDirectory) + "\\*"
+        // The desktop launcher uses the Windows GUI subsystem and cannot
+        // reliably inherit an interactive PowerShell console. CLI modes invoke
+        // the bundled console Java launcher directly; app mode stays detached.
         return """
             @echo off
             rem $MANAGED_MARKER
+            if "%~1"=="app" (
+              start "" "$escapedLauncher" %*
+              exit /b %ERRORLEVEL%
+            )
             if "%~1"=="" (
-              "$escapedLauncher" chat
+              "$javaLauncher" -cp "$classpath" ${cli.mainClass} chat
             ) else (
-              "$escapedLauncher" %*
+              "$javaLauncher" -cp "$classpath" ${cli.mainClass} %*
             )
             exit /b %ERRORLEVEL%
         """.trimIndent() + "\r\n"
+    }
+
+    private fun windowsCliLaunchSpec(launcher: Path): WindowsCliLaunchSpec {
+        val installationDirectory = launcher.parent
+            ?: throw IllegalStateException("找不到 Windows 应用安装目录：$launcher")
+        val javaLauncher = installationDirectory
+            .resolve("runtime")
+            .resolve("bin")
+            .resolve("java.exe")
+        check(Files.isRegularFile(javaLauncher)) {
+            "当前安装包不包含 Windows 命令行运行时，请重新安装最新版 KZAgent：$javaLauncher"
+        }
+
+        val appDirectory = installationDirectory.resolve("app")
+        val launcherName = launcher.fileName.toString().substringBeforeLast('.')
+        val configPath = appDirectory.resolve("$launcherName.cfg")
+        check(Files.isRegularFile(configPath)) {
+            "找不到 Windows 启动配置：$configPath"
+        }
+        val configLines = Files.readAllLines(configPath, StandardCharsets.UTF_8)
+        val mainClass = configLines
+            .firstOrNull { it.startsWith("app.mainclass=") }
+            ?.substringAfter('=')
+            ?.trim()
+            .orEmpty()
+        check(mainClass.isNotEmpty()) {
+            "Windows 启动配置缺少 app.mainclass：$configPath"
+        }
+        val mainJarSetting = configLines
+            .firstOrNull { it.startsWith("app.classpath=") }
+            ?.substringAfter('=')
+            ?.trim()
+            .orEmpty()
+        val appDirPrefix = "\$APPDIR"
+        check(mainJarSetting.startsWith(appDirPrefix)) {
+            "Windows 启动配置缺少主程序 classpath：$configPath"
+        }
+        val mainJar = appDirectory.resolve(
+            mainJarSetting.removePrefix(appDirPrefix).trimStart('\\', '/'),
+        )
+        check(Files.isRegularFile(mainJar)) {
+            "找不到 Windows 命令行主程序：$mainJar"
+        }
+        return WindowsCliLaunchSpec(
+            javaLauncher = javaLauncher,
+            appDirectory = appDirectory,
+            mainJar = mainJar,
+            mainClass = mainClass,
+        )
     }
 
     private fun findCommandOnPath(): Path? {
@@ -277,6 +354,8 @@ internal class UserCommandInstaller(
     }
 
     private fun isWindows(): Boolean = osName.lowercase().contains("windows")
+
+    private fun batchEscape(path: Path): String = path.toString().replace("%", "%%")
 
     private fun shellQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
 

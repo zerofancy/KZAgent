@@ -1,5 +1,6 @@
 package com.kzagent.kagent.desktop
 
+import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
@@ -58,9 +59,11 @@ class UserCommandInstallerTest {
         assertContains(wrapper, "if [ \"${'$'}#\" -eq 0 ]")
         assertContains(wrapper, "set -- chat")
         assertContains(wrapper, "exec '${launcher}' \"${'$'}@\"")
-        assertTrue(
-            Files.getPosixFilePermissions(command).contains(PosixFilePermission.OWNER_EXECUTE),
-        )
+        if ("posix" in FileSystems.getDefault().supportedFileAttributeViews()) {
+            assertTrue(
+                Files.getPosixFilePermissions(command).contains(PosixFilePermission.OWNER_EXECUTE),
+            )
+        }
         val profileContent = Files.readString(profile)
         assertContains(profileContent, "# existing profile")
         assertEquals(1, Regex("KZAgent kza PATH >>>").findAll(profileContent).count())
@@ -148,12 +151,47 @@ class UserCommandInstallerTest {
     }
 
     @Test
+    fun windowsPackageWithoutConsoleRuntimeIsUnavailable() {
+        val root = Files.createTempDirectory("kza-windows-missing-runtime")
+        val launcher = root.resolve("KZAgent.exe")
+        Files.writeString(launcher, "launcher")
+        val installer = UserCommandInstaller(
+            osName = "Windows 11",
+            userHome = root.resolve("home"),
+            localAppData = root.resolve("local-app-data"),
+            pathValue = "",
+            shell = "",
+            packagedAppPath = launcher,
+        )
+
+        val availability = installer.availability()
+
+        assertFalse(availability.available)
+        assertFalse(availability.installed)
+        assertContains(availability.unavailableReason.orEmpty(), "Windows 命令行运行时")
+    }
+
+    @Test
     fun windowsInstallUsesPerUserDirectoryAndUpdatesUserPath() {
         val root = Files.createTempDirectory("kza-windows")
         val home = root.resolve("home").also(Files::createDirectories)
         val localAppData = root.resolve("local-app-data").also(Files::createDirectories)
         val launcher = root.resolve("KZAgent.exe")
         Files.writeString(launcher, "launcher")
+        val runtimeBin = root.resolve("runtime").resolve("bin").also(Files::createDirectories)
+        val javaLauncher = runtimeBin.resolve("java.exe")
+        Files.writeString(javaLauncher, "java")
+        val appDirectory = root.resolve("app").also(Files::createDirectories)
+        val mainJar = appDirectory.resolve("KZAgent-0.1.0.jar")
+        Files.writeString(mainJar, "main")
+        Files.writeString(
+            appDirectory.resolve("KZAgent.cfg"),
+            """
+            [Application]
+            app.classpath=${'$'}APPDIR\KZAgent-0.1.0.jar
+            app.mainclass=com.kzagent.kagent.MainKt
+            """.trimIndent(),
+        )
         val pathUpdates = mutableListOf<Path>()
         val installer = UserCommandInstaller(
             osName = "Windows 11",
@@ -176,7 +214,16 @@ class UserCommandInstallerTest {
         assertEquals(listOf(expected.parent), pathUpdates)
         val wrapper = Files.readString(expected)
         assertContains(wrapper, "rem KZAgent managed command v1")
-        assertContains(wrapper, "\"$launcher\" chat")
-        assertContains(wrapper, "\"$launcher\" %*")
+        assertContains(wrapper, "if \"%~1\"==\"app\"")
+        assertContains(wrapper, "start \"\" \"$launcher\" %*")
+        val classpath = "$mainJar;$appDirectory\\*"
+        assertContains(
+            wrapper,
+            "\"$javaLauncher\" -cp \"$classpath\" com.kzagent.kagent.MainKt chat",
+        )
+        assertContains(
+            wrapper,
+            "\"$javaLauncher\" -cp \"$classpath\" com.kzagent.kagent.MainKt %*",
+        )
     }
 }

@@ -136,6 +136,8 @@ Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本�
 
 在已安装桌面应用的设置页点击「安装 kza 命令」。macOS 和 Linux 默认安装到 `~/.local/bin/kza`，Windows 默认安装到 `%LOCALAPPDATA%\KZAgent\bin\kza.cmd`；如果目录尚未加入 PATH，应用会为当前 shell 或 Windows 用户 PATH 添加配置，新打开的终端生效。
 
+Windows 上的 CLI 子命令使用安装包内的控制台 Java 启动器，以保持 PowerShell/CMD 的标准输入输出；`kza app` 仍使用桌面启动器异步打开窗口。
+
 ```bash
 kza                         # 等同于 kza chat
 kza ask "分析当前项目"       # 单次提问

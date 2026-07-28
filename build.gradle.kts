@@ -3,6 +3,8 @@ import org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask
 import org.gradle.api.tasks.Exec
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 plugins {
     kotlin("jvm") version "2.4.0"
@@ -133,11 +135,31 @@ if (isWindows) {
         val installerFile = layout.buildDirectory.file(
             "compose/binaries/$binaryVariant/exe/KZAgent-$windowsPackageVersion.exe",
         )
+        val prepareCliRuntime = tasks.register("${customTaskName}CliRuntime") {
+            dependsOn(appImageTaskName)
+            val source = File(System.getProperty("java.home"), "bin/java.exe")
+            val destination = appImageDir.map {
+                it.file("runtime/bin/java.exe")
+            }
+            inputs.file(source)
+            outputs.file(destination)
+
+            doLast {
+                check(source.isFile) { "java.exe was not found at $source" }
+                val output = destination.get().asFile
+                output.parentFile.mkdirs()
+                Files.copy(
+                    source.toPath(),
+                    output.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            }
+        }
 
         val customTask = tasks.register<Exec>(customTaskName) {
             group = "compose desktop"
             description = "Builds a Windows EXE installer that supports same-version upgrades."
-            dependsOn(appImageTaskName)
+            dependsOn(prepareCliRuntime)
 
             inputs.dir(appImageDir)
             inputs.dir(windowsInstallerResources)
