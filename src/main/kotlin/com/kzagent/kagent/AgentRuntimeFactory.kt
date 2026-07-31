@@ -15,15 +15,21 @@ import com.kzagent.kagent.tools.LocalTools
 import com.kzagent.kagent.tools.ModeApprovalPolicy
 import com.kzagent.kagent.tools.ModelApprovalAgent
 import com.kzagent.kagent.tools.PathGuard
+import com.kzagent.kagent.tools.TodoTools
 import com.kzagent.kagent.tools.WebContentExtractor
 import com.kzagent.kagent.tools.WebPageService
+import com.kzagent.kagent.todo.TodoFiles
+import com.kzagent.kagent.todo.TodoSnapshot
+import com.kzagent.kagent.todo.TodoStore
 import java.nio.file.Path
+import kotlinx.coroutines.flow.StateFlow
 
 data class AgentRuntime(
     val workspace: Path,
     val agent: CodingAgent,
     val sessionReader: SessionReader,
     val contextWindowSize: Int,
+    val todoState: StateFlow<TodoSnapshot>,
 )
 
 object AgentRuntimeFactory {
@@ -52,14 +58,16 @@ object AgentRuntimeFactory {
         } else {
             SessionWriter.createNew(sessionsDir)
         }
+        val todoStore = TodoStore(TodoFiles.forSession(writer.sessionPath))
+        val localTools = LocalTools(
+            pathGuard = pathGuard,
+            approvalPolicy = effectiveApprovalPolicy,
+            sensitivePathProtection = config.sensitivePathProtection,
+            webPageService = WebPageService(WebContentExtractor(model)),
+        ).registry()
         val agent = CodingAgent(
             model = model,
-            tools = LocalTools(
-                pathGuard = pathGuard,
-                approvalPolicy = effectiveApprovalPolicy,
-                sensitivePathProtection = config.sensitivePathProtection,
-                webPageService = WebPageService(WebContentExtractor(model)),
-            ).registry(),
+            tools = localTools + TodoTools(todoStore).registry(),
             promptBuilder = PromptBuilder(
                 workspace = pathGuard.root,
                 userPrompt = config.userPrompt,
@@ -69,12 +77,14 @@ object AgentRuntimeFactory {
             observer = observer,
             instructionsLoader = instructionsLoader,
             contextWindowSize = config.contextWindowSize,
+            todoStore = todoStore,
         )
         return AgentRuntime(
             workspace = pathGuard.root,
             agent = agent,
             sessionReader = SessionReader(sessionsDir),
             contextWindowSize = config.contextWindowSize,
+            todoState = todoStore.state,
         )
     }
 }

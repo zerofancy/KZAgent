@@ -6,6 +6,9 @@ import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.ApprovalDecision
 import com.kzagent.kagent.tools.ApprovalResult
 import com.kzagent.kagent.tools.ApprovalSource
+import com.kzagent.kagent.todo.TodoFiles
+import com.kzagent.kagent.todo.TodoOperation
+import com.kzagent.kagent.todo.TodoStore
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
@@ -258,6 +261,30 @@ class SessionManagerTest {
         assertEquals(1, repository.loadCalls)
         assertEquals(1, manager.activeSessionIndex)
         assertTrue(manager.sessions.zip(sessionObjects).all { (actual, expected) -> actual === expected })
+    }
+
+    @Test
+    fun deletingSessionAlsoDeletesItsTodoSidecar() = runBlocking {
+        val workspace = testWorkspace()
+        val sessionsRoot = Files.createTempDirectory("kagent-session-todo-delete")
+        val manager = SessionManager(denyAll, sessionsRoot)
+        manager.loadOrCreate(workspace)
+        val original = manager.activeSession()
+        val todoPath = TodoFiles.forSession(original.sessionFile)
+        TodoStore(todoPath).applyOperations(
+            listOf(
+                TodoOperation(
+                    type = TodoOperation.Type.CREATE,
+                    id = "task",
+                    content = "Task",
+                ),
+            ),
+        )
+        manager.addNewSession()
+
+        assertTrue(Files.exists(todoPath))
+        assertTrue(manager.deleteSession(manager.sessions.indexOf(original)))
+        assertFalse(Files.exists(todoPath))
     }
 
     private fun testWorkspace(): Path {

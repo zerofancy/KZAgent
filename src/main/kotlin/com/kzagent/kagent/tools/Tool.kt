@@ -44,6 +44,9 @@ class ToolRegistry(tools: List<ToolDefinition>) {
 
     fun get(name: String): ToolDefinition? = byName[name]
 
+    operator fun plus(other: ToolRegistry): ToolRegistry =
+        ToolRegistry(byName.values + other.byName.values)
+
     fun toolSchemas(): List<JsonObject> = byName.values.map { tool ->
         buildJsonObject {
             put("type", "function")

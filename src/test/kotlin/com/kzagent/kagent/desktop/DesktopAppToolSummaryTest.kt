@@ -37,6 +37,25 @@ class DesktopAppToolSummaryTest {
     }
 
     @Test
+    fun formatsTodoToolSummaries() {
+        val args = buildJsonObject {
+            put("operations", kotlinx.serialization.json.buildJsonArray {
+                add(buildJsonObject {
+                    put("operation", "create")
+                    put("id", "one")
+                })
+                add(buildJsonObject {
+                    put("operation", "delete")
+                    put("id", "two")
+                })
+            })
+        }.toString()
+
+        assertEquals("查看 Todo", formatToolCallSummary("todo_read", "{}"))
+        assertEquals("更新 Todo（2 项操作）", formatToolCallSummary("todo_write", args))
+    }
+
+    @Test
     fun scopedInstructionsAreHiddenFromConversationDisplay() {
         val messages = listOf(
             AgentMessage.ScopedInstruction("src/AGENTS.md", "src", "guidance"),

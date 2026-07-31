@@ -11,10 +11,12 @@ import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalPolicy
+import com.kzagent.kagent.todo.TodoSnapshot
 import java.nio.file.Path
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -32,6 +34,7 @@ class SessionData(
     currentJob: Job? = null,
     status: String = "正在加载...",
     error: String? = null,
+    todoSnapshot: TodoSnapshot = TodoSnapshot(),
 ) {
     var name by mutableStateOf(name)
     var titleRevision: Int = 0
@@ -43,6 +46,7 @@ class SessionData(
     var currentJob by mutableStateOf(currentJob)
     var status by mutableStateOf(status)
     var error by mutableStateOf(error)
+    var todoSnapshot by mutableStateOf(todoSnapshot)
 
     fun updateName(name: String) {
         this.name = name
@@ -157,7 +161,7 @@ class SessionManager internal constructor(
     suspend fun deleteSession(index: Int): Boolean {
         if (sessions.size <= 1 || index !in sessions.indices) return false
         val session = sessions[index]
-        session.currentJob?.cancel()
+        session.currentJob?.cancelAndJoin()
         repository.delete(session.sessionFile)
         sessions.removeAt(index)
         if (activeSessionIndex >= sessions.size) {
@@ -181,6 +185,7 @@ class SessionManager internal constructor(
             )
         }
         session.runtime = runtime
+        session.todoSnapshot = runtime.todoState.value
     }
 
     private fun toSessionData(stored: StoredSession): SessionData = SessionData(
