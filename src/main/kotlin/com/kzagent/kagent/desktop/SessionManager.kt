@@ -95,6 +95,16 @@ class SessionManager internal constructor(
         activeSessionIndex = 0
     }
 
+    /** Creates and activates a fresh session even when [workspace] is already active. */
+    suspend fun startNewSessionInWorkspace(workspace: Path): SessionData {
+        val normalized = workspace.toAbsolutePath().normalize()
+        val stored = repository.create(normalized, "新会话 ${sessions.size + 1}")
+        val created = toSessionData(stored)
+        sessions.add(0, created)
+        activeSessionIndex = 0
+        return created
+    }
+
     /**
      * Starts a fresh session for a different workspace.
      *
@@ -107,11 +117,7 @@ class SessionManager internal constructor(
         val normalized = workspace.toAbsolutePath().normalize()
         if (normalized == session.workspace) return session
 
-        val stored = repository.create(normalized, "新会话 ${sessions.size + 1}")
-        val created = toSessionData(stored)
-        sessions.add(0, created)
-        activeSessionIndex = 0
-        return created
+        return startNewSessionInWorkspace(normalized)
     }
 
     fun switchTo(index: Int) {

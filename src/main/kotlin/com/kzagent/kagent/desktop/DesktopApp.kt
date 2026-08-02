@@ -196,12 +196,24 @@ fun runDesktopApp(
     if (openPackagedAppBeforeAwt()) {
         exitProcess(0)
     }
+    val initialRequest = desktopLaunchRequest(initialWorkspace, createStartupSession)
+    val instanceStart = DesktopSingleInstanceCoordinator.startOrForward(
+        lockFile = AppDataDir.appDir().resolve("desktop-instance.lock"),
+        request = initialRequest,
+    )
+    if (instanceStart is DesktopInstanceStart.Forwarded) {
+        desktopLog("forwarded launch request to the existing GUI")
+        return
+    }
+    val instanceCoordinator = (instanceStart as DesktopInstanceStart.Primary).coordinator
     val closed = CountDownLatch(1)
     val initialized = CountDownLatch(1)
     val windowShown = AtomicBoolean(false)
     val windowLifecycle = desktopWindowLifecycle(System.getProperty("os.name"))
     var startupFailure: Throwable? = null
-    startPackagedAppFallbackWatchdog(windowShown)
+    startPackagedAppFallbackWatchdog(windowShown) {
+        instanceCoordinator.close()
+    }
     SwingUtilities.invokeLater {
         try {
             desktopLog("creating JFrame")
@@ -242,6 +254,12 @@ fun runDesktopApp(
                     KZAgentDesktopApp(
                         initialWorkspace = initialWorkspace,
                         createStartupSession = createStartupSession,
+                        instanceCoordinator = instanceCoordinator,
+                        activateWindow = {
+                            SwingUtilities.invokeLater {
+                                restoreWindowInForeground(frame)
+                            }
+                        },
                     )
                 }
             }
@@ -253,6 +271,7 @@ fun runDesktopApp(
         } catch (throwable: Throwable) {
             val message = throwable.message ?: throwable::class.qualifiedName ?: throwable.toString()
             desktopLog("direct window failed: $message", throwable)
+            instanceCoordinator.close()
             if (!openPackagedAppFallback("direct window failed")) {
                 startupFailure = throwable
                 closed.countDown()
@@ -261,10 +280,14 @@ fun runDesktopApp(
             initialized.countDown()
         }
     }
-    initialized.await()
-    startupFailure?.let { throw it }
-    closed.await()
-    desktopLog("closed")
+    try {
+        initialized.await()
+        startupFailure?.let { throw it }
+        closed.await()
+        desktopLog("closed")
+    } finally {
+        instanceCoordinator.close()
+    }
 }
 
 internal enum class DesktopWindowLifecycle {
@@ -315,12 +338,19 @@ private fun loadAppIcon(): Image? = runCatching {
     desktopLog("failed to load application icon: ${it.message}", it)
 }.getOrNull()
 
-private fun startPackagedAppFallbackWatchdog(windowShown: AtomicBoolean) {
+private fun startPackagedAppFallbackWatchdog(
+    windowShown: AtomicBoolean,
+    beforeFallback: () -> Unit,
+) {
     if (System.getProperty("kzagent.allowOpenFallback") != "true") return
     Thread {
         Thread.sleep(5_000)
         if (windowShown.get()) return@Thread
-        openPackagedAppFallback("window was not shown")
+        beforeFallback()
+        if (!openPackagedAppFallback("window was not shown")) {
+            desktopLog("window was not shown and packaged app fallback failed")
+            exitProcess(1)
+        }
     }.apply {
         isDaemon = true
         name = "kzagent-open-app-fallback"
@@ -384,7 +414,7 @@ private fun packagedAppPath(): Path =
             ?: "build/compose/binaries/main/app/KZAgent.app",
     ).toAbsolutePath().normalize()
 
-private fun desktopLog(message: String, throwable: Throwable? = null) {
+internal fun desktopLog(message: String, throwable: Throwable? = null) {
     val line = "${OffsetDateTime.now()} KZAgent desktop: ${SecretRedactor.redact(message)}"
     println(line)
     val logPath = desktopLogPath()
@@ -460,6 +490,8 @@ private fun requestMacForeground() {
 private fun KZAgentDesktopApp(
     initialWorkspace: Path,
     createStartupSession: Boolean,
+    instanceCoordinator: DesktopSingleInstanceCoordinator,
+    activateWindow: () -> Unit,
 ) {
     var input by remember { mutableStateOf("") }
     val pendingApprovals = remember { mutableStateListOf<PendingApproval>() }
@@ -538,6 +570,25 @@ private fun KZAgentDesktopApp(
             throw error
         } catch (error: Exception) {
             sessionLoadError = SecretRedactor.redact(error.message ?: error.toString())
+        }
+
+        instanceCoordinator.requests.collect { request ->
+            activateWindow()
+            if (request !is DesktopLaunchRequest.OpenWorkspace) return@collect
+
+            try {
+                check(sessionManager.initialized) { "会话列表尚未成功初始化。" }
+                val workspace = withContext(Dispatchers.IO) {
+                    requireReadableWorkspace(request.workspace)
+                }
+                sessionManager.startNewSessionInWorkspace(workspace)
+                showSettings = false
+                sessionLoadError = null
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                sessionLoadError = SecretRedactor.redact(error.message ?: error.toString())
+            }
         }
     }
 

@@ -6,6 +6,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import java.nio.file.Path
+import com.kzagent.kagent.desktop.DesktopLaunchRequest
+import com.kzagent.kagent.desktop.desktopLaunchRequest
 
 class LaunchModeResolverTest {
     @Test
@@ -54,5 +56,19 @@ class LaunchModeResolverTest {
         )
         assertTrue(ask.args.contentEquals(arrayOf("ask", "hello")))
         assertTrue(chat.args.contentEquals(arrayOf("chat")))
+    }
+
+    @Test
+    fun desktopLaunchIntentDistinguishesAppFromPackagedIconRelaunch() {
+        val workspace = Path.of("build", "forwarded-workspace").toAbsolutePath().normalize()
+
+        assertEquals(
+            DesktopLaunchRequest.OpenWorkspace(workspace),
+            desktopLaunchRequest(workspace, createStartupSession = true),
+        )
+        assertEquals(
+            DesktopLaunchRequest.Activate,
+            desktopLaunchRequest(workspace, createStartupSession = false),
+        )
     }
 }

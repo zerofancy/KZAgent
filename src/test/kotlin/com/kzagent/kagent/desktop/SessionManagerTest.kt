@@ -196,6 +196,41 @@ class SessionManagerTest {
     }
 
     @Test
+    fun forwardedLaunchAlwaysCreatesANewSessionForTheCurrentWorkspace() = runBlocking {
+        val workspace = testWorkspace()
+        val repository = InMemorySessionRepository(
+            listOf(
+                StoredSession(
+                    id = "first",
+                    name = "First",
+                    workspace = workspace,
+                    sessionFile = workspace.resolve("first.jsonl"),
+                    history = listOf(AgentMessage.User("keep me")),
+                    usedTokens = 42,
+                ),
+            ),
+        )
+        val manager = SessionManager(
+            approvalPolicy = denyAll,
+            sessionsRoot = workspace,
+            repository = repository,
+        )
+        manager.loadOrCreate(workspace)
+        val original = manager.activeSession()
+
+        val created = manager.startNewSessionInWorkspace(workspace)
+
+        assertEquals(2, manager.sessions.size)
+        assertSame(created, manager.activeSession())
+        assertEquals(workspace, created.workspace)
+        assertTrue(created.conversationHistory.isEmpty())
+        assertTrue(created.messages.isEmpty())
+        assertEquals(listOf(AgentMessage.User("keep me")), original.conversationHistory)
+        assertEquals(42, original.usedTokens)
+        assertEquals(1, repository.createCalls)
+    }
+
+    @Test
     fun failedWorkspaceSessionCreationLeavesTheOriginalSessionUntouched() = runBlocking {
         val firstWorkspace = testWorkspace()
         val secondWorkspace = testWorkspace()
