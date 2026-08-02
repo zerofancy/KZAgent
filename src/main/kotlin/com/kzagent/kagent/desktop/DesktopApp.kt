@@ -34,6 +34,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -64,6 +65,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -84,6 +86,9 @@ import com.kzagent.kagent.tools.ApprovalSource
 import com.kzagent.kagent.tools.actionLabel
 import com.kzagent.kagent.tools.details
 import com.kzagent.kagent.tools.ToolResult
+import com.kzagent.kagent.todo.TodoItem
+import com.kzagent.kagent.todo.TodoSnapshot
+import com.kzagent.kagent.todo.TodoStatus
 import io.github.vinceglb.filekit.FileKit
 import io.github.vinceglb.filekit.PlatformFile
 import io.github.vinceglb.filekit.dialogs.openDirectoryPicker
@@ -651,6 +656,8 @@ private fun KZAgentDesktopApp(
                         else -> "检查文件读取权限..."
                     }
                     "fetch_web_page" -> "正在获取并解析网页..."
+                    "todo_read" -> "正在查看 Todo..."
+                    "todo_write" -> "正在更新 Todo..."
                     else -> "执行工具：$name"
                 }
             }
@@ -688,6 +695,13 @@ private fun KZAgentDesktopApp(
             )
             session.error = SecretRedactor.redact(runtimeErrorMessage(error))
             session.status = "配置不可用"
+        }
+    }
+    LaunchedEffect(activeSession?.id, activeSession?.runtime) {
+        val session = activeSession ?: return@LaunchedEffect
+        val runtime = session.runtime ?: return@LaunchedEffect
+        runtime.todoState.collect { snapshot ->
+            session.todoSnapshot = snapshot
         }
     }
 
@@ -816,88 +830,114 @@ private fun KZAgentDesktopApp(
                 }
             } else {
                 val session = sessionManager.activeSession()
-                Column(
+                var showTodoDialog by remember(session.id) { mutableStateOf(false) }
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 20.dp, vertical = 14.dp),
                 ) {
-                    Header(
-                        workspace = session.workspace,
-                        status = session.status,
-                        isBusy = session.isBusy,
-                        contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000),
-                        approvalMode = savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE,
-                        onApprovalModeChanged = { onApprovalModeChanged(it) },
-                        onCompressContext = { showCompressConfirm = true },
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    session.error?.let {
-                        ErrorBanner(it)
-                        Spacer(Modifier.height(12.dp))
-                    }
-                    MessageList(
-                        sessionId = session.id,
-                        messages = session.messages,
-                        workspace = session.workspace,
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Composer(
-                        input = input,
-                        isBusy = session.isBusy,
-                        enabled = session.runtime != null,
-                        onInputChange = { input = it },
-                        onSend = {
-                            val prompt = input.trim()
-                            if (prompt.isEmpty()) return@Composer
-                            val currentRuntime = session.runtime ?: return@Composer
-                            input = ""
-                            session.isBusy = true
-                            session.error = null
-                            session.status = "准备发送..."
-                            session.messages.add(DisplayMessage("user", prompt))
-                            val sessionId = session.id
-                            val titleRevision = session.titleRevision
-                            val job = scope.launch {
-                                try {
-                                    val result = currentRuntime.agent.runConversation(prompt, session.conversationHistory)
-                                    session.conversationHistory = result.history
-                                    session.usedTokens = result.totalTokens
-                                    session.status = "就绪"
-                                    // Auto-title on first user message
-                                    if (result.history.count { it is AgentMessage.User } == 1) {
-                                        scope.launch {
+                    val showPersistentTodo = shouldShowPersistentTodoPanel(maxWidth)
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        Header(
+                            workspace = session.workspace,
+                            status = session.status,
+                            isBusy = session.isBusy,
+                            contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000),
+                            approvalMode = savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE,
+                            todoSnapshot = session.todoSnapshot,
+                            showTodoButton = !showPersistentTodo,
+                            onShowTodo = { showTodoDialog = true },
+                            onApprovalModeChanged = { onApprovalModeChanged(it) },
+                            onCompressContext = { showCompressConfirm = true },
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        session.error?.let {
+                            ErrorBanner(it)
+                            Spacer(Modifier.height(12.dp))
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                MessageList(
+                                    sessionId = session.id,
+                                    messages = session.messages,
+                                    workspace = session.workspace,
+                                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                Composer(
+                                    input = input,
+                                    isBusy = session.isBusy,
+                                    enabled = session.runtime != null,
+                                    onInputChange = { input = it },
+                                    onSend = {
+                                        val prompt = input.trim()
+                                        if (prompt.isEmpty()) return@Composer
+                                        val currentRuntime = session.runtime ?: return@Composer
+                                        input = ""
+                                        session.isBusy = true
+                                        session.error = null
+                                        session.status = "准备发送..."
+                                        session.messages.add(DisplayMessage("user", prompt))
+                                        val sessionId = session.id
+                                        val titleRevision = session.titleRevision
+                                        val job = scope.launch {
                                             try {
-                                                val title = currentRuntime.agent.generateTitle(prompt)
-                                                sessionManager.renameSessionIfRevisionMatches(
-                                                    sessionId,
-                                                    titleRevision,
-                                                    title,
-                                                )
-                                            } catch (error: CancellationException) {
-                                                throw error
-                                            } catch (_: Exception) {
-                                                // Title generation is best-effort and does not fail the user request.
+                                                val result = currentRuntime.agent.runConversation(prompt, session.conversationHistory)
+                                                session.conversationHistory = result.history
+                                                session.usedTokens = result.totalTokens
+                                                session.status = "就绪"
+                                                // Auto-title on first user message
+                                                if (result.history.count { it is AgentMessage.User } == 1) {
+                                                    scope.launch {
+                                                        try {
+                                                            val title = currentRuntime.agent.generateTitle(prompt)
+                                                            sessionManager.renameSessionIfRevisionMatches(
+                                                                sessionId,
+                                                                titleRevision,
+                                                                title,
+                                                            )
+                                                        } catch (error: CancellationException) {
+                                                            throw error
+                                                        } catch (_: Exception) {
+                                                            // Title generation is best-effort and does not fail the user request.
+                                                        }
+                                                    }
+                                                }
+                                            } catch (_: CancellationException) {
+                                                session.status = "已终止"
+                                            } catch (e: Exception) {
+                                                session.error = SecretRedactor.redact(e.message ?: e.toString())
+                                                session.status = "请求失败"
+                                            } finally {
+                                                session.isBusy = false
+                                                session.currentJob = null
                                             }
                                         }
-                                    }
-                                } catch (_: CancellationException) {
-                                    session.status = "已终止"
-                                } catch (e: Exception) {
-                                    session.error = SecretRedactor.redact(e.message ?: e.toString())
-                                    session.status = "请求失败"
-                                } finally {
-                                    session.isBusy = false
-                                    session.currentJob = null
-                                }
+                                        session.currentJob = job
+                                    },
+                                    onTerminate = {
+                                        session.currentJob?.cancel()
+                                        session.status = "正在终止..."
+                                    },
+                                )
                             }
-                            session.currentJob = job
-                        },
-                        onTerminate = {
-                            session.currentJob?.cancel()
-                            session.status = "正在终止..."
-                        },
-                    )
+                            if (showPersistentTodo) {
+                                TodoPanel(
+                                    snapshot = session.todoSnapshot,
+                                    modifier = Modifier.width(TodoPanelWidth).fillMaxHeight(),
+                                )
+                            }
+                        }
+                    }
+                    if (!showPersistentTodo && showTodoDialog) {
+                        TodoDialog(
+                            snapshot = session.todoSnapshot,
+                            onDismiss = { showTodoDialog = false },
+                        )
+                    }
                 }
             }
         }
@@ -1165,6 +1205,9 @@ private fun Header(
     isBusy: Boolean,
     contextPercent: Int,
     approvalMode: ApprovalMode,
+    todoSnapshot: TodoSnapshot,
+    showTodoButton: Boolean,
+    onShowTodo: () -> Unit,
     onApprovalModeChanged: (ApprovalMode) -> Unit,
     onCompressContext: () -> Unit,
 ) {
@@ -1182,6 +1225,9 @@ private fun Header(
                     approvalMode = approvalMode,
                     contextPercent = contextPercent,
                     isBusy = isBusy,
+                    todoSnapshot = todoSnapshot,
+                    showTodoButton = showTodoButton,
+                    onShowTodo = onShowTodo,
                     onApprovalModeChanged = onApprovalModeChanged,
                     onCompressContext = onCompressContext,
                 )
@@ -1201,6 +1247,9 @@ private fun Header(
                     approvalMode = approvalMode,
                     contextPercent = contextPercent,
                     isBusy = isBusy,
+                    todoSnapshot = todoSnapshot,
+                    showTodoButton = showTodoButton,
+                    onShowTodo = onShowTodo,
                     onApprovalModeChanged = onApprovalModeChanged,
                     onCompressContext = onCompressContext,
                     modifier = Modifier.align(Alignment.End),
@@ -1234,6 +1283,9 @@ private fun HeaderActions(
     approvalMode: ApprovalMode,
     contextPercent: Int,
     isBusy: Boolean,
+    todoSnapshot: TodoSnapshot,
+    showTodoButton: Boolean,
+    onShowTodo: () -> Unit,
     onApprovalModeChanged: (ApprovalMode) -> Unit,
     onCompressContext: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1247,6 +1299,15 @@ private fun HeaderActions(
             approvalMode = approvalMode,
             onApprovalModeChanged = onApprovalModeChanged,
         )
+        if (showTodoButton) {
+            OutlinedButton(
+                onClick = onShowTodo,
+                modifier = Modifier.height(32.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+            ) {
+                Text(todoButtonLabel(todoSnapshot), maxLines = 1)
+            }
+        }
         Button(
             onClick = onCompressContext,
             enabled = !isBusy,
@@ -1406,6 +1467,164 @@ private fun ErrorBanner(message: String) {
             )
         }
     }
+}
+
+internal val TodoPanelBreakpoint = 900.dp
+internal val TodoPanelWidth = 300.dp
+
+internal data class TodoDisplayItem(
+    val item: TodoItem,
+    val depth: Int,
+)
+
+internal fun shouldShowPersistentTodoPanel(width: androidx.compose.ui.unit.Dp): Boolean =
+    width >= TodoPanelBreakpoint
+
+internal fun flattenTodoItems(items: List<TodoItem>): List<TodoDisplayItem> {
+    val children = items.groupBy { it.parentId }
+    return buildList {
+        fun append(parentId: String?, depth: Int) {
+            children[parentId].orEmpty().forEach { item ->
+                add(TodoDisplayItem(item, depth))
+                append(item.id, depth + 1)
+            }
+        }
+        append(parentId = null, depth = 0)
+    }
+}
+
+internal fun todoProgressFraction(snapshot: TodoSnapshot): Float =
+    if (snapshot.totalLeafCount == 0) {
+        0f
+    } else {
+        snapshot.completedLeafCount.toFloat() / snapshot.totalLeafCount
+    }
+
+internal fun todoButtonLabel(snapshot: TodoSnapshot): String =
+    if (snapshot.error != null) {
+        "Todo !"
+    } else {
+        "Todo ${snapshot.completedLeafCount}/${snapshot.totalLeafCount}"
+    }
+
+@Composable
+private fun TodoPanel(
+    snapshot: TodoSnapshot,
+    modifier: Modifier = Modifier,
+) {
+    val scrollState = rememberScrollState()
+    Box(
+        modifier = modifier
+            .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.large)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+        ) {
+            Text("Todo 进度", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "${snapshot.completedLeafCount}/${snapshot.totalLeafCount} 个叶子任务已完成",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            LinearProgressIndicator(
+                progress = { todoProgressFraction(snapshot) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(14.dp))
+
+            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(scrollState)
+                        .padding(end = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    when {
+                        snapshot.error != null -> Text(
+                            text = snapshot.error,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+
+                        snapshot.items.isEmpty() -> Text(
+                            text = "当前会话还没有 Todo。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        else -> flattenTodoItems(snapshot.items).forEach { display ->
+                            TodoItemRow(display)
+                        }
+                    }
+                }
+                VerticalScrollbar(
+                    adapter = rememberScrollbarAdapter(scrollState),
+                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodoItemRow(display: TodoDisplayItem) {
+    val completed = display.item.status == TodoStatus.COMPLETED
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = (display.depth * 14).dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = if (completed) "✓" else "○",
+            color = if (completed) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            fontWeight = FontWeight.SemiBold,
+        )
+        SelectionContainer {
+            Text(
+                text = display.item.content,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (completed) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                textDecoration = if (completed) TextDecoration.LineThrough else TextDecoration.None,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TodoDialog(
+    snapshot: TodoSnapshot,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Todo") },
+        text = {
+            TodoPanel(
+                snapshot = snapshot,
+                modifier = Modifier.widthIn(min = 420.dp, max = 560.dp).height(460.dp),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        },
+    )
 }
 
 @Composable
@@ -1946,6 +2165,15 @@ internal fun formatToolCallSummary(name: String, argsJson: String): String {
     } else if (name == "fetch_web_page") {
         val url = extractArg(argsJson, "url")
         "获取网页: $url"
+    } else if (name == "todo_read") {
+        "查看 Todo"
+    } else if (name == "todo_write") {
+        val operationCount = runCatching {
+            Json.parseToJsonElement(argsJson).jsonObject["operations"]?.let {
+                it as? kotlinx.serialization.json.JsonArray
+            }?.size
+        }.getOrNull()
+        if (operationCount == null) "更新 Todo" else "更新 Todo（$operationCount 项操作）"
     } else {
         "$name($argsJson)"
     }

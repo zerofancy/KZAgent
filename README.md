@@ -127,6 +127,7 @@ Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本�
 - 启动时自动检测配置：如未设置 API Key 将**默认跳转到设置界面**
 - 配置、历史会话和本地文件工具均在后台 IO 调度器中读写，加载或搜索大型工作区时不会阻塞桌面 UI
 - 在状态栏显示模型请求、工具执行和审批状态
+- 复杂任务可由模型维护与会话绑定的多层 Todo；宽内容区显示常驻只读进度面板，窄内容区通过顶部 Todo 进度按钮打开，并实时反映工具更新
 - 支持自动、手动和全部放行三种审批模式；高风险人工审批使用单独的警告弹窗
 - 输入框使用 `Enter` 发送；macOS 使用 `Command + Enter` 换行，Windows 和 Linux 使用 `Ctrl + Enter` 换行
 - macOS 上关闭主窗口后应用会继续驻留；再次点击 Dock 图标可恢复原窗口和会话，使用 `Command + Q` 可完全退出
@@ -225,7 +226,9 @@ workspace/
          ├── search_text    (只读，无需审批)
          ├── apply_patch    (Git 补丁编辑，无需审批)
          ├── run_command    (按自动 / 手动 / 全部放行策略审批)
-         └── fetch_web_page (公开静态网页获取，无需审批)
+         ├── fetch_web_page (公开静态网页获取，无需审批)
+         ├── todo_read      (查看会话 Todo，零积分)
+         └── todo_write     (原子更新会话 Todo，零积分)
 ```
 
 ### 主要组件
@@ -243,6 +246,7 @@ workspace/
 | **AppConfigLoader** | `config/AppConfig.kt` | 从用户配置文件 / 环境变量加载配置 |
 | **LocalTools** | `tools/LocalTools.kt` | 本地及网页工具的统一注册 |
 | **WebPageService** | `tools/WebPageService.kt` | 公网静态页面请求、SSRF 防护、解析与正文提取子代理 |
+| **TodoStore / TodoTools** | `todo/TodoStore.kt` / `tools/TodoTools.kt` | 会话 Todo 的分层状态、原子持久化、提醒计数和模型工具 |
 | **PathGuard** | `tools/PathGuard.kt` | 路径解析与工作区边界判断 |
 | **ApprovalPolicy** | `tools/Approval.kt` | 通用审批策略、风险分析与专用审批 Agent |
 
@@ -260,6 +264,8 @@ Agent 可以通过以下工具与工作区和公开网页交互：
 | `apply_patch` | ❌ | 用单个 Git unified diff 更新、创建或删除多个文件 |
 | `run_command` | ✅ | 按全局审批模式执行带执行超时限制的 shell 命令 |
 | `fetch_web_page` | ❌ | 获取公开静态 HTTP(S) 页面，返回请求元数据、Markdown 正文和最多 20 个关键链接 |
+| `todo_read` | ❌ | 读取当前 session 的完整分层 Todo 和叶子任务进度，消耗 0 积分 |
+| `todo_write` | ❌ | 以原子批次创建、修改、完成/重开或删除 Todo，消耗 0 积分 |
 
 ### 工具设计原则
 
@@ -270,6 +276,13 @@ Agent 可以通过以下工具与工作区和公开网页交互：
   - 编辑已有文件时保留原编码、BOM 与换行符风格
 - **命令执行**（`run_command`）统一经过当前审批模式；风险分析用于决定自动判断或人工确认，不再直接剥夺用户授权执行的能力
 - **网页获取**（`fetch_web_page`）仅接受单个公开 HTTP(S) URL。HTML 会先清理脚本、样式、表单和页面框架，再由一次无工具、无历史的专用子代理提取正文；完整 HTML 不会返回主 Agent
+- **Todo 工具**不访问工作区，也不需要审批。`todo_write` 的 `operations` 按顺序执行并整体提交，支持 `create`、`update`、`set_status`、`delete`；任一操作失败时不会保存整批修改
+  - Todo 使用唯一 `id` 和可选 `parent_id` 组成多层结构；完成/重开父项会级联整棵子树，父项状态也会根据直接子项自动汇总
+  - 持久化状态只有 `pending` 和 `completed`；工具输入中的 `in_progress` 会兼容归一化为 `pending`
+  - 模型应在每个阶段完成后及时更新对应项目，不使用重复的 `pending` 表示“开始执行”；无实际变化的批次返回 `changed:false` 且不增加 revision
+  - 模型在跨多个步骤、文件或工具轮次的复杂任务中会优先建立 Todo；简单单步任务无需创建
+  - 存在未完成项且连续 7 次模型回复未调用 Todo 工具时，下一次请求会加入 reminder；后续只有距离上次 reminder 已超过 3 次模型回复时才会再次提醒。任一 Todo 工具调用或全部完成都会重置计数
+  - 主 Agent 输出不再调用工具的最终回复时，如果 Todo 非空且所有项目均已完成，运行时会自动清空列表；未完成项目会保留到后续对话
 
 ### 当前网页能力限制
 
@@ -321,7 +334,8 @@ Agent 可以通过以下工具与工作区和公开网页交互：
     ├── {workspace1}-{sha256hash}/
     │   ├── session-{uuid}.jsonl
     │   ├── session-{uuid}.jsonl.name      # 用户自定义会话名
-    │   └── session-{uuid}.jsonl.workspace  # 对应的工作区路径
+    │   ├── session-{uuid}.jsonl.workspace  # 对应的工作区路径
+    │   └── session-{uuid}.jsonl.todos.json # Todo、revision 和提醒状态
     └── {workspace2}-{sha256hash}/
         └── ...
 ```
@@ -348,7 +362,9 @@ Agent 可以通过以下工具与工作区和公开网页交互：
 
 **上下文压缩：** 桌面端与 CLI 共用 `CodingAgent` 中的压缩策略。每次请求前会计算系统提示、历史和新问题的上下文占用；当占用超过窗口大小的 80% 时，旧消息由 LLM 总结并以 `context_snapshot` 行写入会话文件。恢复时以此行为界，清空之前的消息并替换为摘要。token 统计优先采用 API 返回的 `total_tokens`，API 未返回 usage 时使用本地估算，避免压缩判断失效。
 
-**会话元数据：** 每个 `.jsonl` 文件旁可存在两个辅助文件 — `.name`（用户自定义会话名）和 `.workspace`（所属工作区路径），由桌面端 `SessionManager` 读写；CLI 不使用。
+**Todo 持久化：** Todo 不作为对话消息写入 JSONL，而是保存在同 session 的 `.todos.json` 侧车中，因此上下文压缩不会丢失任务进度。写入使用临时文件和原子替换；侧车损坏或 schema 不兼容时保留原文件并只禁用该 session 的 Todo 能力，不影响普通聊天。删除 session 时会一起删除 Todo 侧车。
+
+**会话元数据：** 每个 `.jsonl` 文件旁可存在 `.name`（用户自定义会话名）、`.workspace`（所属工作区路径）和 `.todos.json` 辅助文件；前两者由桌面端 `SessionManager` 管理，Todo 文件由 CLI 与桌面端共享运行时读写。
 
 ---
 
@@ -370,6 +386,8 @@ src/main/kotlin/com/kzagent/kagent/
 │   ├── SessionRepository.kt # 后台 IO 会话存储
 │   ├── SettingsPanel.kt    # 设置面板（API Key、模型、URL、命令安装）
 │   └── UserCommandInstaller.kt # 当前用户的 kza 命令与 PATH 安装
+├── todo/
+│   └── TodoStore.kt       # 分层 Todo、提醒状态和 session 侧车持久化
 ├── Main.kt                 # 根入口：无参数 chat；app 桌面；ask/chat CLI
 ├── AgentRuntimeFactory.kt  # 共享运行时创建
 ├── config/

@@ -7,7 +7,11 @@ import com.kzagent.kagent.llm.ModelToolCall
 import com.kzagent.kagent.tools.AlwaysApprovePolicy
 import com.kzagent.kagent.tools.LocalTools
 import com.kzagent.kagent.tools.PathGuard
+import com.kzagent.kagent.tools.TodoTools
 import com.kzagent.kagent.tools.ToolQuota
+import com.kzagent.kagent.todo.TodoFiles
+import com.kzagent.kagent.todo.TodoOperation
+import com.kzagent.kagent.todo.TodoStore
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
@@ -148,6 +152,122 @@ class CodingAgentTest {
         assertEquals("123456789012345678901234567890", agent.generateTitle("fallback"))
     }
 
+    @Test
+    fun todoReminderStartsAfterSevenRepliesAndRespectsFourReplyCooldown() = runBlocking {
+        val dir = Files.createTempDirectory("kagent-todo-reminder-agent")
+        val sessionFile = dir.resolve("session.jsonl")
+        val store = TodoStore(TodoFiles.forSession(sessionFile))
+        store.applyOperations(
+            listOf(
+                TodoOperation(
+                    type = TodoOperation.Type.CREATE,
+                    id = "task",
+                    content = "Task",
+                ),
+            ),
+        )
+        val model = ReminderRecordingModel()
+        val agent = CodingAgent(
+            model = model,
+            tools = TodoTools(store).registry(),
+            promptBuilder = PromptBuilder(dir),
+            sessionWriter = SessionWriter(sessionFile),
+            todoStore = store,
+        )
+        var history: List<AgentMessage> = emptyList()
+
+        repeat(12) { index ->
+            history = agent.runConversation("turn $index", history).history
+        }
+
+        assertEquals(
+            listOf(false, false, false, false, false, false, false, true, false, false, false, true),
+            model.reminderRequests,
+        )
+    }
+
+    @Test
+    fun finalReplyClearsOnlyAnAllCompletedTodoList() = runBlocking {
+        val dir = Files.createTempDirectory("kagent-completed-todo-cleanup")
+        val sessionFile = dir.resolve("session.jsonl")
+        val store = TodoStore(TodoFiles.forSession(sessionFile))
+        store.applyOperations(
+            listOf(
+                TodoOperation(
+                    type = TodoOperation.Type.CREATE,
+                    id = "task",
+                    content = "Task",
+                ),
+                TodoOperation(
+                    type = TodoOperation.Type.SET_STATUS,
+                    id = "task",
+                    status = com.kzagent.kagent.todo.TodoStatus.COMPLETED,
+                ),
+            ),
+        )
+        val agent = CodingAgent(
+            model = FixedReplyModel(AssistantReply(content = "done")),
+            tools = TodoTools(store).registry(),
+            promptBuilder = PromptBuilder(dir),
+            sessionWriter = SessionWriter(sessionFile),
+            todoStore = store,
+        )
+
+        agent.runConversation("finish")
+
+        assertTrue(store.current().items.isEmpty())
+        assertTrue(TodoStore(TodoFiles.forSession(sessionFile)).current().items.isEmpty())
+    }
+
+    @Test
+    fun dynamicNoticesPreservePriorConversationAsCacheablePrefix() {
+        val system = AgentMessage.System("base")
+        val previousUser = AgentMessage.User("previous")
+        val previousAssistant = AgentMessage.Assistant("previous answer")
+        val currentUser = AgentMessage.User("current")
+        val toolCall = ModelToolCall("call-1", "read_file", """{"path":"sample.txt"}""")
+        val currentAssistant = AgentMessage.Assistant(null, listOf(toolCall))
+        val toolResult = AgentMessage.Tool("call-1", "read_file", "content", false)
+        val messages = listOf(
+            previousUser,
+            previousAssistant,
+            currentUser,
+            currentAssistant,
+            toolResult,
+        )
+
+        val withoutNotices = buildModelContextMessages(system, messages)
+        val withNotices = buildModelContextMessages(
+            system = system,
+            messages = messages,
+            quotaWarning = "quota",
+            todoReminder = "todo",
+        )
+
+        assertEquals(
+            listOf(system, previousUser, previousAssistant),
+            withNotices.take(3),
+        )
+        assertEquals(
+            listOf(
+                system,
+                previousUser,
+                previousAssistant,
+                AgentMessage.System("quota"),
+                AgentMessage.System("todo"),
+                currentUser,
+                currentAssistant,
+                toolResult,
+            ),
+            withNotices,
+        )
+        assertEquals(listOf(system) + messages, withoutNotices)
+        assertEquals(
+            listOf(currentAssistant, toolResult),
+            withNotices.takeLast(2),
+        )
+    }
+
     private class CompressionModel : ChatModel {
         var lastMessages: List<AgentMessage> = emptyList()
 
@@ -178,6 +298,17 @@ class CodingAgentTest {
         override suspend fun chat(messages: List<AgentMessage>, tools: List<JsonObject>): AssistantReply = reply
     }
 
+    private class ReminderRecordingModel : ChatModel {
+        val reminderRequests = mutableListOf<Boolean>()
+
+        override suspend fun chat(messages: List<AgentMessage>, tools: List<JsonObject>): AssistantReply {
+            reminderRequests += messages.any {
+                it is AgentMessage.System && it.content.contains("TODO REMINDER")
+            }
+            return AssistantReply(content = "continued")
+        }
+    }
+
     private class FakeModel : ChatModel {
         var calls = 0
 
@@ -201,4 +332,3 @@ class CodingAgentTest {
         }
     }
 }
-

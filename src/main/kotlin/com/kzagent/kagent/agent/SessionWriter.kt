@@ -15,7 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class SessionWriter(
-    private val sessionPath: Path,
+    val sessionPath: Path,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
@@ -89,4 +89,3 @@ class SessionWriter(
         }
     }
 }
-

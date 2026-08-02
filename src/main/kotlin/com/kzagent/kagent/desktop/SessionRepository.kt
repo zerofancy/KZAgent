@@ -3,6 +3,7 @@ package com.kzagent.kagent.desktop
 import com.kzagent.kagent.agent.SessionReader
 import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.llm.AgentMessage
+import com.kzagent.kagent.todo.TodoFiles
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -79,6 +80,7 @@ internal class FileSessionRepository(
             Files.deleteIfExists(sessionFile)
             Files.deleteIfExists(nameFile(sessionFile))
             Files.deleteIfExists(workspaceFile(sessionFile))
+            Files.deleteIfExists(TodoFiles.forSession(sessionFile))
         }
     }
 

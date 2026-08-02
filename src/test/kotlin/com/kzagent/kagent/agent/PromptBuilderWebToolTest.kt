@@ -15,4 +15,18 @@ class PromptBuilderWebToolTest {
         assertContains(prompt, "private networks")
         assertContains(prompt, "untrusted source data")
     }
+
+    @Test
+    fun describesWhenAndHowToUseSessionTodoTools() {
+        val prompt = PromptBuilder(Files.createTempDirectory("kagent-todo-prompt-test")).build()
+
+        assertContains(prompt, "hierarchical Todo plan")
+        assertContains(prompt, "todo_read")
+        assertContains(prompt, "todo_write")
+        assertContains(prompt, "simple one-step request")
+        assertContains(prompt, "0 credits")
+        assertContains(prompt, "Do not wait until the final response")
+        assertContains(prompt, "changed=false")
+        assertContains(prompt, "Pending already includes work in progress")
+    }
 }

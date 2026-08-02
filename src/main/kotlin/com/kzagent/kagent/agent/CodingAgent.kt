@@ -6,6 +6,7 @@ import com.kzagent.kagent.llm.ChatModel
 import com.kzagent.kagent.tools.ToolQuota
 import com.kzagent.kagent.tools.ToolRegistry
 import com.kzagent.kagent.tools.ToolResult
+import com.kzagent.kagent.todo.TodoStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -23,6 +24,7 @@ class CodingAgent(
     private val contextWindowSize: Int = DEFAULT_CONTEXT_WINDOW_SIZE,
     private val autoCompressionThresholdPercent: Int = DEFAULT_COMPRESSION_THRESHOLD_PERCENT,
     private val autoCompressionKeepLastN: Int = DEFAULT_COMPRESSION_KEEP_LAST_N,
+    private val todoStore: TodoStore? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private var lastKnownContextTokens = 0
@@ -107,14 +109,19 @@ class CodingAgent(
             loopCount++
             observer.onModelRequest(loopCount)
 
-            val contextMessages = buildList {
-                add(system)
-                if (quota.isLow) {
-                    add(AgentMessage.System(buildQuotaWarning()))
-                }
-                addAll(messages)
-            }
+            val todoReminderInjected = todoStore?.shouldInjectReminder() == true
+            val contextMessages = buildModelContextMessages(
+                system = system,
+                messages = messages,
+                quotaWarning = buildQuotaWarning().takeIf { quota.isLow },
+                todoReminder = buildTodoReminder().takeIf { todoReminderInjected },
+            )
             val reply = model.chat(contextMessages, tools.toolSchemas())
+            val todoToolCalled = reply.toolCalls.any { it.name == "todo_read" || it.name == "todo_write" }
+            todoStore?.recordAssistantTurn(
+                todoToolCalled = todoToolCalled,
+                reminderInjected = todoReminderInjected,
+            )
             val assistant = AgentMessage.Assistant(reply.content, reply.toolCalls)
             val reportedTotalTokens = reply.totalTokens?.takeIf { it > 0 }
             val reportedPromptTokens = reply.promptTokens?.takeIf { it > 0 }
@@ -132,6 +139,7 @@ class CodingAgent(
             reply.content?.takeIf { it.isNotBlank() }?.let { observer.onAssistantMessage(it) }
 
             if (reply.toolCalls.isEmpty()) {
+                todoStore?.clearIfAllCompleted()
                 return reply.content.orEmpty().ifBlank { "(model returned an empty final response)" }
             }
 
@@ -418,7 +426,50 @@ private fun buildQuotaWarning(): String = buildString {
     appendLine("- 写操作（apply_patch）: 2 积分")
     appendLine("- 终端操作（run_command）: 5 积分")
     appendLine("- 静态网页获取（fetch_web_page）: 5 积分")
+    appendLine("- Todo 规划（todo_read, todo_write）: 0 积分")
     appendLine()
     append("剩余积分较少，请评估任务进度：")
     append("如果接近完成请尽快收尾；如果还需要多次操作请继续，系统将自动扩容。")
+}
+
+private fun buildTodoReminder(): String =
+    """
+    === TODO REMINDER ===
+    This session still has unfinished Todo items, and several assistant turns have passed without using the Todo tools.
+    Before making more non-Todo tool calls, review the known Todo state and use todo_write to mark every stage that has genuinely finished.
+    Do not rewrite an already-pending item merely to signal work in progress. Call todo_read first only if the current state is uncertain.
+    """.trimIndent()
+
+/**
+ * Dynamic runtime notices belong to the current user turn, not the durable
+ * conversation prefix. Keeping them immediately before the latest user message
+ * preserves cache reuse for the base system prompt and all prior turns while
+ * also avoiding insertion inside an assistant tool-call/result sequence.
+ */
+internal fun buildModelContextMessages(
+    system: AgentMessage.System,
+    messages: List<AgentMessage>,
+    quotaWarning: String? = null,
+    todoReminder: String? = null,
+): List<AgentMessage> {
+    val notices = buildList {
+        quotaWarning?.let { add(AgentMessage.System(it)) }
+        todoReminder?.let { add(AgentMessage.System(it)) }
+    }
+    if (notices.isEmpty()) return listOf(system) + messages
+
+    val currentUserIndex = messages.indexOfLast { it is AgentMessage.User }
+    if (currentUserIndex < 0) {
+        return buildList {
+            add(system)
+            addAll(messages)
+            addAll(notices)
+        }
+    }
+    return buildList {
+        add(system)
+        addAll(messages.subList(0, currentUserIndex))
+        addAll(notices)
+        addAll(messages.subList(currentUserIndex, messages.size))
+    }
 }
