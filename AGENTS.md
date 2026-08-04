@@ -12,6 +12,14 @@
 - 新增或修改 `AgentMessage` 类型时，必须同步检查 API 序列化、JSONL 会话读写、上下文压缩、token 估算和桌面消息展示。
 - 文件和目录处理必须保持 Windows、macOS 与 Linux 兼容，优先使用 `java.nio.file.Path`，不要硬编码平台路径分隔符。
 
+## 桌面 UI 风格
+
+- 桌面端以 Compose Fluent UI 为主视觉体系。应用外壳、导航、弹出层和常规交互控件应优先使用 `io.github.composefluent` 提供的组件，并从 `FluentTheme` 获取颜色、排版和形状，不要自行硬编码一套近似 Fluent 的样式。
+- 新增或修改对话框时统一使用 Fluent `ContentDialog` 或 `FluentDialog`；禁止新增 Material3 `AlertDialog`。标题、正文、按钮和输入框也应优先使用 Fluent `Text`、`Button`、`AccentButton` 和 `TextField`，保持同一弹窗内部的视觉体系一致。
+- 页面层级和容器应优先使用 Fluent 的 `Mica`、`Layer`、卡片及语义化背景/描边颜色；图标优先选用 Fluent Icons。强调、危险、禁用、悬停和选中状态必须使用主题提供的语义颜色，确保亮色与暗色主题均清晰可辨。
+- Material3 仅保留给 Markdown 渲染器及 Compose Fluent 暂无可用替代的存量复杂控件。确需使用时必须置于 `KZAgentFluentTheme` 的双主题桥接下，并保证颜色、字号、圆角、间距和交互状态与周围 Fluent UI 协调；不得在新界面中引入孤立的 Material 风格区域。
+- 修改 UI 前先检查项目中同类 Fluent 组件的现有用法，并对照项目锁定版本的 Compose Fluent API；不要依据其他版本或 WinUI API 猜测参数和行为。
+
 ## 桌面 UI 适配
 
 - 桌面界面必须适配窗口缩放和不同内容长度，优先组合使用 `weight`、`fillMaxSize`、`fillMaxWidth` 与 `heightIn`，避免依赖只适合单一窗口尺寸的固定布局。

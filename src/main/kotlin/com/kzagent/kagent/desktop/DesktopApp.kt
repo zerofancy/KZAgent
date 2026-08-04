@@ -28,7 +28,6 @@ import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -39,7 +38,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -89,9 +87,10 @@ import com.kzagent.kagent.tools.ToolResult
 import com.kzagent.kagent.todo.TodoItem
 import com.kzagent.kagent.todo.TodoSnapshot
 import com.kzagent.kagent.todo.TodoStatus
-import io.github.vinceglb.filekit.FileKit
-import io.github.vinceglb.filekit.PlatformFile
-import io.github.vinceglb.filekit.dialogs.openDirectoryPicker
+import io.github.composefluent.FluentTheme
+import io.github.composefluent.component.ContentDialog
+import io.github.composefluent.component.ContentDialogButton
+import io.github.composefluent.component.DialogSize
 import io.github.composefluent.component.Icon as FluentIcon
 import io.github.composefluent.component.MenuFlyoutContainer
 import io.github.composefluent.component.MenuFlyoutItem
@@ -106,6 +105,7 @@ import io.github.composefluent.component.menuItemSeparator
 import io.github.composefluent.component.rememberNavigationState
 import io.github.composefluent.component.AccentButton as FluentAccentButton
 import io.github.composefluent.component.Text as FluentText
+import io.github.composefluent.component.TextField as FluentTextField
 import io.github.composefluent.icons.Icons
 import io.github.composefluent.icons.regular.Add
 import io.github.composefluent.icons.regular.ArrowDown
@@ -116,6 +116,9 @@ import io.github.composefluent.icons.regular.Folder
 import io.github.composefluent.icons.regular.MoreHorizontal
 import io.github.composefluent.icons.regular.Rename
 import io.github.composefluent.icons.regular.Settings
+import io.github.vinceglb.filekit.FileKit
+import io.github.vinceglb.filekit.PlatformFile
+import io.github.vinceglb.filekit.dialogs.openDirectoryPicker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -1002,26 +1005,25 @@ private fun KZAgentDesktopApp(
     if (showCompressConfirm) {
         val session = sessionManager.activeSession()
         val ctxPct = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000)
-        AlertDialog(
-            onDismissRequest = { showCompressConfirm = false },
-            title = { Text("压缩上下文") },
-            text = {
-                Text(
+        ContentDialog(
+            title = "压缩上下文",
+            visible = true,
+            content = {
+                FluentText(
                     "当前上下文使用率 $ctxPct%。压缩将使用 LLM 把较早的对话总结为摘要，" +
-                    "仅保留最近几条消息。是否继续？"
+                        "仅保留最近几条消息。是否继续？",
                 )
             },
-            confirmButton = {
-                Button(onClick = {
-                    showCompressConfirm = false
+            primaryButtonText = "压缩",
+            closeButtonText = "取消",
+            onButtonClick = { button ->
+                showCompressConfirm = false
+                if (button == ContentDialogButton.Primary) {
                     scope.launch {
                         performCompression(session)
                         session.isBusy = false
                     }
-                }) { Text("压缩") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCompressConfirm = false }) { Text("取消") }
+                }
             },
         )
     }
@@ -1029,12 +1031,16 @@ private fun KZAgentDesktopApp(
     // Delete confirmation dialog
     if (showDeleteConfirmIndex >= 0) {
         val sessionName = sessionManager.sessions.getOrNull(showDeleteConfirmIndex)?.name ?: ""
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirmIndex = -1 },
-            title = { Text("删除会话") },
-            text = { Text("确定要删除会话「$sessionName」吗？此操作不可撤销。") },
-            confirmButton = {
-                Button(onClick = {
+        ContentDialog(
+            title = "删除会话",
+            visible = true,
+            content = {
+                FluentText("确定要删除会话「$sessionName」吗？此操作不可撤销。")
+            },
+            primaryButtonText = "删除",
+            closeButtonText = "取消",
+            onButtonClick = { button ->
+                if (button == ContentDialogButton.Primary) {
                     val index = showDeleteConfirmIndex
                     showDeleteConfirmIndex = -1
                     scope.launch {
@@ -1046,29 +1052,31 @@ private fun KZAgentDesktopApp(
                             sessionLoadError = SecretRedactor.redact(error.message ?: error.toString())
                         }
                     }
-                }) { Text("删除") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirmIndex = -1 }) { Text("取消") }
+                } else {
+                    showDeleteConfirmIndex = -1
+                }
             },
         )
     }
 
     // Rename dialog
     if (showRenameDialogIndex >= 0) {
-        AlertDialog(
-            onDismissRequest = { showRenameDialogIndex = -1 },
-            title = { Text("重命名会话") },
-            text = {
-                OutlinedTextField(
+        ContentDialog(
+            title = "重命名会话",
+            visible = true,
+            content = {
+                FluentTextField(
                     value = renameText,
                     onValueChange = { renameText = it },
-                    label = { Text("会话名称") },
+                    modifier = Modifier.fillMaxWidth(),
+                    header = { FluentText("会话名称") },
                     singleLine = true,
                 )
             },
-            confirmButton = {
-                Button(onClick = {
+            primaryButtonText = "确定",
+            closeButtonText = "取消",
+            onButtonClick = { button ->
+                if (button == ContentDialogButton.Primary) {
                     val index = showRenameDialogIndex
                     val name = renameText
                     showRenameDialogIndex = -1
@@ -1083,10 +1091,9 @@ private fun KZAgentDesktopApp(
                             }
                         }
                     }
-                }) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRenameDialogIndex = -1 }) { Text("取消") }
+                } else {
+                    showRenameDialogIndex = -1
+                }
             },
         )
     }
@@ -1475,26 +1482,21 @@ private fun ApprovalModeMenu(
     }
 
     if (confirmFullMode) {
-        AlertDialog(
-            onDismissRequest = { confirmFullMode = false },
-            title = { Text("确认全部放行") },
-            text = {
-                Text(
+        ContentDialog(
+            title = "确认全部放行",
+            visible = true,
+            content = {
+                FluentText(
                     "全部放行会以当前系统用户权限直接执行命令，并允许读取工作区外或敏感文件，" +
                         "不会调用审批 Agent 或弹出人工确认。",
                 )
             },
-            confirmButton = {
-                Button(onClick = {
-                    confirmFullMode = false
+            primaryButtonText = "我了解风险，继续",
+            closeButtonText = "取消",
+            onButtonClick = { button ->
+                confirmFullMode = false
+                if (button == ContentDialogButton.Primary) {
                     onApprovalModeChanged(ApprovalMode.FULL)
-                }) {
-                    Text("我了解风险，继续")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmFullMode = false }) {
-                    Text("取消")
                 }
             },
         )
@@ -1661,20 +1663,18 @@ private fun TodoDialog(
     snapshot: TodoSnapshot,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Todo") },
-        text = {
+    ContentDialog(
+        title = "Todo",
+        visible = true,
+        content = {
             TodoPanel(
                 snapshot = snapshot,
-                modifier = Modifier.widthIn(min = 420.dp, max = 560.dp).height(460.dp),
+                modifier = Modifier.fillMaxWidth().height(460.dp),
             )
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("关闭")
-            }
-        },
+        primaryButtonText = "关闭",
+        onButtonClick = { onDismiss() },
+        size = DialogSize.Max,
     )
 }
 
@@ -2083,10 +2083,10 @@ private fun ApprovalDialog(approval: PendingApproval) {
     val scrollState = rememberScrollState()
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
-    AlertDialog(
-        onDismissRequest = { approval.complete(false) },
-        title = { Text(if (approval.highRisk) "高风险操作审批" else approval.request.actionLabel()) },
-        text = {
+    ContentDialog(
+        title = if (approval.highRisk) "高风险操作审批" else approval.request.actionLabel(),
+        visible = true,
+        content = {
             Box(
                 modifier = Modifier.focusRequester(focusRequester)
                     .focusable()
@@ -2121,17 +2121,17 @@ private fun ApprovalDialog(approval: PendingApproval) {
                         .padding(end = 12.dp),
                 ) {
                     if (approval.highRisk) {
-                        Text(
+                        FluentText(
                             "此操作可能产生高风险影响，请确认后再继续。",
-                            color = MaterialTheme.colorScheme.error,
+                            color = FluentTheme.colors.system.critical,
                             fontWeight = FontWeight.Bold,
                         )
                         Spacer(Modifier.height(8.dp))
                     }
-                    Text(approval.request.actionLabel(), fontWeight = FontWeight.SemiBold)
+                    FluentText(approval.request.actionLabel(), fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(8.dp))
                     SelectionContainer {
-                        Text(
+                        FluentText(
                             buildString {
                                 append(approval.request.details())
                                 if (approval.request.risk.isHighRisk) {
@@ -2140,7 +2140,7 @@ private fun ApprovalDialog(approval: PendingApproval) {
                                     append("风险：${approval.request.risk.reasons.joinToString("；")}")
                                 }
                             },
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = FluentTheme.typography.body,
                         )
                     }
                 }
@@ -2150,16 +2150,12 @@ private fun ApprovalDialog(approval: PendingApproval) {
                 )
             }
         },
-        confirmButton = {
-            Button(onClick = { approval.complete(true) }) {
-                Text(if (approval.highRisk) "仍然执行" else "允许")
-            }
+        primaryButtonText = if (approval.highRisk) "仍然执行" else "允许",
+        closeButtonText = "拒绝",
+        onButtonClick = { button ->
+            approval.complete(button == ContentDialogButton.Primary)
         },
-        dismissButton = {
-            TextButton(onClick = { approval.complete(false) }) {
-                Text("拒绝")
-            }
-        },
+        size = DialogSize.Max,
     )
 }
 
