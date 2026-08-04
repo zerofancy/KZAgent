@@ -92,8 +92,6 @@ import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
 import io.github.composefluent.component.DialogSize
 import io.github.composefluent.component.Icon as FluentIcon
-import io.github.composefluent.component.MenuFlyoutContainer
-import io.github.composefluent.component.MenuFlyoutItem
 import io.github.composefluent.component.MenuItem
 import io.github.composefluent.component.NavigationDisplayMode
 import io.github.composefluent.component.NavigationView
@@ -113,7 +111,6 @@ import io.github.composefluent.icons.regular.ArrowUp
 import io.github.composefluent.icons.regular.Delete
 import io.github.composefluent.icons.regular.Document
 import io.github.composefluent.icons.regular.Folder
-import io.github.composefluent.icons.regular.MoreHorizontal
 import io.github.composefluent.icons.regular.Rename
 import io.github.composefluent.icons.regular.Settings
 import io.github.vinceglb.filekit.FileKit
@@ -1224,33 +1221,30 @@ private fun SessionNavigationBadge(
             ProgressRing(size = ProgressRingSize.Small)
         }
         if (showActions) {
-            MenuFlyoutContainer(
-                flyout = {
-                    MenuFlyoutItem(
-                        onClick = {
-                            isFlyoutVisible = false
-                            onRename()
-                        },
-                        text = { FluentText("重命名") },
-                        icon = { FluentIcon(Icons.Default.Rename, contentDescription = null) },
-                    )
-                    MenuFlyoutItem(
-                        onClick = {
-                            isFlyoutVisible = false
-                            onDelete()
-                        },
-                        text = { FluentText("删除") },
-                        icon = { FluentIcon(Icons.Default.Delete, contentDescription = null) },
-                    )
-                },
+            val actionIconColor = FluentTheme.colors.text.text.secondary.copy(alpha = 0.65f)
+            SubtleButton(
+                onClick = onRename,
+                modifier = Modifier.size(28.dp),
+                iconOnly = true,
             ) {
-                SubtleButton(
-                    onClick = { isFlyoutVisible = !isFlyoutVisible },
-                    modifier = Modifier.size(28.dp),
-                    iconOnly = true,
-                ) {
-                    FluentIcon(Icons.Default.MoreHorizontal, contentDescription = null)
-                }
+                FluentIcon(
+                    Icons.Default.Rename,
+                    contentDescription = "重命名会话",
+                    modifier = Modifier.size(14.dp),
+                    tint = actionIconColor,
+                )
+            }
+            SubtleButton(
+                onClick = onDelete,
+                modifier = Modifier.size(28.dp),
+                iconOnly = true,
+            ) {
+                FluentIcon(
+                    Icons.Default.Delete,
+                    contentDescription = "删除会话",
+                    modifier = Modifier.size(14.dp),
+                    tint = actionIconColor,
+                )
             }
         }
     }
