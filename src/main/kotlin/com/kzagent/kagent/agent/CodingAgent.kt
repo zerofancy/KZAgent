@@ -310,7 +310,7 @@ class CodingAgent(
             AgentMessage.User("Please summarise this AI coding session:\n\n$conversationText"),
         )
 
-        val reply = model.chat(summaryMessages, emptyList())
+        val reply = model.chatStreaming(summaryMessages, emptyList()) { }
         val summary = reply.content?.trim().orEmpty()
         check(summary.isNotBlank()) { "The model returned an empty context summary." }
 
@@ -348,7 +348,7 @@ class CodingAgent(
             ),
             AgentMessage.User("Please create a short title for: ${sourceText.take(800)}"),
         )
-        val reply = model.chat(messages, emptyList())
+        val reply = model.chatStreaming(messages, emptyList()) { }
         val generated = reply.content.orEmpty()
             .lineSequence()
             .firstOrNull()

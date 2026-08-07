@@ -13,70 +13,31 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.math.min
 
 class DeepSeekClient : ChatModel {
     private val config: AppConfig
-    private val api: DeepSeekApi
     private val streamClient: OkHttpClient
     private val json: Json
 
     constructor(config: AppConfig) {
         this.config = config
-        this.api = DeepSeekApiFactory.create(config)
         this.json = deepSeekJson()
         this.streamClient = createStreamOkHttpClient()
     }
 
-    internal constructor(config: AppConfig, api: DeepSeekApi) {
-        this.config = config
-        this.api = api
-        this.json = deepSeekJson()
-        this.streamClient = createStreamOkHttpClient()
-    }
-
-    override suspend fun chat(messages: List<AgentMessage>, tools: List<JsonObject>): AssistantReply {
-        val response = api.createChatCompletion(
-            ChatCompletionRequest(
-                model = config.model,
-                temperature = 0.2,
-                messages = messages.map { it.toDeepSeekJson() },
-                tools = tools.takeIf { it.isNotEmpty() },
-                toolChoice = "auto".takeIf { tools.isNotEmpty() },
-            ),
-        )
-        if (!response.isSuccessful) {
-            val errorBody = withContext(Dispatchers.IO) {
-                response.errorBody()?.use(::readBoundedErrorBody).orEmpty()
-            }
-            val suffix = errorBody.takeIf(String::isNotBlank)?.let { ": ${SecretRedactor.redact(it)}" }.orEmpty()
-            throw DeepSeekException(
-                message = "DeepSeek API HTTP ${response.code()}$suffix",
-                statusCode = response.code(),
-            )
-        }
-
-        val parsed = response.body()
-            ?: throw DeepSeekException("DeepSeek API returned an empty response body.")
-        val message = parsed.choices.firstOrNull()?.message
-            ?: throw DeepSeekException("DeepSeek API returned no choices.")
-
-        return AssistantReply(
-            content = message.content,
-            toolCalls = message.toolCalls.orEmpty().map {
-                ModelToolCall(
-                    id = it.id,
-                    name = it.function.name,
-                    argumentsJson = it.function.arguments,
-                )
-            },
-            totalTokens = parsed.usage?.totalTokens,
-            promptTokens = parsed.usage?.promptTokens,
-        )
-    }
+    override suspend fun chat(messages: List<AgentMessage>, tools: List<JsonObject>): AssistantReply =
+        chatStreaming(messages, tools) { }
 
     override suspend fun chatStreaming(
         messages: List<AgentMessage>,
@@ -102,7 +63,7 @@ class DeepSeekClient : ChatModel {
             .post(requestBody.toRequestBody("application/json".toMediaType()))
             .build()
 
-        val response = streamClient.newCall(request).execute()
+        val response = execute(request)
         if (!response.isSuccessful) {
             val errorBody = response.body?.let { body ->
                 val source = body.source()
@@ -126,18 +87,29 @@ class DeepSeekClient : ChatModel {
             var totalTokens: Int? = null
             var promptTokens: Int? = null
 
+            var sawChoice = false
+            var sawDone = false
             body.source().use { source ->
                 while (currentCoroutineContext().isActive) {
                     val line = source.readUtf8Line() ?: break
-                    if (line.isEmpty() || !line.startsWith("data: ")) continue
-                    val data = line.removePrefix("data: ").trim()
-                    if (data == "[DONE]") break
+                    if (line.isEmpty() || line.startsWith(":") || !line.startsWith("data:")) continue
+                    val data = line.removePrefix("data:").trimStart()
+                    if (data.isEmpty()) continue
+                    if (data == "[DONE]") {
+                        sawDone = true
+                        break
+                    }
 
                     val chunk = try {
                         json.decodeFromString(ChatCompletionChunk.serializer(), data)
-                    } catch (_: Exception) {
-                        continue
+                    } catch (error: Exception) {
+                        throw DeepSeekException(
+                            "DeepSeek API returned malformed streaming data.",
+                            cause = error,
+                        )
                     }
+
+                    sawChoice = sawChoice || chunk.choices.isNotEmpty()
 
                     chunk.usage?.let { usage ->
                         totalTokens = usage.totalTokens
@@ -161,8 +133,16 @@ class DeepSeekClient : ChatModel {
                 }
             }
 
-            val toolCalls = toolCallBuilders.values
-                .sortedBy { toolCallBuilders.entries.first { entry -> entry.value === it }.key }
+            if (!sawDone) {
+                throw DeepSeekException("DeepSeek API streaming response ended before [DONE].")
+            }
+            if (!sawChoice) {
+                throw DeepSeekException("DeepSeek API streaming response contained no choices.")
+            }
+
+            val toolCalls = toolCallBuilders.entries
+                .sortedBy { it.key }
+                .map { it.value }
                 .filter { it.id != null && it.name != null }
                 .map { builder ->
                     ModelToolCall(
@@ -181,18 +161,25 @@ class DeepSeekClient : ChatModel {
         }
     }
 
-    private fun readBoundedErrorBody(body: okhttp3.ResponseBody): String {
-        val source = body.source()
-        source.request(MAX_ERROR_BODY_BYTES + 1L)
-        val truncated = source.buffer.size > MAX_ERROR_BODY_BYTES
-        val text = source.readUtf8(min(source.buffer.size, MAX_ERROR_BODY_BYTES.toLong()))
-        return if (truncated) "$text\n...[truncated]" else text
+    private suspend fun execute(request: Request): Response = suspendCancellableCoroutine { continuation ->
+        val call = streamClient.newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (!continuation.isCancelled) continuation.resumeWithException(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                continuation.resume(response)
+            }
+        })
     }
 
     private fun createStreamOkHttpClient(): OkHttpClient =
         OkHttpClient.Builder()
             .connectTimeout(Duration.ofSeconds(30))
-            .readTimeout(Duration.ofSeconds(60))
+            .readTimeout(Duration.ofSeconds(300))
+            .writeTimeout(Duration.ofSeconds(300))
             .callTimeout(Duration.ofSeconds(600))
             .followRedirects(false)
             .followSslRedirects(false)
@@ -275,3 +262,8 @@ class DeepSeekException(
     val statusCode: Int? = null,
     cause: Throwable? = null,
 ) : RuntimeException(message, cause)
+
+private fun deepSeekJson(): Json = Json {
+    ignoreUnknownKeys = true
+    explicitNulls = false
+}

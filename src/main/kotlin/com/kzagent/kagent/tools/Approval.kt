@@ -131,7 +131,7 @@ class ModelApprovalAgent(
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : ApprovalAgent {
     override suspend fun decide(request: ApprovalRequest): ApprovalResult = try {
-        val reply = model.chat(
+        val reply = model.chatStreaming(
             messages = listOf(
                 AgentMessage.System(
                     """
@@ -148,7 +148,7 @@ class ModelApprovalAgent(
                 ),
             ),
             tools = emptyList(),
-        )
+        ) { }
         require(reply.toolCalls.isEmpty()) { "审批 Agent 不应调用工具。" }
         val content = reply.content?.trim().orEmpty()
         require(content.isNotEmpty()) { "审批 Agent 返回了空响应。" }

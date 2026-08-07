@@ -99,7 +99,7 @@ data class ExtractedWebContent(val markdown: String, val mode: String)
 class WebContentExtractor(private val model: ChatModel) {
     internal suspend fun extract(page: ParsedWebPage): ExtractedWebContent {
         val extracted = try {
-            val reply = model.chat(
+            val reply = model.chatStreaming(
                 messages = listOf(
                     AgentMessage.System(EXTRACTOR_SYSTEM_PROMPT),
                     AgentMessage.User(
@@ -114,7 +114,7 @@ class WebContentExtractor(private val model: ChatModel) {
                     ),
                 ),
                 tools = emptyList(),
-            )
+            ) { }
             reply.content?.trim().orEmpty().take(MAX_EXTRACTED_CONTENT_CHARS)
                 .takeIf { it.isNotBlank() }
                 ?: error("The extraction model returned empty content.")

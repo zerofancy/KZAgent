@@ -12,7 +12,6 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import kotlinx.serialization.SerializationException
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
@@ -42,44 +41,33 @@ class DeepSeekClientTest {
     }
 
     @Test
-    fun retrofitClientSendsExpectedRequestAndMapsResponse() = runBlocking {
+    fun streamingClientSendsExpectedRequestAndMapsResponse() = runBlocking {
         MockWebServer().use { server ->
             server.enqueue(
                 MockResponse()
-                    .setHeader("Content-Type", "application/json")
+                    .setHeader("Content-Type", "text/event-stream")
                     .setBody(
                         """
-                        {
-                          "choices": [{
-                            "message": {
-                              "content": null,
-                              "tool_calls": [{
-                                "id": "call-1",
-                                "type": "function",
-                                "function": {
-                                  "name": "read_file",
-                                  "arguments": "{\"path\":\"README.md\"}"
-                                }
-                              }]
-                            }
-                          }],
-                          "usage": {
-                            "prompt_tokens": 12,
-                            "completion_tokens": 3,
-                            "total_tokens": 15
-                          }
-                        }
+                        data: {"choices":[{"delta":{"content":"hello "}}]}
+
+                        data: {"choices":[{"delta":{"content":"world","tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\"}"}}]}}],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}
+
+                        data: [DONE]
                         """.trimIndent(),
                     ),
             )
             val client = DeepSeekClient(testConfig(server))
             val tool = buildJsonObject { put("type", "function") }
 
-            val reply = client.chat(
+            val partials = mutableListOf<String>()
+            val reply = client.chatStreaming(
                 messages = listOf(AgentMessage.User("hello")),
                 tools = listOf(tool),
+                onPartialContent = partials::add,
             )
 
+            assertEquals(listOf("hello ", "world"), partials)
+            assertEquals("hello world", reply.content)
             assertEquals("read_file", reply.toolCalls.single().name)
             assertEquals(12, reply.promptTokens)
             assertEquals(15, reply.totalTokens)
@@ -89,6 +77,7 @@ class DeepSeekClientTest {
             val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
             assertEquals("deepseek-test", body["model"]?.jsonPrimitive?.content)
             assertEquals("auto", body["tool_choice"]?.jsonPrimitive?.content)
+            assertTrue(body["stream"]?.jsonPrimitive?.content == "true")
             assertEquals("user", body["messages"]?.jsonArray?.single()?.jsonObject
                 ?.get("role")?.jsonPrimitive?.content)
             assertEquals(1, body["tools"]?.jsonArray?.size)
@@ -139,8 +128,8 @@ class DeepSeekClientTest {
         MockWebServer().use { server ->
             server.enqueue(
                 MockResponse()
-                    .setHeader("Content-Type", "application/json")
-                    .setBody("""{"choices":[]}"""),
+                    .setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[]}\n\ndata: [DONE]\n"),
             )
             server.enqueue(
                 MockResponse()
@@ -148,8 +137,8 @@ class DeepSeekClientTest {
             )
             server.enqueue(
                 MockResponse()
-                    .setHeader("Content-Type", "application/json")
-                    .setBody("""{"choices":"""),
+                    .setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":\n\ndata: [DONE]\n"),
             )
             val client = DeepSeekClient(testConfig(server))
             val messages = listOf(AgentMessage.User("hello"))
@@ -160,17 +149,18 @@ class DeepSeekClientTest {
             )
             assertContains(
                 assertFailsWith<DeepSeekException> { client.chat(messages, emptyList()) }.message.orEmpty(),
-                "empty response body",
+                "ended before [DONE]",
             )
-            assertFailsWith<SerializationException> {
-                client.chat(messages, emptyList())
-            }
+            assertContains(
+                assertFailsWith<DeepSeekException> { client.chat(messages, emptyList()) }.message.orEmpty(),
+                "malformed streaming data",
+            )
             assertEquals(3, server.requestCount)
         }
     }
 
     @Test
-    fun cancellingCoroutineCancelsRetrofitCall() = runBlocking {
+    fun cancellingCoroutineCancelsStreamingCall() = runBlocking {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
             val request = async(start = CoroutineStart.UNDISPATCHED) {
