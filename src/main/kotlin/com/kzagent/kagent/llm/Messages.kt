@@ -64,6 +64,12 @@ data class AssistantReply(
 
 interface ChatModel {
     suspend fun chat(messages: List<AgentMessage>, tools: List<JsonObject>): AssistantReply
+
+    suspend fun chatStreaming(
+        messages: List<AgentMessage>,
+        tools: List<JsonObject>,
+        onPartialContent: (String) -> Unit,
+    ): AssistantReply = chat(messages, tools)
 }
 
 @Serializable
@@ -74,6 +80,7 @@ internal data class ChatCompletionRequest(
     val tools: List<JsonObject>? = null,
     @SerialName("tool_choice")
     val toolChoice: String? = null,
+    val stream: Boolean = false,
 )
 
 @Serializable
@@ -115,5 +122,39 @@ data class ResponseToolCall(
 data class ResponseToolFunction(
     val name: String,
     val arguments: String = "{}",
+)
+
+@Serializable
+internal data class ChatCompletionChunk(
+    val choices: List<ChunkChoice> = emptyList(),
+    val usage: ResponseUsage? = null,
+)
+
+@Serializable
+internal data class ChunkChoice(
+    val delta: ChunkDelta = ChunkDelta(),
+    @SerialName("finish_reason")
+    val finishReason: String? = null,
+)
+
+@Serializable
+internal data class ChunkDelta(
+    val content: String? = null,
+    @SerialName("tool_calls")
+    val toolCalls: List<ChunkToolCallDelta>? = null,
+)
+
+@Serializable
+internal data class ChunkToolCallDelta(
+    val index: Int = 0,
+    val id: String? = null,
+    val type: String? = null,
+    val function: ChunkToolFunctionDelta? = null,
+)
+
+@Serializable
+internal data class ChunkToolFunctionDelta(
+    val name: String? = null,
+    val arguments: String? = null,
 )
 

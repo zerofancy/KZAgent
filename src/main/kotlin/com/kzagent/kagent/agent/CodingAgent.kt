@@ -116,7 +116,9 @@ class CodingAgent(
                 quotaWarning = buildQuotaWarning().takeIf { quota.isLow },
                 todoReminder = buildTodoReminder().takeIf { todoReminderInjected },
             )
-            val reply = model.chat(contextMessages, tools.toolSchemas())
+            val reply = model.chatStreaming(contextMessages, tools.toolSchemas()) {
+                // Streaming keeps the HTTP connection alive; content is accumulated in the reply.
+            }
             val todoToolCalled = reply.toolCalls.any { it.name == "todo_read" || it.name == "todo_write" }
             todoStore?.recordAssistantTurn(
                 todoToolCalled = todoToolCalled,
