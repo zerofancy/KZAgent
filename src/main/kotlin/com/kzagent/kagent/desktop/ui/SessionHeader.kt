@@ -36,6 +36,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.todo.TodoSnapshot
 import com.kzagent.kagent.tools.ApprovalMode
+import com.kzagent.kagent.config.ModelDescriptor
+import com.kzagent.kagent.config.ModelSelection
 import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
 import io.github.composefluent.component.Text as FluentText
@@ -48,10 +50,16 @@ internal fun Header(
     isBusy: Boolean,
     contextPercent: Int,
     approvalMode: ApprovalMode,
+    modelSelection: ModelSelection,
+    availableModels: List<ModelDescriptor>,
+    modelsLoading: Boolean,
+    modelsError: String?,
     todoSnapshot: TodoSnapshot,
     showTodoButton: Boolean,
     onShowTodo: () -> Unit,
     onApprovalModeChanged: (ApprovalMode) -> Unit,
+    onModelChanged: (ModelSelection) -> Unit,
+    onRefreshModels: () -> Unit,
     onCompressContext: () -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
@@ -65,6 +73,10 @@ internal fun Header(
                 WorkspaceIdentity(workspace = workspace, modifier = Modifier.weight(1f))
                 StatusPill(status = status, isBusy = isBusy)
                 HeaderActions(
+                    modelSelection = modelSelection,
+                    availableModels = availableModels,
+                    modelsLoading = modelsLoading,
+                    modelsError = modelsError,
                     approvalMode = approvalMode,
                     contextPercent = contextPercent,
                     isBusy = isBusy,
@@ -72,6 +84,8 @@ internal fun Header(
                     showTodoButton = showTodoButton,
                     onShowTodo = onShowTodo,
                     onApprovalModeChanged = onApprovalModeChanged,
+                    onModelChanged = onModelChanged,
+                    onRefreshModels = onRefreshModels,
                     onCompressContext = onCompressContext,
                 )
             }
@@ -86,7 +100,22 @@ internal fun Header(
                     StatusPill(status = status, isBusy = isBusy)
                 }
                 Spacer(Modifier.height(8.dp))
+                ModelSelector(
+                    selection = modelSelection,
+                    models = availableModels,
+                    loading = modelsLoading,
+                    error = modelsError,
+                    enabled = !isBusy,
+                    onSelect = onModelChanged,
+                    onRefresh = onRefreshModels,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
                 HeaderActions(
+                    modelSelection = modelSelection,
+                    availableModels = availableModels,
+                    modelsLoading = modelsLoading,
+                    modelsError = modelsError,
                     approvalMode = approvalMode,
                     contextPercent = contextPercent,
                     isBusy = isBusy,
@@ -94,8 +123,11 @@ internal fun Header(
                     showTodoButton = showTodoButton,
                     onShowTodo = onShowTodo,
                     onApprovalModeChanged = onApprovalModeChanged,
+                    onModelChanged = onModelChanged,
+                    onRefreshModels = onRefreshModels,
                     onCompressContext = onCompressContext,
                     modifier = Modifier.align(Alignment.End),
+                    showModelSelector = false,
                 )
             }
         }
@@ -123,6 +155,10 @@ internal fun WorkspaceIdentity(workspace: Path, modifier: Modifier = Modifier) {
 
 @Composable
 internal fun HeaderActions(
+    modelSelection: ModelSelection,
+    availableModels: List<ModelDescriptor>,
+    modelsLoading: Boolean,
+    modelsError: String?,
     approvalMode: ApprovalMode,
     contextPercent: Int,
     isBusy: Boolean,
@@ -130,14 +166,28 @@ internal fun HeaderActions(
     showTodoButton: Boolean,
     onShowTodo: () -> Unit,
     onApprovalModeChanged: (ApprovalMode) -> Unit,
+    onModelChanged: (ModelSelection) -> Unit,
+    onRefreshModels: () -> Unit,
     onCompressContext: () -> Unit,
     modifier: Modifier = Modifier,
+    showModelSelector: Boolean = true,
 ) {
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (showModelSelector) {
+            ModelSelector(
+                selection = modelSelection,
+                models = availableModels,
+                loading = modelsLoading,
+                error = modelsError,
+                enabled = !isBusy,
+                onSelect = onModelChanged,
+                onRefresh = onRefreshModels,
+            )
+        }
         ApprovalModeMenu(approvalMode, onApprovalModeChanged)
         if (showTodoButton) {
             OutlinedButton(

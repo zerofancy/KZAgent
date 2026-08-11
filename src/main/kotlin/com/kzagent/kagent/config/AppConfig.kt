@@ -13,20 +13,54 @@ import io.github.vinceglb.filekit.filesDir
 import com.kzagent.kagent.tools.ApprovalMode
 
 data class AppConfig(
-    val apiKey: String,
-    val baseUrl: String = DEFAULT_BASE_URL,
-    val model: String = DEFAULT_MODEL,
+    val deepSeek: ProviderConfig? = null,
+    val openRouter: ProviderConfig? = null,
+    val defaultModel: ModelSelection = ModelSelection(ProviderId.DEEPSEEK, DEFAULT_MODEL, DEFAULT_CONTEXT_WINDOW_SIZE),
     val sensitivePathProtection: Boolean = DEFAULT_SENSITIVE_PATH_PROTECTION,
     val contextWindowSize: Int = DEFAULT_CONTEXT_WINDOW_SIZE,
     val userPrompt: String = "",
     val approvalMode: ApprovalMode = DEFAULT_APPROVAL_MODE,
 ) {
     init {
+        require(deepSeek != null || openRouter != null) { "At least one model provider must be configured." }
+        require(provider(defaultModel.provider) != null) { "The default model provider is not configured." }
         require(contextWindowSize > 0) { "Context window size must be a positive integer." }
     }
 
+    /** Compatibility constructor for callers that still construct a DeepSeek-only config. */
+    constructor(
+        apiKey: String,
+        baseUrl: String = DEFAULT_BASE_URL,
+        model: String = DEFAULT_MODEL,
+        sensitivePathProtection: Boolean = DEFAULT_SENSITIVE_PATH_PROTECTION,
+        contextWindowSize: Int = DEFAULT_CONTEXT_WINDOW_SIZE,
+        userPrompt: String = "",
+        approvalMode: ApprovalMode = DEFAULT_APPROVAL_MODE,
+    ) : this(
+        deepSeek = ProviderConfig(apiKey, baseUrl),
+        defaultModel = ModelSelection(ProviderId.DEEPSEEK, model, contextWindowSize),
+        sensitivePathProtection = sensitivePathProtection,
+        contextWindowSize = contextWindowSize,
+        userPrompt = userPrompt,
+        approvalMode = approvalMode,
+    )
+
+    fun provider(id: ProviderId): ProviderConfig? = when (id) {
+        ProviderId.DEEPSEEK -> deepSeek
+        ProviderId.OPENROUTER -> openRouter
+    }
+
+    val configuredProviders: List<ProviderId>
+        get() = ProviderId.entries.filter { provider(it) != null }
+
+    // Source-compatible accessors for the existing DeepSeek-focused call sites.
+    val apiKey: String get() = deepSeek?.apiKey.orEmpty()
+    val baseUrl: String get() = deepSeek?.baseUrl ?: DEFAULT_BASE_URL
+    val model: String get() = defaultModel.modelId
+
     companion object {
         const val DEFAULT_BASE_URL = "https://api.deepseek.com"
+        const val DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
         const val DEFAULT_MODEL = "deepseek-v4-pro"
         const val DEFAULT_SENSITIVE_PATH_PROTECTION = false
         const val DEFAULT_CONTEXT_WINDOW_SIZE = 1_000_000
@@ -46,42 +80,81 @@ object AppConfigLoader {
             }
         }
 
-        val apiKey = env["DEEPSEEK_API_KEY"]?.trim()?.takeIf { it.isNotEmpty() }
-            ?: props.getProperty("deepseek.api.key")?.trim()?.takeIf { it.isNotEmpty() }
-            ?: throw IllegalStateException(
-                "Missing DeepSeek API key. Set DEEPSEEK_API_KEY or create $configFile with deepseek.api.key."
+        fun provider(prefix: String, envKey: String, defaultBaseUrl: String): ProviderConfig? {
+            val key = env[envKey]?.trim()?.takeIf(String::isNotEmpty)
+                ?: props.getProperty("$prefix.api.key")?.trim()?.takeIf(String::isNotEmpty)
+                ?: return null
+            val baseUrl = props.getProperty("$prefix.base.url")?.trim()?.takeIf(String::isNotEmpty)
+                ?: defaultBaseUrl
+            return ProviderConfig(key, baseUrl.trimEnd('/'))
+        }
+
+        val deepSeek = provider("deepseek", "DEEPSEEK_API_KEY", AppConfig.DEFAULT_BASE_URL)
+        val openRouter = provider("openrouter", "OPENROUTER_API_KEY", AppConfig.DEFAULT_OPENROUTER_BASE_URL)
+        if (deepSeek == null && openRouter == null) {
+            throw IllegalStateException(
+                "Missing model provider API key. Set DEEPSEEK_API_KEY, OPENROUTER_API_KEY, " +
+                    "or configure deepseek.api.key/openrouter.api.key in $configFile."
             )
+        }
 
-        val baseUrl = props.getProperty("deepseek.base.url")?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?: AppConfig.DEFAULT_BASE_URL
-
-        val model = props.getProperty("deepseek.model")?.trim()
+        val legacyModel = props.getProperty("deepseek.model")?.trim()
             ?.takeIf { it.isNotEmpty() }
             ?: AppConfig.DEFAULT_MODEL
 
-        val sensitivePathProtection = props.getProperty("deepseek.sensitive.path.protection")?.trim()
+        val sensitivePathProtection = (
+            props.getProperty("kzagent.sensitive.path.protection")
+                ?: props.getProperty("deepseek.sensitive.path.protection")
+            )?.trim()
             ?.toBooleanStrictOrNull()
             ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION
 
-        val contextWindowSize = props.getProperty("deepseek.context.window.size")
+        val contextWindowSize = (
+            props.getProperty("kzagent.context.window.size")
+                ?: props.getProperty("deepseek.context.window.size")
+            )
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
             ?.let { raw ->
                 raw.toIntOrNull()
                     ?: throw IllegalArgumentException(
-                        "deepseek.context.window.size must be a positive integer.",
+                        "kzagent.context.window.size must be a positive integer.",
                     )
             }
             ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE
 
-        val userPrompt = props.getProperty("deepseek.user.prompt")?.trim() ?: ""
+        val userPrompt = (props.getProperty("kzagent.user.prompt")
+            ?: props.getProperty("deepseek.user.prompt"))?.trim() ?: ""
         val approvalMode = ApprovalMode.fromConfig(props.getProperty("kzagent.approval.mode"))
 
+        val defaultProviderValue = props.getProperty("kzagent.default.provider")?.trim()?.takeIf(String::isNotEmpty)
+        val configuredDefaultProvider = ProviderId.fromConfig(defaultProviderValue)
+        if (defaultProviderValue != null && configuredDefaultProvider == null) {
+            throw IllegalArgumentException("Unknown kzagent.default.provider: $defaultProviderValue")
+        }
+        if (configuredDefaultProvider != null && when (configuredDefaultProvider) {
+                ProviderId.DEEPSEEK -> deepSeek == null
+                ProviderId.OPENROUTER -> openRouter == null
+            }
+        ) {
+            throw IllegalArgumentException(
+                "kzagent.default.provider ${configuredDefaultProvider.configValue} is not configured.",
+            )
+        }
+        val defaultProvider = configuredDefaultProvider
+            ?: if (deepSeek != null) ProviderId.DEEPSEEK else ProviderId.OPENROUTER
+        val defaultModelId = props.getProperty("kzagent.default.model")?.trim()?.takeIf(String::isNotEmpty)
+            ?: if (defaultProvider == ProviderId.DEEPSEEK) legacyModel else "openrouter/auto"
+        val defaultContext = props.getProperty("kzagent.default.context.window.size")?.trim()?.toIntOrNull()
+            ?.takeIf { it > 0 }
+            ?: contextWindowSize
+        val supportsToolChoice = props.getProperty("kzagent.default.supports.tool.choice")
+            ?.trim()?.toBooleanStrictOrNull() ?: true
+
         return AppConfig(
-            apiKey = apiKey,
-            baseUrl = baseUrl.trimEnd('/'),
-            model = model,
+            deepSeek = deepSeek,
+            openRouter = openRouter,
+            defaultModel = ModelSelection(defaultProvider, defaultModelId, defaultContext, supportsToolChoice),
             sensitivePathProtection = sensitivePathProtection,
             contextWindowSize = contextWindowSize,
             userPrompt = userPrompt,
@@ -102,14 +175,25 @@ object ConfigWriter {
     internal fun save(configFile: Path, config: AppConfig) {
         Files.createDirectories(configFile.parent)
         val content = buildString {
-            appendLine("deepseek.api.key=${config.apiKey}")
-            appendLine("deepseek.base.url=${config.baseUrl}")
-            appendLine("deepseek.model=${config.model}")
-            appendLine("deepseek.sensitive.path.protection=${config.sensitivePathProtection}")
-            appendLine("deepseek.context.window.size=${config.contextWindowSize}")
+            config.deepSeek?.let {
+                appendLine("deepseek.api.key=${it.apiKey}")
+                appendLine("deepseek.base.url=${it.baseUrl}")
+            }
+            config.openRouter?.let {
+                appendLine("openrouter.api.key=${it.apiKey}")
+                appendLine("openrouter.base.url=${it.baseUrl}")
+            }
+            appendLine("kzagent.default.provider=${config.defaultModel.provider.configValue}")
+            appendLine("kzagent.default.model=${config.defaultModel.modelId}")
+            config.defaultModel.contextWindowSize?.let {
+                appendLine("kzagent.default.context.window.size=$it")
+            }
+            appendLine("kzagent.default.supports.tool.choice=${config.defaultModel.supportsToolChoice}")
+            appendLine("kzagent.sensitive.path.protection=${config.sensitivePathProtection}")
+            appendLine("kzagent.context.window.size=${config.contextWindowSize}")
             appendLine("kzagent.approval.mode=${config.approvalMode.configValue}")
             if (config.userPrompt.isNotBlank()) {
-                appendLine("deepseek.user.prompt=${escapePropertyValue(config.userPrompt)}")
+                appendLine("kzagent.user.prompt=${escapePropertyValue(config.userPrompt)}")
             }
         }
         Files.writeString(

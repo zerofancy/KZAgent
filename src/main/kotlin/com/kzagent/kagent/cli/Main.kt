@@ -132,12 +132,15 @@ fun printUsage() {
         ~/Library/Application Support/kzagent/config.properties on macOS,
         or ~/.config/kzagent/config.properties on Linux):
           deepseek.api.key=...
-          deepseek.model=deepseek-v4-pro
           deepseek.base.url=https://api.deepseek.com
-          deepseek.sensitive.path.protection=false
+          openrouter.api.key=...
+          openrouter.base.url=https://openrouter.ai/api/v1
+          kzagent.default.provider=deepseek  # deepseek | openrouter
+          kzagent.default.model=deepseek-v4-pro
+          kzagent.sensitive.path.protection=false
           kzagent.approval.mode=auto  # auto | manual | full
 
-        DEEPSEEK_API_KEY can also be provided and takes priority over the config file.
+        DEEPSEEK_API_KEY and OPENROUTER_API_KEY take priority over the config file.
         """.trimIndent(),
     )
 }

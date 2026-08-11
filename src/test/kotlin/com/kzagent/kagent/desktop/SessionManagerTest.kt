@@ -1,6 +1,8 @@
 package com.kzagent.kagent.desktop
 
 import com.kzagent.kagent.agent.SessionWriter
+import com.kzagent.kagent.config.ModelSelection
+import com.kzagent.kagent.config.ProviderId
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.ApprovalDecision
@@ -23,6 +25,25 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class SessionManagerTest {
+    @Test
+    fun modelSelectionSurvivesReloadInItsSidecar() = runBlocking {
+        val workspace = testWorkspace()
+        val sessionsRoot = Files.createTempDirectory("kagent-model-session-test")
+        val openRouter = ModelSelection(ProviderId.OPENROUTER, "vendor/agent", 128_000, false)
+        val manager = SessionManager(denyAll, sessionsRoot, initialDefaultModel = openRouter)
+        manager.loadOrCreate(workspace)
+
+        val session = manager.activeSession()
+        assertEquals(openRouter, session.modelSelection)
+        assertTrue(Files.isRegularFile(session.sessionFile.resolveSibling("${session.sessionFile.fileName}.model")))
+
+        val replacement = openRouter.copy(modelId = "vendor/agent-2", contextWindowSize = 256_000)
+        manager.updateModel(session, replacement)
+        val reloaded = SessionManager(denyAll, sessionsRoot)
+        reloaded.loadOrCreate(workspace)
+
+        assertEquals(replacement, reloaded.activeSession().modelSelection)
+    }
     private val denyAll = ApprovalPolicy {
         ApprovalResult(ApprovalDecision.DENY, ApprovalSource.HUMAN, "test")
     }
@@ -340,7 +361,11 @@ class SessionManagerTest {
             return initial
         }
 
-        override suspend fun create(workspace: Path, name: String): StoredSession {
+        override suspend fun create(
+            workspace: Path,
+            name: String,
+            modelSelection: ModelSelection?,
+        ): StoredSession {
             createFailure?.let { throw it }
             createCalls++
             return StoredSession(
@@ -348,10 +373,13 @@ class SessionManagerTest {
                 name,
                 workspace,
                 workspace.resolve("created-$createCalls.jsonl"),
+                modelSelection = modelSelection,
             )
         }
 
         override suspend fun updateName(sessionFile: Path, name: String) = Unit
+
+        override suspend fun updateModel(sessionFile: Path, selection: ModelSelection) = Unit
 
         override suspend fun delete(sessionFile: Path) = Unit
     }

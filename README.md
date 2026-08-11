@@ -1,6 +1,6 @@
 # KZAgent — Kotlin AI Coding Agent (MVP)
 
-**KZAgent** 是一个用 **Kotlin/JVM + Compose Desktop** 构建的轻量级 AI 编程助手。它通过调用 **DeepSeek API**（兼容 OpenAI 格式）的推理能力，结合本地文件、命令执行和静态网页获取工具，提供桌面聊天界面，并保留 `ask` / `chat` 命令行模式及 `app` 桌面启动命令。
+**KZAgent** 是一个用 **Kotlin/JVM + Compose Desktop** 构建的轻量级 AI 编程助手。它支持 **DeepSeek** 与 **OpenRouter** 的 OpenAI-compatible Chat Completions API，结合本地文件、命令执行和静态网页获取工具，提供可按会话切换 Provider/模型的桌面聊天界面，并保留 `ask` / `chat` 命令行模式及 `app` 桌面启动命令。
 
 ---
 
@@ -24,7 +24,7 @@
 
 KZAgent 的核心思想是让大语言模型（LLM）通过工具调用（Tool Calling）与本地开发环境交互：
 
-1. **用户提问** → 桌面端或 CLI 将问题发送给 DeepSeek 模型
+1. **用户提问** → 桌面端或 CLI 将问题发送给当前会话选择的模型
 2. **模型推理** → 模型决定直接回答或调用工具
 3. **工具执行** → Agent 在本地执行模型选择的工具（读文件、搜索、编辑等）
 4. **结果反馈** → 工具执行结果返回给模型，继续推理
@@ -39,7 +39,7 @@ KZAgent 的核心思想是让大语言模型（LLM）通过工具调用（Tool C
 
 ### 1. 配置 API Key
 
-**方式一（推荐）：通过桌面应用内置设置面板配置。** 首次启动桌面应用时如未检测到 API Key，将自动打开设置面板；你也可以随时通过侧边栏的「⚙ 设置」按钮进入。在面板中可配置 API Key、Base URL、模型名称、上下文窗口大小和敏感路径保护等全部选项。
+**方式一（推荐）：通过桌面应用内置设置面板配置。** 首次启动桌面应用时如未检测到任何 Provider API Key，将自动打开设置面板；你也可以随时通过侧边栏的「⚙ 设置」按钮进入。至少配置 DeepSeek 或 OpenRouter 之一。保存后可在对话顶部从在线目录搜索和切换模型。
 
 **方式二：手动创建配置文件。** 在用户配置目录创建 `kzagent/config.properties` 文件：
 
@@ -49,25 +49,34 @@ KZAgent 的核心思想是让大语言模型（LLM）通过工具调用（Tool C
 
 ```properties
 deepseek.api.key=sk-xxxxxxxxxxxxxxxx
-deepseek.model=deepseek-v4-pro
 deepseek.base.url=https://api.deepseek.com
+openrouter.api.key=sk-or-xxxxxxxxxxxxxxxx
+openrouter.base.url=https://openrouter.ai/api/v1
+kzagent.default.provider=deepseek
+kzagent.default.model=deepseek-v4-pro
 ```
 
 也可以通过环境变量提供，且优先级高于配置文件：
 
 ```bash
 export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
+export OPENROUTER_API_KEY=sk-or-xxxxxxxxxxxxxxxx
 ```
 
 ### 可选配置项
 
 | 属性 | 默认值 | 说明 |
 |------|:------:|------|
-| `deepseek.model` | `deepseek-v4-pro` | 使用的 DeepSeek 模型名称 |
 | `deepseek.base.url` | `https://api.deepseek.com` | API 端点地址（兼容 OpenAI 格式的均可） |
-| `deepseek.sensitive.path.protection` | `false` | 敏感路径保护开关。开启后拦截对 `local.properties`、`.env` 等本地敏感配置文件的访问 |
-| `deepseek.context.window.size` | `1000000` | 上下文窗口大小（tokens），用于计算压缩阈值 |
+| `openrouter.base.url` | `https://openrouter.ai/api/v1` | OpenRouter API 端点 |
+| `kzagent.default.provider` | 首个已配置 Provider | CLI 和新会话默认 Provider |
+| `kzagent.default.model` | `deepseek-v4-pro` / `openrouter/auto` | CLI 和新会话默认模型；桌面切换后自动更新 |
+| `kzagent.sensitive.path.protection` | `false` | 敏感路径保护开关。开启后拦截对 `local.properties`、`.env` 等本地敏感配置文件的访问 |
+| `kzagent.context.window.size` | `1000000` | 模型目录未返回上下文长度时的回退值 |
 | `kzagent.approval.mode` | `auto` | 审批模式：`auto`、`manual` 或 `full` |
+
+旧版 `deepseek.model`、`deepseek.context.window.size`、`deepseek.sensitive.path.protection` 和
+`deepseek.user.prompt` 仍可读取；下次从设置页保存时会写成新的通用 `kzagent.*` 配置键。
 
 ### 2. 运行
 
@@ -218,7 +227,7 @@ workspace/
 │  结果 → 继续推理   │
 └──────────────────┘
     │
-    ├── DeepSeekClient  ────► DeepSeek API
+    ├── OpenAiCompatibleClient ──► DeepSeek / OpenRouter
     │
     └── LocalTools
          ├── list_files     (只读，无需审批)
@@ -238,7 +247,8 @@ workspace/
 | **CodingAgent** | `agent/CodingAgent.kt` | Agent 核心循环：调度模型推理与工具执行 |
 | **AgentsInstructionsLoader** | `agent/AgentsInstructionsLoader.kt` | 加载根目录与子目录 `AGENTS.md` 项目指令 |
 | **PromptBuilder** | `agent/PromptBuilder.kt` | 构建系统提示词（定义 Agent 行为规则） |
-| **DeepSeekClient** | `llm/DeepSeekClient.kt` | 通过 Retrofit + OkHttp 调用 DeepSeek Chat Completions API，支持协程取消 |
+| **OpenAiCompatibleClient** | `llm/DeepSeekClient.kt` | 通过 OkHttp 调用不同 Provider 的流式 Chat Completions API，支持工具调用、错误解析与协程取消 |
+| **ModelCatalogService** | `llm/ModelCatalogService.kt` | 在线加载并规范化 DeepSeek/OpenRouter 模型目录与能力元数据 |
 | **SessionWriter** | `agent/SessionWriter.kt` | 以 JSONL 格式将消息流写入会话文件 |
 | **SessionReader** | `agent/SessionReader.kt` | 从会话文件读取历史消息，恢复对话上下文 |
 | **DesktopApp** | `desktop/DesktopApp.kt` | Compose Desktop 桌面聊天界面 |
@@ -393,7 +403,8 @@ src/main/kotlin/com/kzagent/kagent/
 ├── config/
 │   └── AppConfig.kt        # 配置加载（AppConfigLoader）、保存（ConfigWriter）与密钥脱敏
 ├── llm/
-│   ├── DeepSeekClient.kt   # DeepSeek API 客户端
+│   ├── DeepSeekClient.kt   # OpenAI-compatible 多 Provider API 客户端
+│   ├── ModelCatalogService.kt # DeepSeek / OpenRouter 模型目录
 │   ├── DeepSeekApi.kt      # Retrofit 接口与 OkHttp 客户端工厂
 │   └── Messages.kt         # 消息模型定义
 └── tools/
@@ -414,11 +425,14 @@ src/main/kotlin/com/kzagent/kagent/
 ### 用户配置文件 `kzagent/config.properties`
 
 ```properties
-deepseek.api.key=sk-xxxxxxxxxxxxxxxx          # DeepSeek API Key（必填）
-deepseek.model=deepseek-v4-pro                # 模型名称（可选）
+deepseek.api.key=sk-xxxxxxxxxxxxxxxx          # DeepSeek API Key（二选一）
 deepseek.base.url=https://api.deepseek.com    # API 地址（可选）
-deepseek.sensitive.path.protection=false      # 敏感路径保护（可选）
-deepseek.context.window.size=1000000          # 上下文窗口 tokens（可选）
+openrouter.api.key=sk-or-xxxxxxxxxxxxxxxx     # OpenRouter API Key（二选一）
+openrouter.base.url=https://openrouter.ai/api/v1
+kzagent.default.provider=deepseek             # deepseek | openrouter
+kzagent.default.model=deepseek-v4-pro
+kzagent.sensitive.path.protection=false       # 敏感路径保护（可选）
+kzagent.context.window.size=1000000           # 上下文窗口回退值（可选）
 kzagent.approval.mode=auto                    # auto | manual | full（可选，默认 auto）
 ```
 
@@ -426,6 +440,7 @@ kzagent.approval.mode=auto                    # auto | manual | full（可选，
 
 ```bash
 DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx    # 优先级高于 config.properties
+OPENROUTER_API_KEY=sk-or-xxxxxxxxxxxx   # 优先级高于 config.properties
 ```
 
 ---
@@ -439,10 +454,9 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx    # 优先级高于 config.properties
 | **Gradle** | 构建工具 |
 | **kotlinx-coroutines** | 异步编程（协程） |
 | **kotlinx-serialization** | JSON 序列化/反序列化 |
-| **Retrofit 3.0.0 + OkHttp 4.12.0** | DeepSeek API 的类型安全、可取消网络请求 |
-| **OkHttp 4.12.0** | 静态网页请求、受控重定向与压缩传输 |
+| **OkHttp 4.12.0** | Provider API 与静态网页的可取消网络请求、受控重定向和压缩传输 |
 | **Jsoup 1.22.2** | HTML/XML 解析、清理和链接解析 |
-| **DeepSeek API** (OpenAI 兼容) | LLM 推理后端 |
+| **DeepSeek / OpenRouter API** (OpenAI 兼容) | 可切换的 LLM 推理后端与模型目录 |
 
 ---
 

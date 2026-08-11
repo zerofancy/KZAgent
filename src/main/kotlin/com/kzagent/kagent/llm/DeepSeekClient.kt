@@ -1,6 +1,9 @@
 package com.kzagent.kagent.llm
 
 import com.kzagent.kagent.config.AppConfig
+import com.kzagent.kagent.config.ModelSelection
+import com.kzagent.kagent.config.ProviderConfig
+import com.kzagent.kagent.config.ProviderId
 import com.kzagent.kagent.config.SecretRedactor
 import java.time.Duration
 import kotlinx.coroutines.Dispatchers
@@ -25,14 +28,17 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.math.min
 
-class DeepSeekClient : ChatModel {
-    private val config: AppConfig
+class OpenAiCompatibleClient(
+    private val providerId: ProviderId,
+    private val providerConfig: ProviderConfig,
+    private val selection: ModelSelection,
+) : ChatModel {
     private val streamClient: OkHttpClient
     private val json: Json
 
-    constructor(config: AppConfig) {
-        this.config = config
-        this.json = deepSeekJson()
+    init {
+        require(providerId == selection.provider) { "Provider and model selection must match." }
+        this.json = providerJson()
         this.streamClient = createStreamOkHttpClient()
     }
 
@@ -47,17 +53,17 @@ class DeepSeekClient : ChatModel {
         val requestBody = json.encodeToString(
             ChatCompletionRequest.serializer(),
             ChatCompletionRequest(
-                model = config.model,
+                model = selection.modelId,
                 temperature = 0.2,
-                messages = messages.map { it.toDeepSeekJson() },
+                messages = messages.map { it.toOpenAiJson() },
                 tools = tools.takeIf { it.isNotEmpty() },
-                toolChoice = "auto".takeIf { tools.isNotEmpty() },
+                toolChoice = "auto".takeIf { tools.isNotEmpty() && selection.supportsToolChoice },
                 stream = true,
             ),
         )
         val request = Request.Builder()
-            .url("${config.baseUrl.trimEnd('/')}/chat/completions")
-            .header("Authorization", "Bearer ${config.apiKey}")
+            .url("${providerConfig.baseUrl.trimEnd('/')}/chat/completions")
+            .header("Authorization", "Bearer ${providerConfig.apiKey}")
             .header("Content-Type", "application/json")
             .header("Accept", "text/event-stream")
             .post(requestBody.toRequestBody("application/json".toMediaType()))
@@ -73,15 +79,15 @@ class DeepSeekClient : ChatModel {
                 if (truncated) "$text\n...[truncated]" else text
             }.orEmpty()
             response.close()
-            throw DeepSeekException(
-                message = "DeepSeek API HTTP ${response.code}" +
+            throw ProviderApiException(
+                message = "${providerId.displayName} API HTTP ${response.code}" +
                     errorBody.takeIf(String::isNotBlank)?.let { ": ${SecretRedactor.redact(it)}" }.orEmpty(),
                 statusCode = response.code,
             )
         }
 
         response.use { resp ->
-            val body = resp.body ?: throw DeepSeekException("DeepSeek API returned an empty streaming body.")
+            val body = resp.body ?: throw ProviderApiException("${providerId.displayName} API returned an empty streaming body.")
             val contentBuilder = StringBuilder()
             val toolCallBuilders = mutableMapOf<Int, ToolCallBuilder>()
             var totalTokens: Int? = null
@@ -103,9 +109,15 @@ class DeepSeekClient : ChatModel {
                     val chunk = try {
                         json.decodeFromString(ChatCompletionChunk.serializer(), data)
                     } catch (error: Exception) {
-                        throw DeepSeekException(
-                            "DeepSeek API returned malformed streaming data.",
+                        throw ProviderApiException(
+                            "${providerId.displayName} API returned malformed streaming data.",
                             cause = error,
+                        )
+                    }
+                    chunk.error?.let { streamError ->
+                        throw ProviderApiException(
+                            "${providerId.displayName} API streaming error: " +
+                                SecretRedactor.redact(streamError.message),
                         )
                     }
 
@@ -134,10 +146,10 @@ class DeepSeekClient : ChatModel {
             }
 
             if (!sawDone) {
-                throw DeepSeekException("DeepSeek API streaming response ended before [DONE].")
+                throw ProviderApiException("${providerId.displayName} API streaming response ended before [DONE].")
             }
             if (!sawChoice) {
-                throw DeepSeekException("DeepSeek API streaming response contained no choices.")
+                throw ProviderApiException("${providerId.displayName} API streaming response contained no choices.")
             }
 
             val toolCalls = toolCallBuilders.entries
@@ -198,19 +210,30 @@ class DeepSeekClient : ChatModel {
     }
 }
 
-internal fun AgentMessage.toDeepSeekJson(): JsonObject = buildJsonObject {
+/** Source-compatible wrapper retained while callers migrate to the provider-neutral client. */
+class DeepSeekClient(config: AppConfig) : ChatModel by OpenAiCompatibleClient(
+    providerId = ProviderId.DEEPSEEK,
+    providerConfig = requireNotNull(config.deepSeek) { "DeepSeek is not configured." },
+    selection = if (config.defaultModel.provider == ProviderId.DEEPSEEK) {
+        config.defaultModel
+    } else {
+        ModelSelection(ProviderId.DEEPSEEK, AppConfig.DEFAULT_MODEL, config.contextWindowSize)
+    },
+)
+
+internal fun AgentMessage.toOpenAiJson(): JsonObject = buildJsonObject {
     put(
         "role",
         if (
-            this@toDeepSeekJson is AgentMessage.Summary ||
-            this@toDeepSeekJson is AgentMessage.ScopedInstruction
+            this@toOpenAiJson is AgentMessage.Summary ||
+            this@toOpenAiJson is AgentMessage.ScopedInstruction
         ) {
             "system"
         } else {
             role
         },
     )
-    when (this@toDeepSeekJson) {
+    when (this@toOpenAiJson) {
         is AgentMessage.System -> put("content", content)
         is AgentMessage.Summary -> put("content", "## Conversation summary\n$content")
         is AgentMessage.ScopedInstruction -> put(
@@ -257,13 +280,17 @@ internal fun AgentMessage.toDeepSeekJson(): JsonObject = buildJsonObject {
     }
 }
 
-class DeepSeekException(
+internal fun AgentMessage.toDeepSeekJson(): JsonObject = toOpenAiJson()
+
+class ProviderApiException(
     message: String,
     val statusCode: Int? = null,
     cause: Throwable? = null,
 ) : RuntimeException(message, cause)
 
-private fun deepSeekJson(): Json = Json {
+typealias DeepSeekException = ProviderApiException
+
+private fun providerJson(): Json = Json {
     ignoreUnknownKeys = true
     explicitNulls = false
 }

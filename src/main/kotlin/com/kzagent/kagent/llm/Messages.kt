@@ -128,6 +128,13 @@ data class ResponseToolFunction(
 internal data class ChatCompletionChunk(
     val choices: List<ChunkChoice> = emptyList(),
     val usage: ResponseUsage? = null,
+    val error: StreamError? = null,
+)
+
+@Serializable
+internal data class StreamError(
+    val code: kotlinx.serialization.json.JsonElement? = null,
+    val message: String = "Unknown streaming error",
 )
 
 @Serializable
@@ -157,4 +164,3 @@ internal data class ChunkToolFunctionDelta(
     val name: String? = null,
     val arguments: String? = null,
 )
-

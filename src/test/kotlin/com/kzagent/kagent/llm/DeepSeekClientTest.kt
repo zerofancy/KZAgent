@@ -1,6 +1,9 @@
 package com.kzagent.kagent.llm
 
 import com.kzagent.kagent.config.AppConfig
+import com.kzagent.kagent.config.ModelSelection
+import com.kzagent.kagent.config.ProviderConfig
+import com.kzagent.kagent.config.ProviderId
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.CoroutineStart
@@ -23,6 +26,32 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DeepSeekClientTest {
+    @Test
+    fun openRouterStreamingErrorIsReportedInsteadOfReturningEmptyContent() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(
+                MockResponse()
+                    .setHeader("Content-Type", "text/event-stream")
+                    .setBody(
+                        "data: {\"error\":{\"code\":429,\"message\":\"rate limited\"},\"choices\":[]}" +
+                            "\n\ndata: [DONE]\n\n",
+                    ),
+            )
+            val client = OpenAiCompatibleClient(
+                ProviderId.OPENROUTER,
+                ProviderConfig("sk-or-test-secret", server.url("/api/v1").toString()),
+                ModelSelection(ProviderId.OPENROUTER, "vendor/agent"),
+            )
+
+            val error = assertFailsWith<ProviderApiException> {
+                client.chat(listOf(AgentMessage.User("hello")), emptyList())
+            }
+
+            assertContains(error.message.orEmpty(), "OpenRouter API streaming error")
+            assertContains(error.message.orEmpty(), "rate limited")
+            assertEquals("/api/v1/chat/completions", server.takeRequest().path)
+        }
+    }
     @Test
     fun scopedInstructionIsSentAsSystemMessageWithSourceAndScope() {
         val message = AgentMessage.ScopedInstruction(

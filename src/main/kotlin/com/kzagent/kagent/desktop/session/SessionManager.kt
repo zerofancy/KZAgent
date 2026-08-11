@@ -9,6 +9,9 @@ import com.kzagent.kagent.AgentRuntime
 import com.kzagent.kagent.AgentRuntimeFactory
 import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.config.AppDataDir
+import com.kzagent.kagent.config.AppConfig
+import com.kzagent.kagent.config.ModelSelection
+import com.kzagent.kagent.config.ProviderId
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.todo.TodoSnapshot
@@ -35,6 +38,11 @@ class SessionData(
     status: String = "正在加载...",
     error: String? = null,
     todoSnapshot: TodoSnapshot = TodoSnapshot(),
+    modelSelection: ModelSelection = ModelSelection(
+        ProviderId.DEEPSEEK,
+        AppConfig.DEFAULT_MODEL,
+        AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
+    ),
 ) {
     var name by mutableStateOf(name)
     var titleRevision: Int = 0
@@ -47,6 +55,7 @@ class SessionData(
     var status by mutableStateOf(status)
     var error by mutableStateOf(error)
     var todoSnapshot by mutableStateOf(todoSnapshot)
+    var modelSelection by mutableStateOf(modelSelection)
 
     fun updateName(name: String) {
         this.name = name
@@ -60,6 +69,11 @@ class SessionManager internal constructor(
     sessionsRoot: Path = AppDataDir.sessionsRoot(),
     private val repository: SessionRepository = FileSessionRepository(sessionsRoot),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    initialDefaultModel: ModelSelection = ModelSelection(
+        ProviderId.DEEPSEEK,
+        AppConfig.DEFAULT_MODEL,
+        AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
+    ),
 ) {
     val sessions: SnapshotStateList<SessionData> = mutableStateListOf()
     var activeSessionIndex by mutableStateOf(0)
@@ -67,6 +81,11 @@ class SessionManager internal constructor(
     var initialized by mutableStateOf(false)
         private set
     private val renameMutex = Mutex()
+    private var defaultModel: ModelSelection = initialDefaultModel
+
+    fun updateDefaultModel(selection: ModelSelection) {
+        defaultModel = selection
+    }
 
     /** Loads sessions once. Recomposition and configuration refreshes reuse this manager instance. */
     suspend fun loadOrCreate(
@@ -76,30 +95,35 @@ class SessionManager internal constructor(
         if (initialized) return
         val existing = repository.loadAll(defaultWorkspace)
         val stored = if (createStartupSession) {
-            listOf(repository.create(defaultWorkspace, "新会话 ${existing.size + 1}")) + existing
+            listOf(repository.create(defaultWorkspace, "新会话 ${existing.size + 1}", defaultModel)) + existing
         } else {
             existing.ifEmpty {
-                listOf(repository.create(defaultWorkspace, "新会话 1"))
+                listOf(repository.create(defaultWorkspace, "新会话 1", defaultModel))
             }
         }
         sessions.clear()
-        sessions.addAll(stored.map(::toSessionData))
+        sessions.addAll(stored.map { storedSession ->
+            if (storedSession.modelSelection == null) {
+                repository.updateModel(storedSession.sessionFile, defaultModel)
+            }
+            toSessionData(storedSession, storedSession.modelSelection ?: defaultModel)
+        })
         activeSessionIndex = 0
         initialized = true
     }
 
     suspend fun addNewSession() {
         val active = activeSession()
-        val stored = repository.create(active.workspace, "新会话 ${sessions.size + 1}")
-        sessions.add(0, toSessionData(stored))
+        val stored = repository.create(active.workspace, "新会话 ${sessions.size + 1}", defaultModel)
+        sessions.add(0, toSessionData(stored, defaultModel))
         activeSessionIndex = 0
     }
 
     /** Creates and activates a fresh session even when [workspace] is already active. */
     suspend fun startNewSessionInWorkspace(workspace: Path): SessionData {
         val normalized = workspace.toAbsolutePath().normalize()
-        val stored = repository.create(normalized, "新会话 ${sessions.size + 1}")
-        val created = toSessionData(stored)
+        val stored = repository.create(normalized, "新会话 ${sessions.size + 1}", defaultModel)
+        val created = toSessionData(stored, defaultModel)
         sessions.add(0, created)
         activeSessionIndex = 0
         return created
@@ -164,6 +188,15 @@ class SessionManager internal constructor(
         }
     }
 
+    suspend fun updateModel(session: SessionData, selection: ModelSelection) {
+        check(!session.isBusy) { "Cannot switch models while the session is busy." }
+        repository.updateModel(session.sessionFile, selection)
+        session.runtime = null
+        session.modelSelection = selection
+        session.error = null
+        session.status = "正在切换模型..."
+    }
+
     suspend fun deleteSession(index: Int): Boolean {
         if (sessions.size <= 1 || index !in sessions.indices) return false
         val session = sessions[index]
@@ -188,13 +221,14 @@ class SessionManager internal constructor(
                 approvalPolicy = approvalPolicy,
                 observer = observer,
                 sessionFile = session.sessionFile,
+                modelSelection = session.modelSelection,
             )
         }
         session.runtime = runtime
         session.todoSnapshot = runtime.todoState.value
     }
 
-    private fun toSessionData(stored: StoredSession): SessionData = SessionData(
+    private fun toSessionData(stored: StoredSession, modelSelection: ModelSelection): SessionData = SessionData(
         id = stored.id,
         name = stored.name,
         workspace = stored.workspace,
@@ -205,5 +239,6 @@ class SessionManager internal constructor(
         },
         usedTokens = stored.usedTokens,
         status = "就绪",
+        modelSelection = modelSelection,
     )
 }

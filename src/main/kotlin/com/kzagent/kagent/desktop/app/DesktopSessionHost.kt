@@ -29,10 +29,14 @@ import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.AppConfigLoader
 import com.kzagent.kagent.config.ConfigWriter
+import com.kzagent.kagent.config.ModelDescriptor
+import com.kzagent.kagent.config.ModelSelection
+import com.kzagent.kagent.config.ProviderId
 import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.agent.estimateContextTokens
 import com.kzagent.kagent.config.SecretRedactor
 import com.kzagent.kagent.llm.AgentMessage
+import com.kzagent.kagent.llm.ModelCatalogService
 import com.kzagent.kagent.tools.ApprovalDecision
 import com.kzagent.kagent.tools.ApprovalMode
 import com.kzagent.kagent.tools.ApprovalPolicy
@@ -45,6 +49,7 @@ import io.github.composefluent.component.Text as FluentText
 import io.github.composefluent.component.TextField as FluentTextField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -67,6 +72,11 @@ internal fun KZAgentDesktopApp(
     var showCompressConfirm by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var savedConfig by remember { mutableStateOf<AppConfig?>(null) }
+    var configLoaded by remember { mutableStateOf(false) }
+    val availableModels = remember { mutableStateListOf<ModelDescriptor>() }
+    var modelsLoading by remember { mutableStateOf(false) }
+    var modelsError by remember { mutableStateOf<String?>(null) }
+    var modelCatalogJob by remember { mutableStateOf<Job?>(null) }
     var settingsSaving by remember { mutableStateOf(false) }
     var settingsSaveError by remember { mutableStateOf<String?>(null) }
     var commandAvailability by remember { mutableStateOf<UserCommandAvailability?>(null) }
@@ -77,6 +87,7 @@ internal fun KZAgentDesktopApp(
     val sessionWorkspaceExpandedState = remember { mutableStateMapOf<String, Boolean>() }
     val scope = rememberCoroutineScope()
     val userCommandInstaller = remember { UserCommandInstaller() }
+    val modelCatalogService = remember { ModelCatalogService() }
 
     // Check configuration on startup; if API key is missing, open settings
     LaunchedEffect(Unit) {
@@ -87,6 +98,8 @@ internal fun KZAgentDesktopApp(
         } catch (_: Exception) {
             savedConfig = null
             showSettings = true
+        } finally {
+            configLoaded = true
         }
     }
 
@@ -99,14 +112,6 @@ internal fun KZAgentDesktopApp(
     LaunchedEffect(Unit) {
         val loaded = withContext(Dispatchers.IO) { loadSessionWorkspaceExpandState() }
         sessionWorkspaceExpandedState.putAll(loaded)
-    }
-
-    // Helper to derive safe default values for settings panel
-    fun settingsDefaults(): Pair<String, String> {
-        val existing = savedConfig
-        return if (existing != null) {
-            existing.apiKey to existing.baseUrl
-        } else "" to AppConfig.DEFAULT_BASE_URL
     }
 
     val approvalPolicy = remember {
@@ -135,7 +140,9 @@ internal fun KZAgentDesktopApp(
         SessionManager(approvalPolicy)
     }
 
-    LaunchedEffect(sessionManager, initialWorkspace, createStartupSession) {
+    LaunchedEffect(sessionManager, initialWorkspace, createStartupSession, configLoaded, savedConfig?.defaultModel) {
+        if (!configLoaded || savedConfig == null) return@LaunchedEffect
+        sessionManager.updateDefaultModel(savedConfig!!.defaultModel)
         try {
             sessionManager.loadOrCreate(initialWorkspace, createStartupSession)
         } catch (error: CancellationException) {
@@ -164,6 +171,41 @@ internal fun KZAgentDesktopApp(
         }
     }
 
+    fun refreshModels() {
+        val config = savedConfig ?: return
+        modelCatalogJob?.cancel()
+        modelsLoading = true
+        modelsError = null
+        lateinit var refreshJob: Job
+        refreshJob = scope.launch {
+            val loaded = mutableListOf<ModelDescriptor>()
+            val errors = mutableListOf<String>()
+            try {
+                config.configuredProviders.forEach { provider ->
+                    try {
+                        loaded += withContext(Dispatchers.IO) {
+                            modelCatalogService.loadProvider(config, provider)
+                        }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        errors += "${provider.displayName}: ${SecretRedactor.redact(error.message ?: error.toString())}"
+                    }
+                }
+                availableModels.clear()
+                availableModels.addAll(loaded)
+                modelsError = errors.takeIf { it.isNotEmpty() }?.joinToString("\n")
+            } finally {
+                if (modelCatalogJob === refreshJob) modelsLoading = false
+            }
+        }
+        modelCatalogJob = refreshJob
+    }
+
+    LaunchedEffect(savedConfig?.deepSeek, savedConfig?.openRouter) {
+        if (savedConfig != null) refreshModels()
+    }
+
     // Persist configuration away from the UI dispatcher, then invalidate only the runtimes.
     fun saveSettings(config: AppConfig) {
         if (settingsSaving) return
@@ -173,7 +215,10 @@ internal fun KZAgentDesktopApp(
             try {
                 withContext(Dispatchers.IO) { ConfigWriter.save(config) }
                 savedConfig = withContext(Dispatchers.IO) { AppConfigLoader.load() }
+                sessionManager.updateDefaultModel(savedConfig!!.defaultModel)
                 sessionManager.invalidateRuntimes()
+                sessionManager.sessions.filter { savedConfig!!.provider(it.modelSelection.provider) == null }
+                    .forEach { session -> sessionManager.updateModel(session, savedConfig!!.defaultModel) }
                 showSettings = false
             } catch (error: CancellationException) {
                 throw error
@@ -192,6 +237,25 @@ internal fun KZAgentDesktopApp(
     fun onApprovalModeChanged(mode: ApprovalMode) {
         val current = savedConfig ?: return
         if (current.approvalMode != mode) saveSettings(current.copy(approvalMode = mode))
+    }
+
+    fun onModelChanged(session: SessionData, selection: ModelSelection) {
+        val currentConfig = savedConfig ?: return
+        if (session.isBusy || currentConfig.provider(selection.provider) == null) return
+        scope.launch {
+            try {
+                sessionManager.updateModel(session, selection)
+                val updatedConfig = currentConfig.copy(defaultModel = selection)
+                withContext(Dispatchers.IO) { ConfigWriter.save(updatedConfig) }
+                savedConfig = updatedConfig
+                sessionManager.updateDefaultModel(selection)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                session.error = SecretRedactor.redact(error.message ?: error.toString())
+                session.status = "模型切换失败"
+            }
+        }
     }
 
     fun installUserCommand() {
@@ -425,15 +489,24 @@ internal fun KZAgentDesktopApp(
             modifier = Modifier.fillMaxSize(),
         ) {
             if (showSettings) {
-                val (defaultApiKey, defaultBaseUrl) = settingsDefaults()
                 SettingsPanel(
-                    initialApiKey = defaultApiKey,
-                    initialBaseUrl = defaultBaseUrl,
-                    initialModel = savedConfig?.model ?: AppConfig.DEFAULT_MODEL,
+                    initialDeepSeekApiKey = savedConfig?.deepSeek?.apiKey.orEmpty(),
+                    initialDeepSeekBaseUrl = savedConfig?.deepSeek?.baseUrl ?: AppConfig.DEFAULT_BASE_URL,
+                    initialOpenRouterApiKey = savedConfig?.openRouter?.apiKey.orEmpty(),
+                    initialOpenRouterBaseUrl = savedConfig?.openRouter?.baseUrl ?: AppConfig.DEFAULT_OPENROUTER_BASE_URL,
+                    initialDefaultModel = savedConfig?.defaultModel ?: ModelSelection(
+                        ProviderId.DEEPSEEK,
+                        AppConfig.DEFAULT_MODEL,
+                        AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
+                    ),
                     initialContextWindowSize = savedConfig?.contextWindowSize ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
                     initialSensitivePathProtection = savedConfig?.sensitivePathProtection ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION,
                     initialUserPrompt = savedConfig?.userPrompt ?: "",
                     initialApprovalMode = savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE,
+                    availableModels = availableModels,
+                    modelsLoading = modelsLoading,
+                    modelsError = modelsError,
+                    onRefreshModels = ::refreshModels,
                     saving = settingsSaving,
                     saveError = settingsSaveError,
                     commandAvailable = commandAvailability?.available == true,
@@ -476,10 +549,16 @@ internal fun KZAgentDesktopApp(
                             isBusy = session.isBusy,
                             contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000),
                             approvalMode = savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE,
+                            modelSelection = session.modelSelection,
+                            availableModels = availableModels,
+                            modelsLoading = modelsLoading,
+                            modelsError = modelsError,
                             todoSnapshot = session.todoSnapshot,
                             showTodoButton = !showPersistentTodo,
                             onShowTodo = { showTodoDialog = true },
                             onApprovalModeChanged = { onApprovalModeChanged(it) },
+                            onModelChanged = { onModelChanged(session, it) },
+                            onRefreshModels = ::refreshModels,
                             onCompressContext = { showCompressConfirm = true },
                         )
                         Spacer(Modifier.height(10.dp))
