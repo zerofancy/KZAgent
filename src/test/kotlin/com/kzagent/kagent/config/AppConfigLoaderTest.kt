@@ -64,6 +64,46 @@ class AppConfigLoaderTest {
     }
 
     @Test
+    fun supportsOpenRouterOnlyAndRoundTripsDefaultSelection() {
+        val configFile = Files.createTempDirectory("kagent-openrouter-config-test").resolve("config.properties")
+        val original = AppConfig(
+            openRouter = ProviderConfig("sk-or-test-secret", "https://openrouter.ai/api/v1"),
+            defaultModel = ModelSelection(ProviderId.OPENROUTER, "anthropic/claude-test", 200_000, false),
+        )
+
+        ConfigWriter.save(configFile, original)
+        val loaded = AppConfigLoader.load(configFile, emptyMap())
+
+        assertEquals(null, loaded.deepSeek)
+        assertEquals("sk-or-test-secret", loaded.openRouter?.apiKey)
+        assertEquals(original.defaultModel, loaded.defaultModel)
+    }
+
+    @Test
+    fun openRouterEnvironmentKeyCanBeTheOnlyCredential() {
+        val configFile = Files.createTempDirectory("kagent-openrouter-env-test").resolve("config.properties")
+        val loaded = AppConfigLoader.load(configFile, mapOf("OPENROUTER_API_KEY" to "sk-or-env-secret"))
+
+        assertEquals(ProviderId.OPENROUTER, loaded.defaultModel.provider)
+        assertEquals("openrouter/auto", loaded.defaultModel.modelId)
+    }
+
+    @Test
+    fun rejectsDefaultProviderWithoutCredentials() {
+        val configFile = Files.createTempDirectory("kagent-invalid-default-provider-test")
+            .resolve("config.properties")
+        Files.writeString(
+            configFile,
+            "deepseek.api.key=sk-test-local\nkzagent.default.provider=openrouter\n" +
+                "kzagent.default.model=vendor/model\n",
+        )
+
+        assertFailsWith<IllegalArgumentException> {
+            AppConfigLoader.load(configFile, emptyMap())
+        }
+    }
+
+    @Test
     fun usesDefaultsWithEnvironmentKeyOnly() {
         val configFile = Files.createTempDirectory("kagent-config-default-test")
             .resolve("kzagent")
@@ -165,4 +205,3 @@ This is a real second line."""
         assertFalse(redacted.contains("sk-abcdefghijklmnopqrstuvwxyz"))
     }
 }
-

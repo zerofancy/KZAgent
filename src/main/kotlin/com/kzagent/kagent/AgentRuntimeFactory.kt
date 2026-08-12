@@ -9,7 +9,8 @@ import com.kzagent.kagent.agent.SessionReader
 import com.kzagent.kagent.agent.SessionWriter
 import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.config.AppConfigLoader
-import com.kzagent.kagent.llm.DeepSeekClient
+import com.kzagent.kagent.config.ModelSelection
+import com.kzagent.kagent.llm.OpenAiCompatibleClient
 import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.LocalTools
 import com.kzagent.kagent.tools.ModeApprovalPolicy
@@ -29,6 +30,7 @@ data class AgentRuntime(
     val agent: CodingAgent,
     val sessionReader: SessionReader,
     val contextWindowSize: Int,
+    val modelSelection: ModelSelection,
     val todoState: StateFlow<TodoSnapshot>,
 )
 
@@ -38,11 +40,16 @@ object AgentRuntimeFactory {
         approvalPolicy: ApprovalPolicy,
         observer: AgentObserver = NoOpAgentObserver,
         sessionFile: Path? = null,
+        modelSelection: ModelSelection? = null,
     ): AgentRuntime {
         val root = workspace.toAbsolutePath().normalize()
         val sessionsDir = AppDataDir.ensureSessionsDir(root)
         val config = AppConfigLoader.load()
-        val model = DeepSeekClient(config)
+        val selection = modelSelection ?: config.defaultModel
+        val providerConfig = requireNotNull(config.provider(selection.provider)) {
+            "${selection.provider.displayName} is not configured."
+        }
+        val model = OpenAiCompatibleClient(selection.provider, providerConfig, selection)
         val effectiveApprovalPolicy = ModeApprovalPolicy(
             mode = config.approvalMode,
             humanPolicy = approvalPolicy,
@@ -76,14 +83,15 @@ object AgentRuntimeFactory {
             sessionWriter = writer,
             observer = observer,
             instructionsLoader = instructionsLoader,
-            contextWindowSize = config.contextWindowSize,
+            contextWindowSize = selection.contextWindowSize ?: config.contextWindowSize,
             todoStore = todoStore,
         )
         return AgentRuntime(
             workspace = pathGuard.root,
             agent = agent,
             sessionReader = SessionReader(sessionsDir),
-            contextWindowSize = config.contextWindowSize,
+            contextWindowSize = selection.contextWindowSize ?: config.contextWindowSize,
+            modelSelection = selection,
             todoState = todoStore.state,
         )
     }

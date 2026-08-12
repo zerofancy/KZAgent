@@ -34,6 +34,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.AppConfig
+import com.kzagent.kagent.config.ModelSelection
+import com.kzagent.kagent.config.ModelDescriptor
+import com.kzagent.kagent.config.ProviderConfig
+import com.kzagent.kagent.config.ProviderId
 import com.kzagent.kagent.tools.ApprovalMode
 import io.github.composefluent.FluentTheme
 import io.github.composefluent.background.Layer
@@ -68,13 +72,19 @@ internal fun userCommandButtonPresentation(
 
 @Composable
 fun SettingsPanel(
-    initialApiKey: String,
-    initialBaseUrl: String,
-    initialModel: String,
+    initialDeepSeekApiKey: String,
+    initialDeepSeekBaseUrl: String,
+    initialOpenRouterApiKey: String,
+    initialOpenRouterBaseUrl: String,
+    initialDefaultModel: ModelSelection,
     initialContextWindowSize: Int,
     initialSensitivePathProtection: Boolean,
     initialUserPrompt: String,
     initialApprovalMode: ApprovalMode,
+    availableModels: List<ModelDescriptor> = emptyList(),
+    modelsLoading: Boolean = false,
+    modelsError: String? = null,
+    onRefreshModels: () -> Unit = {},
     saving: Boolean = false,
     saveError: String? = null,
     commandAvailable: Boolean = false,
@@ -93,9 +103,14 @@ fun SettingsPanel(
         installed = commandInstalled,
         installing = commandInstalling,
     )
-    var apiKey by remember { mutableStateOf(initialApiKey) }
-    var baseUrl by remember { mutableStateOf(initialBaseUrl) }
-    var model by remember { mutableStateOf(initialModel) }
+    var deepSeekApiKey by remember { mutableStateOf(initialDeepSeekApiKey) }
+    var deepSeekBaseUrl by remember { mutableStateOf(initialDeepSeekBaseUrl) }
+    var openRouterApiKey by remember { mutableStateOf(initialOpenRouterApiKey) }
+    var openRouterBaseUrl by remember { mutableStateOf(initialOpenRouterBaseUrl) }
+    var defaultProvider by remember { mutableStateOf(initialDefaultModel.provider) }
+    var defaultModelId by remember { mutableStateOf(initialDefaultModel.modelId) }
+    var defaultModelContextWindowSize by remember { mutableStateOf(initialDefaultModel.contextWindowSize) }
+    var defaultSupportsToolChoice by remember { mutableStateOf(initialDefaultModel.supportsToolChoice) }
     var contextWindowSizeText by remember { mutableStateOf(initialContextWindowSize.toString()) }
     var sensitivePathProtection by remember { mutableStateOf(initialSensitivePathProtection) }
     var userPrompt by remember { mutableStateOf(initialUserPrompt) }
@@ -104,16 +119,25 @@ fun SettingsPanel(
     var confirmFullMode by remember { mutableStateOf(false) }
 
     fun validate(): Boolean {
-        if (apiKey.isBlank()) {
-            errorMessage = "API Key 不能为空"
+        if (deepSeekApiKey.isBlank() && openRouterApiKey.isBlank()) {
+            errorMessage = "至少需要配置一个 Provider 的 API Key"
             return false
         }
-        if (baseUrl.isBlank()) {
-            errorMessage = "Base URL 不能为空"
+        if (deepSeekApiKey.isNotBlank() && deepSeekBaseUrl.isBlank()) {
+            errorMessage = "DeepSeek Base URL 不能为空"
             return false
         }
-        if (model.isBlank()) {
-            errorMessage = "模型名称不能为空"
+        if (openRouterApiKey.isNotBlank() && openRouterBaseUrl.isBlank()) {
+            errorMessage = "OpenRouter Base URL 不能为空"
+            return false
+        }
+        if ((defaultProvider == ProviderId.DEEPSEEK && deepSeekApiKey.isBlank()) ||
+            (defaultProvider == ProviderId.OPENROUTER && openRouterApiKey.isBlank())) {
+            errorMessage = "默认 Provider 尚未配置 API Key"
+            return false
+        }
+        if (defaultModelId.isBlank()) {
+            errorMessage = "默认模型 ID 不能为空"
             return false
         }
         val ctxSize = contextWindowSizeText.toIntOrNull()
@@ -126,9 +150,18 @@ fun SettingsPanel(
 
     fun submitConfig() {
         val config = AppConfig(
-            apiKey = apiKey.trim(),
-            baseUrl = baseUrl.trim().trimEnd('/'),
-            model = model.trim(),
+            deepSeek = deepSeekApiKey.trim().takeIf(String::isNotEmpty)?.let {
+                ProviderConfig(it, deepSeekBaseUrl.trim().trimEnd('/'))
+            },
+            openRouter = openRouterApiKey.trim().takeIf(String::isNotEmpty)?.let {
+                ProviderConfig(it, openRouterBaseUrl.trim().trimEnd('/'))
+            },
+            defaultModel = ModelSelection(
+                provider = defaultProvider,
+                modelId = defaultModelId.trim(),
+                contextWindowSize = defaultModelContextWindowSize ?: contextWindowSizeText.toInt(),
+                supportsToolChoice = defaultSupportsToolChoice,
+            ),
             sensitivePathProtection = sensitivePathProtection,
             contextWindowSize = contextWindowSizeText.toInt(),
             userPrompt = userPrompt.trim(),
@@ -173,26 +206,96 @@ fun SettingsPanel(
 
                 SettingsSection(
                     title = "模型与 API",
-                    description = "连接 DeepSeek 兼容的 Chat Completions 服务。API Key 只保存在本机配置中。",
+                    description = "配置至少一个模型 Provider。API Key 只保存在本机配置中。",
                 ) {
                     SettingsTextField(
                         label = "DeepSeek API Key",
-                        value = apiKey,
-                        onValueChange = { apiKey = it; errorMessage = null },
+                        value = deepSeekApiKey,
+                        onValueChange = { deepSeekApiKey = it; errorMessage = null },
                         placeholder = "sk-...",
                         visualTransformation = PasswordVisualTransformation(),
                     )
                     SettingsTextField(
-                        label = "Base URL",
-                        value = baseUrl,
-                        onValueChange = { baseUrl = it; errorMessage = null },
+                        label = "DeepSeek Base URL",
+                        value = deepSeekBaseUrl,
+                        onValueChange = { deepSeekBaseUrl = it; errorMessage = null },
                         placeholder = "https://api.deepseek.com",
                     )
                     SettingsTextField(
-                        label = "模型",
-                        value = model,
-                        onValueChange = { model = it; errorMessage = null },
-                        placeholder = "deepseek-chat",
+                        label = "OpenRouter API Key",
+                        value = openRouterApiKey,
+                        onValueChange = { openRouterApiKey = it; errorMessage = null },
+                        placeholder = "sk-or-...",
+                        visualTransformation = PasswordVisualTransformation(),
+                    )
+                    SettingsTextField(
+                        label = "OpenRouter Base URL",
+                        value = openRouterBaseUrl,
+                        onValueChange = { openRouterBaseUrl = it; errorMessage = null },
+                        placeholder = "https://openrouter.ai/api/v1",
+                    )
+                    Text("新会话与 CLI 默认 Provider", style = FluentTheme.typography.bodyStrong)
+                    ProviderId.entries.forEach { provider ->
+                        val configured = when (provider) {
+                            ProviderId.DEEPSEEK -> deepSeekApiKey.isNotBlank()
+                            ProviderId.OPENROUTER -> openRouterApiKey.isNotBlank()
+                        }
+                        val selectProvider = {
+                            defaultProvider = provider
+                            if (provider == ProviderId.DEEPSEEK && defaultModelId.startsWith("openrouter/")) {
+                                defaultModelId = AppConfig.DEFAULT_MODEL
+                            } else if (provider == ProviderId.OPENROUTER && !defaultModelId.contains('/')) {
+                                defaultModelId = "openrouter/auto"
+                            }
+                            defaultModelContextWindowSize = null
+                            defaultSupportsToolChoice = true
+                            errorMessage = null
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable(enabled = configured, onClick = selectProvider),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = defaultProvider == provider,
+                                onClick = selectProvider.takeIf { configured },
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(provider.displayName)
+                        }
+                    }
+                    SettingsTextField(
+                        label = "默认模型 ID（保存后可在对话页从在线目录选择）",
+                        value = defaultModelId,
+                        onValueChange = {
+                            if (it != defaultModelId) {
+                                defaultModelContextWindowSize = null
+                                defaultSupportsToolChoice = true
+                            }
+                            defaultModelId = it
+                            errorMessage = null
+                        },
+                        placeholder = "deepseek-v4-pro 或 openai/gpt-4.1",
+                    )
+                    Text("在线模型目录", style = FluentTheme.typography.bodyStrong)
+                    ModelSelector(
+                        selection = ModelSelection(
+                            provider = defaultProvider,
+                            modelId = defaultModelId.ifBlank { AppConfig.DEFAULT_MODEL },
+                            contextWindowSize = defaultModelContextWindowSize,
+                            supportsToolChoice = defaultSupportsToolChoice,
+                        ),
+                        models = availableModels,
+                        loading = modelsLoading,
+                        error = modelsError,
+                        enabled = true,
+                        onSelect = { selected ->
+                            defaultProvider = selected.provider
+                            defaultModelId = selected.modelId
+                            defaultModelContextWindowSize = selected.contextWindowSize
+                            defaultSupportsToolChoice = selected.supportsToolChoice
+                            errorMessage = null
+                        },
+                        onRefresh = onRefreshModels,
                     )
                     SettingsTextField(
                         label = "上下文窗口大小",
