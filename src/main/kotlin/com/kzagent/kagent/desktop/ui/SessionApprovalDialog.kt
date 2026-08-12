@@ -52,10 +52,12 @@ internal fun resolveApprovalKeyAction(isEnter: Boolean, isEscape: Boolean, event
 internal fun ApprovalDialog(approval: PendingApproval) {
     val focusRequester = remember { FocusRequester() }
     val scrollState = rememberScrollState()
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     ContentDialog(
         title = if (approval.highRisk) "高风险操作审批" else approval.request.actionLabel(), visible = true,
         content = {
+            // ContentDialog mounts its content in a separate overlay composition. Request focus
+            // from that composition so the requester is already attached to the focusable node.
+            LaunchedEffect(focusRequester) { focusRequester.requestFocus() }
             Box(Modifier.focusRequester(focusRequester).focusable().fillMaxWidth().heightIn(max = 320.dp)
                 .onKeyEvent { event ->
                     when (resolveApprovalKeyAction(event.key == Key.Enter, event.key == Key.Escape,
