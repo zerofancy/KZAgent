@@ -14,6 +14,7 @@ import com.kzagent.kagent.config.ModelSelection
 import com.kzagent.kagent.config.ProviderId
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalPolicy
+import com.kzagent.kagent.tools.UserQuestionPrompter
 import com.kzagent.kagent.todo.TodoSnapshot
 import java.nio.file.Path
 import kotlinx.coroutines.CoroutineDispatcher
@@ -74,6 +75,9 @@ class SessionManager internal constructor(
         AppConfig.DEFAULT_MODEL,
         AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
     ),
+    private val userQuestionPrompter: UserQuestionPrompter = UserQuestionPrompter { questions ->
+        questions.map { com.kzagent.kagent.tools.UserQuestionAnswer(null) }
+    },
 ) {
     val sessions: SnapshotStateList<SessionData> = mutableStateListOf()
     var activeSessionIndex by mutableStateOf(0)
@@ -219,6 +223,7 @@ class SessionManager internal constructor(
             AgentRuntimeFactory.create(
                 workspace = session.workspace,
                 approvalPolicy = approvalPolicy,
+                userQuestionPrompter = userQuestionPrompter,
                 observer = observer,
                 sessionFile = session.sessionFile,
                 modelSelection = session.modelSelection,

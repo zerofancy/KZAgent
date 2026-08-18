@@ -30,7 +30,7 @@ KZAgent 的核心思想是让大语言模型（LLM）通过工具调用（Tool C
 4. **结果反馈** → 工具执行结果返回给模型，继续推理
 5. **输出答案** → 模型给出最终回答
 
-工具调用采用**积分配额（Tool Quota）**控制：每个工具消耗不同积分（本地只读操作 1 分、`apply_patch` 2 分、`run_command` / `fetch_web_page` 5 分），初始配额 100 分；
+工具调用采用**积分配额（Tool Quota）**控制：每个工具消耗不同积分（本地只读操作 1 分、`apply_patch` 2 分、`run_command` / `fetch_web_page` 5 分、`ask_user` 每题 1 分），初始配额 100 分；
 配额偏低时模型会收到警告并自动扩容 50 分，不限扩容次数，从而灵活限制资源消耗而无需硬编码轮数上限。
 
 ---
@@ -236,6 +236,7 @@ workspace/
          ├── apply_patch    (Git 补丁编辑，无需审批)
          ├── run_command    (按自动 / 手动 / 全部放行策略审批)
          ├── fetch_web_page (公开静态网页获取，无需审批)
+         ├── ask_user       (向用户发起澄清提问，每题 1 积分)
          ├── todo_read      (查看会话 Todo，零积分)
          └── todo_write     (原子更新会话 Todo，零积分)
 ```
@@ -274,6 +275,7 @@ Agent 可以通过以下工具与工作区和公开网页交互：
 | `apply_patch` | ❌ | 用单个 Git unified diff 更新、创建或删除多个文件 |
 | `run_command` | ✅ | 按全局审批模式执行带执行超时限制的 shell 命令 |
 | `fetch_web_page` | ❌ | 获取公开静态 HTTP(S) 页面，返回请求元数据、Markdown 正文和最多 20 个关键链接 |
+| `ask_user` | ❌ | 向用户顺序提出澄清问题；每题最多 3 个预置选项，可自由输入或跳过，每题消耗 1 积分 |
 | `todo_read` | ❌ | 读取当前 session 的完整分层 Todo 和叶子任务进度，消耗 0 积分 |
 | `todo_write` | ❌ | 以原子批次创建、修改、完成/重开或删除 Todo，消耗 0 积分 |
 
@@ -287,6 +289,7 @@ Agent 可以通过以下工具与工作区和公开网页交互：
 - **命令执行**（`run_command`）统一经过当前审批模式；风险分析用于决定自动判断或人工确认，不再直接剥夺用户授权执行的能力
 - **网页获取**（`fetch_web_page`）仅接受单个公开 HTTP(S) URL。HTML 会先清理脚本、样式、表单和页面框架，再由一次无工具、无历史的专用子代理提取正文；完整 HTML 不会返回主 Agent
 - **Todo 工具**不访问工作区，也不需要审批。`todo_write` 的 `operations` 按顺序执行并整体提交，支持 `create`、`update`、`set_status`、`delete`；任一操作失败时不会保存整批修改
+- **用户提问**（`ask_user`）在桌面端逐题显示 Fluent 弹窗，在 CLI 逐题提示输入；每题默认等待 5 分钟，超时、取消或空输入会跳过当前题并继续后续问题。
   - Todo 使用唯一 `id` 和可选 `parent_id` 组成多层结构；完成/重开父项会级联整棵子树，父项状态也会根据直接子项自动汇总
   - 持久化状态只有 `pending` 和 `completed`；工具输入中的 `in_progress` 会兼容归一化为 `pending`
   - 模型应在每个阶段完成后及时更新对应项目，不使用重复的 `pending` 表示“开始执行”；无实际变化的批次返回 `changed:false` 且不增加 revision

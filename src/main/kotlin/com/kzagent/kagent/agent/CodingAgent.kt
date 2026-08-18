@@ -153,7 +153,32 @@ class CodingAgent(
                 val tool = tools.get(toolCall.name)
                 observer.onToolCallStarted(toolCall.name, toolCall.argumentsJson)
 
-                if (tool != null && !quota.canAfford(tool.cost)) {
+                val args = if (tool != null) {
+                    try {
+                        json.parseToJsonElement(toolCall.argumentsJson) as? JsonObject
+                            ?: throw IllegalArgumentException("Tool arguments must be a JSON object.")
+                    } catch (error: Exception) {
+                        val result = ToolResult.error(error.message ?: error.toString())
+                        observer.onToolResult(toolCall.name, result)
+                        val toolMessage = AgentMessage.Tool(toolCall.id, toolCall.name, result.content, true)
+                        messages += toolMessage
+                        sessionWriter.append(toolMessage)
+                        continue
+                    }
+                } else null
+                val cost = if (tool != null) {
+                    try {
+                        tool.costForArguments(requireNotNull(args)).also { require(it >= 0) { "Tool cost must not be negative." } }
+                    } catch (error: Exception) {
+                        val result = ToolResult.error(error.message ?: error.toString())
+                        observer.onToolResult(toolCall.name, result)
+                        val toolMessage = AgentMessage.Tool(toolCall.id, toolCall.name, result.content, true)
+                        messages += toolMessage
+                        sessionWriter.append(toolMessage)
+                        continue
+                    }
+                } else 0
+                if (tool != null && !quota.canAfford(cost)) {
                     if (quota.isLow) {
                         val extended = quota.extend()
                         if (extended) {
@@ -163,8 +188,8 @@ class CodingAgent(
                             messages += extMsg
                         }
                     }
-                    if (!quota.canAfford(tool.cost)) {
-                        val errorMsg = "配额不足：${toolCall.name} 需要 ${tool.cost} 积分，剩余 ${quota.remaining} 积分。任务终止。"
+                    if (!quota.canAfford(cost)) {
+                        val errorMsg = "配额不足：${toolCall.name} 需要 $cost 积分，剩余 ${quota.remaining} 积分。任务终止。"
                         val toolMessage = AgentMessage.Tool(
                             toolCallId = toolCall.id,
                             name = toolCall.name,
@@ -179,16 +204,14 @@ class CodingAgent(
                 }
 
                 if (tool != null) {
-                    quota.deduct(tool.cost)
+                    quota.deduct(cost)
                 }
 
                 val rawResult = if (tool == null) {
                     ToolResult.error("Unknown tool: ${toolCall.name}")
                 } else {
                     try {
-                        val args = json.parseToJsonElement(toolCall.argumentsJson) as? JsonObject
-                            ?: throw IllegalArgumentException("Tool arguments must be a JSON object.")
-                        tool.handler(args)
+                        tool.handler(requireNotNull(args))
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Exception) {

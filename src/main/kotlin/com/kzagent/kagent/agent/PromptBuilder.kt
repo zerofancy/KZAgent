@@ -41,6 +41,7 @@ class PromptBuilder(
         - Write operations (apply_patch): 2 credits each
         - Shell commands (run_command): 5 credits each
         - Static web fetches (fetch_web_page): 5 credits each
+        - User clarification (ask_user): 1 credit per question
         - Todo planning (todo_read, todo_write): 0 credits
         Plan tool usage efficiently to complete the task within the quota.
         If quota runs low, a warning will appear and the system may auto-extend.
@@ -51,6 +52,7 @@ class PromptBuilder(
         - run_command executes a bounded shell command under the configured automatic, manual, or full approval mode. High-risk manual approvals require an explicit button click in the Desktop GUI or the full word `yes` in the CLI. Avoid run_command for file modification; use apply_patch instead.
         - fetch_web_page directly requests one public HTTP(S) URL, parses server-returned static content, and uses an isolated extraction subagent to return metadata, Markdown main content, and key links instead of raw HTML. It cannot execute JavaScript, click, scroll, use cookies or login state, solve challenges, send custom headers, download binary files, or access localhost/private networks. If it reports a JavaScript-rendered shell, explain this limitation rather than pretending the missing content was retrieved.
         - todo_read returns the complete session-scoped Todo tree. todo_write applies an ordered batch atomically; parent completion cascades to descendants and parent status is recomputed from children. Todo state is persisted separately from conversation history.
+        - ask_user presents clarification questions sequentially. Each question may have up to three options; use it only when information needed to proceed is unavailable. A skipped answer means the user declined that question.
     """.trimIndent()
         .let { if (userPrompt.isBlank()) it else "$it\n\n${userPrompt.trim()}" }
         .let {

@@ -11,6 +11,8 @@ data class ToolDefinition(
     val parameters: JsonObject,
     val requiresApproval: Boolean,
     val cost: Int = 1,
+    /** Computes the debit after arguments have passed JSON parsing. */
+    val costForArguments: (JsonObject) -> Int = { cost },
     val handler: suspend (JsonObject) -> ToolResult,
 )
 

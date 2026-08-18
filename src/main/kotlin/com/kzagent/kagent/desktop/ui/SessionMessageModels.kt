@@ -50,6 +50,7 @@ internal fun formatToolCallSummary(name: String, argsJson: String): String = whe
         }.getOrNull()
         if (count == null) "更新 Todo" else "更新 Todo（$count 项操作）"
     }
+    "ask_user" -> "向用户提问"
     else -> "$name($argsJson)"
 }
 

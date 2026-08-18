@@ -7,8 +7,15 @@ import com.kzagent.kagent.config.SecretRedactor
 import com.kzagent.kagent.config.FileKitPaths
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.TerminalApprovalPolicy
+import com.kzagent.kagent.tools.UserQuestion
+import com.kzagent.kagent.tools.UserQuestionAnswer
+import com.kzagent.kagent.tools.UserQuestionPrompter
+import kotlinx.coroutines.Dispatchers
 import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.time.Duration
 
 fun main(args: Array<String>) {
     FileKitPaths.initialize()
@@ -28,12 +35,12 @@ fun runCli(args: Array<String>): Int = runBlocking {
                     printUsage()
                     return@runBlocking 0
                 }
-                val runtime = AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy)
+                val runtime = AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy, TerminalUserQuestionPrompter)
                 val answer = runtime.agent.run(prompt)
                 println(answer)
             }
             "chat" -> {
-                val runtime = AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy)
+                val runtime = AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy, TerminalUserQuestionPrompter)
                 val initialPrompt = effectiveArgs.drop(1).joinToString(" ").takeIf { it.isNotBlank() }
                 interactiveChat(workspace, runtime.agent, initialPrompt)
             }
@@ -43,6 +50,25 @@ fun runCli(args: Array<String>): Int = runBlocking {
     } catch (e: Exception) {
         System.err.println("Error: ${SecretRedactor.redact(e.message ?: e.toString())}")
         1
+    }
+}
+
+internal object TerminalUserQuestionPrompter : UserQuestionPrompter {
+    private val timeout = Duration.ofMinutes(5)
+    override suspend fun ask(questions: List<UserQuestion>): List<UserQuestionAnswer> = questions.mapIndexed { index, question ->
+        println()
+        println("问题 ${index + 1}/${questions.size}: ${question.question}")
+        question.options.forEachIndexed { optionIndex, option ->
+            println("${optionIndex + 1}. ${option.label} — ${option.description}")
+        }
+        print("输入选项编号或自由答案（直接回车跳过，5 分钟超时）：")
+        val input = withTimeoutOrNull(timeout.toMillis()) {
+            withContext(Dispatchers.IO) { readlnOrNull() }
+        }?.trim()
+        val answer = input?.takeIf { it.isNotEmpty() }?.let { value ->
+            value.toIntOrNull()?.let { number -> question.options.getOrNull(number - 1)?.label } ?: value
+        }
+        UserQuestionAnswer(answer)
     }
 }
 

@@ -12,6 +12,7 @@ import com.kzagent.kagent.config.AppConfigLoader
 import com.kzagent.kagent.config.ModelSelection
 import com.kzagent.kagent.llm.OpenAiCompatibleClient
 import com.kzagent.kagent.tools.ApprovalPolicy
+import com.kzagent.kagent.tools.AskUserTools
 import com.kzagent.kagent.tools.LocalTools
 import com.kzagent.kagent.tools.ModeApprovalPolicy
 import com.kzagent.kagent.tools.ModelApprovalAgent
@@ -19,6 +20,7 @@ import com.kzagent.kagent.tools.PathGuard
 import com.kzagent.kagent.tools.TodoTools
 import com.kzagent.kagent.tools.WebContentExtractor
 import com.kzagent.kagent.tools.WebPageService
+import com.kzagent.kagent.tools.UserQuestionPrompter
 import com.kzagent.kagent.todo.TodoFiles
 import com.kzagent.kagent.todo.TodoSnapshot
 import com.kzagent.kagent.todo.TodoStore
@@ -38,6 +40,7 @@ object AgentRuntimeFactory {
     fun create(
         workspace: Path,
         approvalPolicy: ApprovalPolicy,
+        userQuestionPrompter: UserQuestionPrompter,
         observer: AgentObserver = NoOpAgentObserver,
         sessionFile: Path? = null,
         modelSelection: ModelSelection? = null,
@@ -74,7 +77,7 @@ object AgentRuntimeFactory {
         ).registry()
         val agent = CodingAgent(
             model = model,
-            tools = localTools + TodoTools(todoStore).registry(),
+            tools = localTools + TodoTools(todoStore).registry() + AskUserTools(userQuestionPrompter).registry(),
             promptBuilder = PromptBuilder(
                 workspace = pathGuard.root,
                 userPrompt = config.userPrompt,

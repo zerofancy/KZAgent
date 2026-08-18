@@ -43,6 +43,8 @@ import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.ApprovalResult
 import com.kzagent.kagent.tools.ApprovalSource
 import com.kzagent.kagent.tools.ToolResult
+import com.kzagent.kagent.tools.UserQuestionAnswer
+import com.kzagent.kagent.tools.UserQuestionPrompter
 import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
 import io.github.composefluent.component.Text as FluentText
@@ -67,6 +69,7 @@ internal fun KZAgentDesktopApp(
 ) {
     var input by remember { mutableStateOf("") }
     val pendingApprovals = remember { mutableStateListOf<PendingApproval>() }
+    val pendingUserQuestions = remember { mutableStateListOf<PendingUserQuestions>() }
     var showDeleteConfirmIndex by remember { mutableStateOf(-1) }
     var showRenameDialogIndex by remember { mutableStateOf(-1) }
     var renameText by remember { mutableStateOf("") }
@@ -137,8 +140,21 @@ internal fun KZAgentDesktopApp(
         }
     }
 
+    val userQuestionPrompter = remember {
+        UserQuestionPrompter { questions ->
+            suspendCancellableCoroutine { continuation ->
+                lateinit var pending: PendingUserQuestions
+                pending = PendingUserQuestions(questions) { answers ->
+                    pendingUserQuestions.remove(pending)
+                    if (continuation.isActive) continuation.resume(answers)
+                }
+                continuation.invokeOnCancellation { pendingUserQuestions.remove(pending) }
+                pendingUserQuestions.add(pending)
+            }
+        }
+    }
     val sessionManager = remember {
-        SessionManager(approvalPolicy)
+        SessionManager(approvalPolicy, userQuestionPrompter = userQuestionPrompter)
     }
 
     LaunchedEffect(sessionManager, initialWorkspace, createStartupSession, configLoaded, savedConfig?.defaultModel) {
@@ -356,6 +372,7 @@ internal fun KZAgentDesktopApp(
                     "fetch_web_page" -> "正在获取并解析网页..."
                     "todo_read" -> "正在查看 Todo..."
                     "todo_write" -> "正在更新 Todo..."
+                    "ask_user" -> "等待用户回答..."
                     else -> "执行工具：$name"
                 }
             }
@@ -687,6 +704,9 @@ internal fun KZAgentDesktopApp(
 
     pendingApprovals.firstOrNull()?.let { approval ->
         ApprovalDialog(approval)
+    }
+    pendingUserQuestions.firstOrNull()?.let { pending ->
+        UserQuestionDialog(pending)
     }
 
     // Compress confirmation dialog
