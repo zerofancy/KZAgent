@@ -235,7 +235,7 @@ class SessionManager internal constructor(
         sessionFile = stored.sessionFile,
         conversationHistory = stored.history,
         messages = mutableStateListOf<DisplayMessage>().also {
-            it.addAll(stored.history.toDisplayMessages())
+            it.addAll(stored.historyEntries.toDisplayMessagesWithTimestamps())
         },
         usedTokens = stored.usedTokens,
         status = "就绪",

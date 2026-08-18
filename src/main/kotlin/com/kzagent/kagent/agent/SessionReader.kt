@@ -12,8 +12,11 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 import java.util.Comparator
 import java.util.stream.Collectors
+
+data class SessionEntry(val message: AgentMessage, val timestampMillis: Long?)
 
 class SessionReader(private val sessionsDir: Path) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -31,15 +34,22 @@ class SessionReader(private val sessionsDir: Path) {
     }
 
     fun loadFile(path: Path): List<AgentMessage> {
+        return loadEntries(path).map { it.message }
+    }
+
+    fun loadEntries(path: Path): List<SessionEntry> {
         val lines = Files.readAllLines(path, StandardCharsets.UTF_8)
-        val history = mutableListOf<AgentMessage>()
+        val history = mutableListOf<SessionEntry>()
         for (line in lines.filter { it.isNotBlank() }) {
             val obj = json.parseToJsonElement(line).jsonObject
             if (obj["role"]?.jsonPrimitive?.content == "context_snapshot") {
                 history.clear()
-                history += obj["messages"]?.jsonArray.orEmpty().map { parseObject(it.jsonObject) }
+                history += obj["messages"]?.jsonArray.orEmpty().map { messageElement ->
+                    val messageObj = messageElement.jsonObject
+                    SessionEntry(parseObject(messageObj), parseTime(messageObj))
+                }
             } else {
-                history += parseObject(obj)
+                history += SessionEntry(parseObject(obj), parseTime(obj))
             }
         }
         return history
@@ -77,6 +87,11 @@ class SessionReader(private val sessionsDir: Path) {
             )
             else -> throw IllegalArgumentException("Unknown role in session: $role")
         }
+    }
+
+    private fun parseTime(obj: JsonObject): Long? {
+        val text = obj["time"]?.jsonPrimitive?.content ?: return null
+        return runCatching { Instant.parse(text).toEpochMilli() }.getOrNull()
     }
 
     fun loadLatestHistory(): List<AgentMessage>? {

@@ -31,6 +31,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.composefluent.component.Icon as FluentIcon
@@ -38,8 +40,12 @@ import io.github.composefluent.component.SubtleButton
 import io.github.composefluent.icons.Icons
 import io.github.composefluent.icons.regular.ArrowDown
 import io.github.composefluent.icons.regular.ArrowUp
+import io.github.composefluent.icons.regular.Copy
 import kotlinx.coroutines.launch
 import java.nio.file.Path
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @Composable
 internal fun MessageList(sessionId: String, messages: MutableList<DisplayMessage>, workspace: Path,
@@ -127,6 +133,7 @@ internal fun messageListScrollBehavior(previousSessionId: String?, activeSession
 }
 
 @Composable
+@Suppress("DEPRECATION")
 internal fun MessageRow(index: Int, message: DisplayMessage, messages: MutableList<DisplayMessage>, workspace: Path) {
     val (title, avatar) = when (message.role) {
         "user" -> "你" to "你"
@@ -157,6 +164,7 @@ internal fun MessageRow(index: Int, message: DisplayMessage, messages: MutableLi
         "tool_result" -> "（展开查看执行结果）"
         else -> ""
     }
+    val clipboardManager = LocalClipboardManager.current
     Row(Modifier.fillMaxWidth().background(background, MaterialTheme.shapes.medium)
         .border(1.dp, borderColor, MaterialTheme.shapes.medium).padding(14.dp)
         .let { if (message.collapsible) it.clickable { toggleCollapse(index, messages) } else it }) {
@@ -173,6 +181,14 @@ internal fun MessageRow(index: Int, message: DisplayMessage, messages: MutableLi
                     Text(if (message.collapsed) "›" else "⌄", style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                message.timestampMillis?.let { timestamp ->
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        formatMessageTimestamp(timestamp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Spacer(Modifier.height(7.dp))
             if (message.collapsible && message.collapsed) {
@@ -180,9 +196,31 @@ internal fun MessageRow(index: Int, message: DisplayMessage, messages: MutableLi
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else MessageContent(message, workspace)
         }
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.align(Alignment.Bottom)) {
+            SubtleButton(
+                onClick = { clipboardManager.setText(AnnotatedString(message.content)) },
+                modifier = Modifier.size(28.dp),
+                iconOnly = true,
+            ) {
+                FluentIcon(
+                    Icons.Default.Copy,
+                    contentDescription = "复制消息",
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 
 internal fun toggleCollapse(index: Int, messages: MutableList<DisplayMessage>) {
     messages[index] = messages[index].copy(collapsed = !messages[index].collapsed)
 }
+
+internal fun formatMessageTimestamp(timestampMillis: Long): String {
+    return MESSAGE_TIMESTAMP_FORMATTER.format(Instant.ofEpochMilli(timestampMillis))
+}
+
+private val MESSAGE_TIMESTAMP_FORMATTER: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())

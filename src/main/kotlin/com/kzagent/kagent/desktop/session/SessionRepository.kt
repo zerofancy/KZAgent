@@ -1,6 +1,7 @@
 package com.kzagent.kagent.desktop
 
 import com.kzagent.kagent.agent.SessionReader
+import com.kzagent.kagent.agent.SessionEntry
 import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.config.ModelSelection
@@ -25,6 +26,7 @@ internal data class StoredSession(
     val workspace: Path,
     val sessionFile: Path,
     val history: List<AgentMessage> = emptyList(),
+    val historyEntries: List<SessionEntry> = emptyList(),
     val usedTokens: Int = 0,
     val modelSelection: ModelSelection? = null,
 )
@@ -102,13 +104,15 @@ internal class FileSessionRepository(
             }
             ?: return null
         val reader = SessionReader(file.parent)
-        val history = reader.loadFile(file).filter { it !is AgentMessage.System }
+        val historyEntries = reader.loadEntries(file).filter { it.message !is AgentMessage.System }
+        val history = historyEntries.map { it.message }
         val stored = StoredSession(
             id = file.fileName.toString().removeSuffix(".jsonl"),
             name = readName(file) ?: sessionDisplayName(file),
             workspace = workspace,
             sessionFile = file,
             history = history,
+            historyEntries = historyEntries,
             usedTokens = reader.loadTokenCount(file),
             modelSelection = readModel(file),
         )

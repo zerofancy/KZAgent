@@ -2,6 +2,8 @@ package com.kzagent.kagent.desktop
 
 import com.kzagent.kagent.llm.AgentMessage
 import java.nio.file.Files
+import java.time.Instant
+import java.time.ZoneId
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
@@ -71,5 +73,15 @@ class DesktopAppToolSummaryTest {
         val workspace = parent.resolve("GoProxyCopy").also(Files::createDirectories)
 
         assertEquals("GoProxyCopy", workspaceProjectName(workspace))
+    }
+
+    @Test
+    fun formatsMessageTimestampInSystemZone() {
+        val timestamp = Instant.parse("2026-01-02T03:04:05Z")
+        val expected = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")
+            .withZone(ZoneId.systemDefault())
+            .format(timestamp)
+
+        assertEquals(expected, formatMessageTimestamp(timestamp.toEpochMilli()))
     }
 }

@@ -47,6 +47,7 @@ import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
 import io.github.composefluent.component.Text as FluentText
 import io.github.composefluent.component.TextField as FluentTextField
+import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -309,6 +310,7 @@ internal fun KZAgentDesktopApp(
                     DisplayMessage(
                         "tool_result",
                         "⚠️ 上下文使用率达 $usagePercent%，自动触发压缩...",
+                        timestampMillis = Instant.now().toEpochMilli(),
                     ),
                 )
             }
@@ -319,6 +321,7 @@ internal fun KZAgentDesktopApp(
                     DisplayMessage(
                         "tool_result",
                         "✅ 上下文已自动压缩，保留最近消息并生成了历史摘要。",
+                        timestampMillis = Instant.now().toEpochMilli(),
                     ),
                 )
             }
@@ -326,11 +329,19 @@ internal fun KZAgentDesktopApp(
                 session.status = "请求模型（第 ${turn} 轮）..."
             }
             override suspend fun onAssistantMessage(content: String) {
-                session.messages.add(DisplayMessage("assistant", content))
+                session.messages.add(DisplayMessage("assistant", content, timestampMillis = Instant.now().toEpochMilli()))
             }
             override suspend fun onToolCallStarted(name: String, argsJson: String) {
                 val summary = formatToolCallSummary(name, argsJson)
-                session.messages.add(DisplayMessage("tool_call", summary, collapsible = true, collapsed = false))
+                session.messages.add(
+                    DisplayMessage(
+                        "tool_call",
+                        summary,
+                        collapsible = true,
+                        collapsed = false,
+                        timestampMillis = Instant.now().toEpochMilli(),
+                    ),
+                )
                 session.status = when (name) {
                     "run_command" -> when (savedConfig?.approvalMode) {
                         com.kzagent.kagent.tools.ApprovalMode.MANUAL -> "等待命令审批..."
@@ -349,7 +360,15 @@ internal fun KZAgentDesktopApp(
                 }
             }
             override suspend fun onToolResult(name: String, result: ToolResult) {
-                session.messages.add(DisplayMessage("tool_result", result.content, collapsible = true, collapsed = false))
+                session.messages.add(
+                    DisplayMessage(
+                        "tool_result",
+                        result.content,
+                        collapsible = true,
+                        collapsed = false,
+                        timestampMillis = Instant.now().toEpochMilli(),
+                    ),
+                )
                 session.status = when (result.approvalSource) {
                     ApprovalSource.STATIC_RULE -> "静态规则已放行：$name"
                     ApprovalSource.APPROVAL_AGENT ->
@@ -403,7 +422,13 @@ internal fun KZAgentDesktopApp(
             val compressed = session.runtime!!.agent.compressHistory(session.conversationHistory)
             session.conversationHistory = compressed
             session.usedTokens = estimateContextTokens(compressed)
-            session.messages.add(DisplayMessage("tool_result", "✅ 上下文已压缩。之前的对话已总结为摘要，保留最近几条消息。"))
+            session.messages.add(
+                DisplayMessage(
+                    "tool_result",
+                    "✅ 上下文已压缩。之前的对话已总结为摘要，保留最近几条消息。",
+                    timestampMillis = Instant.now().toEpochMilli(),
+                ),
+            )
             session.status = "就绪"
             // Auto-update session title from compression summary
             val summary = compressed.firstOrNull()
@@ -591,7 +616,13 @@ internal fun KZAgentDesktopApp(
                                         session.isBusy = true
                                         session.error = null
                                         session.status = "准备发送..."
-                                        session.messages.add(DisplayMessage("user", prompt))
+                                        session.messages.add(
+                                            DisplayMessage(
+                                                "user",
+                                                prompt,
+                                                timestampMillis = Instant.now().toEpochMilli(),
+                                            ),
+                                        )
                                         val sessionId = session.id
                                         val titleRevision = session.titleRevision
                                         val job = scope.launch {

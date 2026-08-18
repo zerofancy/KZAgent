@@ -1,27 +1,39 @@
 package com.kzagent.kagent.desktop
 
 import com.kzagent.kagent.llm.AgentMessage
+import com.kzagent.kagent.agent.SessionEntry
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 data class DisplayMessage(val role: String, val content: String, val collapsible: Boolean = false,
-    val collapsed: Boolean = true)
+    val collapsed: Boolean = true, val timestampMillis: Long? = null)
 
-fun List<AgentMessage>.toDisplayMessages(): List<DisplayMessage> = mapNotNull { message ->
-    when (message) {
-        is AgentMessage.User -> DisplayMessage("user", message.content)
-        is AgentMessage.Assistant -> when {
-            !message.content.isNullOrBlank() -> DisplayMessage("assistant", message.content)
-            message.toolCalls.isNotEmpty() -> DisplayMessage("tool_call",
-                message.toolCalls.joinToString("\n") { formatToolCallSummary(it.name, it.argumentsJson) }, collapsible = true)
-            else -> null
-        }
-        is AgentMessage.Tool -> DisplayMessage("tool_result",
-            if (message.isError) "错误: ${message.content}" else message.content, collapsible = true)
-        is AgentMessage.System, is AgentMessage.ScopedInstruction, is AgentMessage.Summary -> null
+fun List<AgentMessage>.toDisplayMessages(): List<DisplayMessage> = mapNotNull { it.toDisplayMessage(null) }
+
+fun List<SessionEntry>.toDisplayMessagesWithTimestamps(): List<DisplayMessage> =
+    mapNotNull { it.message.toDisplayMessage(it.timestampMillis) }
+
+internal fun AgentMessage.toDisplayMessage(timestampMillis: Long?): DisplayMessage? = when (this) {
+    is AgentMessage.User -> DisplayMessage("user", content, timestampMillis = timestampMillis)
+    is AgentMessage.Assistant -> when {
+        !content.isNullOrBlank() -> DisplayMessage("assistant", content, timestampMillis = timestampMillis)
+        toolCalls.isNotEmpty() -> DisplayMessage(
+            "tool_call",
+            toolCalls.joinToString("\n") { formatToolCallSummary(it.name, it.argumentsJson) },
+            collapsible = true,
+            timestampMillis = timestampMillis,
+        )
+        else -> null
     }
+    is AgentMessage.Tool -> DisplayMessage(
+        "tool_result",
+        if (isError) "错误: $content" else content,
+        collapsible = true,
+        timestampMillis = timestampMillis,
+    )
+    is AgentMessage.System, is AgentMessage.ScopedInstruction, is AgentMessage.Summary -> null
 }
 
 internal fun formatToolCallSummary(name: String, argsJson: String): String = when (name) {
