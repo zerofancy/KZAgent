@@ -1,4 +1,4 @@
-# KZAgent — Kotlin AI Coding Agent (MVP)
+# KZAgent — Kotlin AI Coding Agent
 
 **KZAgent** 是一个用 **Kotlin/JVM + Compose Desktop** 构建的轻量级 AI 编程助手。它支持 **DeepSeek** 与 **OpenRouter** 的 OpenAI-compatible Chat Completions API，结合本地文件、命令执行和静态网页获取工具，提供可按会话切换 Provider/模型的桌面聊天界面，并保留 `ask` / `chat` 命令行模式及 `app` 桌面启动命令。
 
@@ -480,4 +480,4 @@ OPENROUTER_API_KEY=sk-or-xxxxxxxxxxxx   # 优先级高于 config.properties
 
 ## License
 
-本项目为 MVP 阶段的开源工具。
+本项目为开源工具。
