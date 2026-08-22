@@ -271,7 +271,7 @@ class LocalTools(
         parameters = objectSchema(
             properties = mapOf(
                 "command" to stringSchema("Shell command to run from the workspace root."),
-                "timeout_seconds" to intSchema("Maximum command execution time in seconds, 1 to 120. Defaults to 30."),
+                "timeout_seconds" to intSchema("Maximum command execution time in seconds, 1 to 600. Defaults to 30."),
             ),
             required = listOf("command"),
         ),
@@ -357,7 +357,7 @@ class LocalTools(
     private fun validateBasicCommand(command: String, timeoutSeconds: Int) {
         val trimmed = command.trim()
         if (trimmed.isEmpty()) throw IllegalArgumentException("command must not be empty.")
-        require(timeoutSeconds in 1..120) { "timeout_seconds must be between 1 and 120." }
+        require(timeoutSeconds in 1..600) { "timeout_seconds must be between 1 and 600." }
     }
 
     private suspend fun safeToolResult(block: suspend () -> ToolResult): ToolResult =
