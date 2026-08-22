@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -155,6 +156,12 @@ internal fun KZAgentDesktopApp(
     }
     val sessionManager = remember {
         SessionManager(approvalPolicy, userQuestionPrompter = userQuestionPrompter)
+    }
+    DisposableEffect(sessionManager, modelCatalogService) {
+        onDispose {
+            sessionManager.close()
+            modelCatalogService.close()
+        }
     }
 
     LaunchedEffect(sessionManager, initialWorkspace, createStartupSession, configLoaded, savedConfig?.defaultModel) {

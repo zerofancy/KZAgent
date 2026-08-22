@@ -35,14 +35,16 @@ fun runCli(args: Array<String>): Int = runBlocking {
                     printUsage()
                     return@runBlocking 0
                 }
-                val runtime = AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy, TerminalUserQuestionPrompter)
-                val answer = runtime.agent.run(prompt)
-                println(answer)
+                AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy, TerminalUserQuestionPrompter).use { runtime ->
+                    val answer = runtime.agent.run(prompt)
+                    println(answer)
+                }
             }
             "chat" -> {
-                val runtime = AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy, TerminalUserQuestionPrompter)
-                val initialPrompt = effectiveArgs.drop(1).joinToString(" ").takeIf { it.isNotBlank() }
-                interactiveChat(workspace, runtime.agent, initialPrompt)
+                AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy, TerminalUserQuestionPrompter).use { runtime ->
+                    val initialPrompt = effectiveArgs.drop(1).joinToString(" ").takeIf { it.isNotBlank() }
+                    interactiveChat(workspace, runtime.agent, initialPrompt)
+                }
             }
             else -> printUsage()
         }

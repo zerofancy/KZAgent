@@ -78,7 +78,7 @@ class SessionManager internal constructor(
     private val userQuestionPrompter: UserQuestionPrompter = UserQuestionPrompter { questions ->
         questions.map { com.kzagent.kagent.tools.UserQuestionAnswer(null) }
     },
-) {
+) : AutoCloseable {
     val sessions: SnapshotStateList<SessionData> = mutableStateListOf()
     var activeSessionIndex by mutableStateOf(0)
         private set
@@ -186,6 +186,7 @@ class SessionManager internal constructor(
             session.currentJob?.cancel()
             session.currentJob = null
             session.isBusy = false
+            session.runtime?.close()
             session.runtime = null
             session.error = null
             session.status = "正在加载..."
@@ -195,6 +196,7 @@ class SessionManager internal constructor(
     suspend fun updateModel(session: SessionData, selection: ModelSelection) {
         check(!session.isBusy) { "Cannot switch models while the session is busy." }
         repository.updateModel(session.sessionFile, selection)
+        session.runtime?.close()
         session.runtime = null
         session.modelSelection = selection
         session.error = null
@@ -206,6 +208,7 @@ class SessionManager internal constructor(
         val session = sessions[index]
         session.currentJob?.cancelAndJoin()
         repository.delete(session.sessionFile)
+        session.runtime?.close()
         sessions.removeAt(index)
         if (activeSessionIndex >= sessions.size) {
             activeSessionIndex = sessions.size - 1
@@ -216,6 +219,14 @@ class SessionManager internal constructor(
     }
 
     fun activeSession(): SessionData = sessions[activeSessionIndex]
+
+    override fun close() {
+        sessions.forEach { session ->
+            session.currentJob?.cancel()
+            session.runtime?.close()
+            session.runtime = null
+        }
+    }
 
     suspend fun ensureRuntime(session: SessionData, observer: AgentObserver) {
         if (session.runtime != null) return

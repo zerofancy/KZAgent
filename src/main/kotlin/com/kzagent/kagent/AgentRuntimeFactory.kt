@@ -27,14 +27,17 @@ import com.kzagent.kagent.todo.TodoStore
 import java.nio.file.Path
 import kotlinx.coroutines.flow.StateFlow
 
-data class AgentRuntime(
+class AgentRuntime(
     val workspace: Path,
     val agent: CodingAgent,
     val sessionReader: SessionReader,
     val contextWindowSize: Int,
     val modelSelection: ModelSelection,
     val todoState: StateFlow<TodoSnapshot>,
-)
+    private val closeAction: () -> Unit = {},
+) : AutoCloseable {
+    override fun close() = closeAction()
+}
 
 object AgentRuntimeFactory {
     fun create(
@@ -96,6 +99,7 @@ object AgentRuntimeFactory {
             contextWindowSize = selection.contextWindowSize ?: config.contextWindowSize,
             modelSelection = selection,
             todoState = todoStore.state,
+            closeAction = model::close,
         )
     }
 }

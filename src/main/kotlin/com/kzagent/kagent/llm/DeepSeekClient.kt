@@ -32,7 +32,7 @@ class OpenAiCompatibleClient(
     private val providerId: ProviderId,
     private val providerConfig: ProviderConfig,
     private val selection: ModelSelection,
-) : ChatModel {
+) : ChatModel, AutoCloseable {
     private val streamClient: OkHttpClient
     private val json: Json
 
@@ -198,6 +198,10 @@ class OpenAiCompatibleClient(
             .retryOnConnectionFailure(false)
             .build()
 
+    override fun close() {
+        streamClient.closeResources()
+    }
+
     private class ToolCallBuilder {
         var id: String? = null
         var type: String? = null
@@ -211,15 +215,21 @@ class OpenAiCompatibleClient(
 }
 
 /** Source-compatible wrapper retained while callers migrate to the provider-neutral client. */
-class DeepSeekClient(config: AppConfig) : ChatModel by OpenAiCompatibleClient(
-    providerId = ProviderId.DEEPSEEK,
-    providerConfig = requireNotNull(config.deepSeek) { "DeepSeek is not configured." },
-    selection = if (config.defaultModel.provider == ProviderId.DEEPSEEK) {
-        config.defaultModel
-    } else {
-        ModelSelection(ProviderId.DEEPSEEK, AppConfig.DEFAULT_MODEL, config.contextWindowSize)
-    },
-)
+class DeepSeekClient private constructor(
+    private val delegate: OpenAiCompatibleClient,
+) : ChatModel by delegate, AutoCloseable by delegate {
+    constructor(config: AppConfig) : this(
+        OpenAiCompatibleClient(
+            providerId = ProviderId.DEEPSEEK,
+            providerConfig = requireNotNull(config.deepSeek) { "DeepSeek is not configured." },
+            selection = if (config.defaultModel.provider == ProviderId.DEEPSEEK) {
+                config.defaultModel
+            } else {
+                ModelSelection(ProviderId.DEEPSEEK, AppConfig.DEFAULT_MODEL, config.contextWindowSize)
+            },
+        ),
+    )
+}
 
 internal fun AgentMessage.toOpenAiJson(): JsonObject = buildJsonObject {
     put(

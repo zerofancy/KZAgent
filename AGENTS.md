@@ -27,6 +27,16 @@
 - 保持鼠标滚轮、触控板、滚动条拖拽、键盘焦点和快捷键行为一致；修改输入控件时同时验证 Enter、组合键和多行输入。
 - UI 修改应在 Windows、macOS 和 Linux 的 Compose Desktop 行为差异下保持合理退化，并为可提取的交互判断补充单元测试。
 
+## 资源生命周期
+
+- 拥有非 daemon 线程或线程池的资源（如 OkHttpClient 的异步 Dispatcher）必须在应用退出前显式关闭，否则会阻止 JVM 自动退出。
+- 新增持有网络客户端、线程池、文件锁、ServerSocket 或 WatchService 等资源的类，必须实现 `AutoCloseable`，并将关闭入口串联到以下位置之一：
+  - 桌面端：根 composable 的 `DisposableEffect.onDispose`。
+  - CLI 端：`main` 或 `runCli` 中的 `use` 块。
+  - 共享运行时：`AgentRuntime`，由 `SessionManager.close()` 与 CLI 的 `use` 统一调用。
+- 不要在切换 runtime、删除会话或 invalidate 时仅丢弃引用而不关闭旧资源。
+- OkHttp 异步请求应优先使用 `suspendCancellableCoroutine` + `call.cancel()` 以响应取消；关闭客户端时按顺序执行 `dispatcher.cancelAll()` → `dispatcher.executorService.shutdown()` → `connectionPool.evictAll()` → `cache?.close()`。
+
 ## 安全与修改
 
 - 对复杂逻辑、非显然的约束和重要设计取舍适当添加注释，说明“为什么这样做”；不要用注释逐行复述显而易见的代码。

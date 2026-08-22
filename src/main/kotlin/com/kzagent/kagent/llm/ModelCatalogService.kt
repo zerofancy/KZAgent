@@ -19,7 +19,7 @@ import okhttp3.Response
 class ModelCatalogService(
     private val client: OkHttpClient = OkHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
-) {
+) : AutoCloseable {
     suspend fun load(config: AppConfig): List<ModelDescriptor> = buildList {
         for (provider in config.configuredProviders) {
             addAll(loadProvider(config, provider))
@@ -89,6 +89,10 @@ class ModelCatalogService(
                 continuation.resume(response)
             }
         })
+    }
+
+    override fun close() {
+        client.closeResources()
     }
 }
 
