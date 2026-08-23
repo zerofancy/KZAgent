@@ -2,6 +2,7 @@ package com.kzagent.kagent.tools
 
 import java.nio.file.Files
 import java.nio.charset.Charset
+import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -372,5 +373,41 @@ class LocalToolsTest {
         }
 
         assertTrue(execution.isCancelled)
+    }
+
+    @Test
+    fun decodeProcessOutputHandlesEmptyBytes() {
+        val tools = LocalTools(PathGuard(Files.createTempDirectory("kagent-decode-test")), AlwaysApprovePolicy)
+        assertEquals("", tools.decodeProcessOutput(ByteArray(0)))
+    }
+
+    @Test
+    fun decodeProcessOutputDecodesAsciiAsUtf8() {
+        val tools = LocalTools(PathGuard(Files.createTempDirectory("kagent-decode-test")), AlwaysApprovePolicy)
+        val text = "hello ascii 123"
+        assertEquals(text, tools.decodeProcessOutput(text.toByteArray(StandardCharsets.UTF_8)))
+    }
+
+    @Test
+    fun decodeProcessOutputDecodesUtf8Chinese() {
+        val tools = LocalTools(PathGuard(Files.createTempDirectory("kagent-decode-test")), AlwaysApprovePolicy)
+        val text = "命令输出：你好世界"
+        assertEquals(text, tools.decodeProcessOutput(text.toByteArray(StandardCharsets.UTF_8)))
+    }
+
+    @Test
+    fun decodeProcessOutputFallsBackToGbkForNonUtf8Bytes() {
+        val tools = LocalTools(PathGuard(Files.createTempDirectory("kagent-decode-test")), AlwaysApprovePolicy)
+        // "你好" 的 GBK/CP936 编码 C4 E3 BA C3：UTF-8 严格解码必失败，
+        // 必须回退到 GB18030/GBK 才能恢复可读中文，避免乱码。
+        val gbkBytes = byteArrayOf(0xC4.toByte(), 0xE3.toByte(), 0xBA.toByte(), 0xC3.toByte())
+        assertEquals("你好", tools.decodeProcessOutput(gbkBytes))
+    }
+
+    @Test
+    fun decodeProcessOutputFallsBackToIso8859ForUnknownBytes() {
+        val tools = LocalTools(PathGuard(Files.createTempDirectory("kagent-decode-test")), AlwaysApprovePolicy)
+        // 0xFF 单字节在 UTF-8/GBK/GB18030 严格解码下均非法，最终回退 ISO-8859-1。
+        assertEquals("\u00FF", tools.decodeProcessOutput(byteArrayOf(0xFF.toByte())))
     }
 }

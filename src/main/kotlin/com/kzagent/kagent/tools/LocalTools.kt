@@ -1,5 +1,9 @@
 package com.kzagent.kagent.tools
 
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -316,13 +320,21 @@ class LocalTools(
             .redirectErrorStream(true)
             .start()
 
-        val output = StringBuilder()
+        val output = ByteArrayOutputStream()
+        val outputLimit = maxToolOutputChars * 2
         val readerThread = Thread {
-            process.inputStream.bufferedReader().useLines { lines ->
-                lines.forEach { line ->
-                    if (output.length < maxToolOutputChars * 2) {
-                        output.appendLine(line)
-                    }
+            // 累积原始字节而非按某个固定 charset 逐行解码：子进程输出编码
+            // 不可预知（Windows 中文系统通常为 GBK/CP936，Unix 一般为 UTF-8），
+            // 固定 charset 会在另一环境下出现乱码。超限后仍要读空管道，避免
+            // 进程因输出缓冲写满而被阻塞，但不再写入累积区。
+            val input = process.inputStream
+            val chunk = ByteArray(4096)
+            while (true) {
+                val read = input.read(chunk)
+                if (read <= 0) break
+                if (output.size() < outputLimit) {
+                    val remaining = outputLimit - output.size()
+                    if (remaining > 0) output.write(chunk, 0, minOf(read, remaining))
                 }
             }
         }
@@ -338,14 +350,45 @@ class LocalTools(
             destroyProcessTree(process)
             throw error
         }
+        val decoded = decodeProcessOutput(output.toByteArray())
         if (process.isAlive) {
             destroyProcessTree(process)
             readerThread.join(1_000)
-            return@withContext "Command execution timed out after ${timeout.seconds}s.\n${output}"
+            return@withContext "Command execution timed out after ${timeout.seconds}s.\n${decoded}"
         }
         readerThread.join(1_000)
-        "Exit code: ${process.exitValue()}\n${output}"
+        "Exit code: ${process.exitValue()}\n${decoded}"
     }
+
+    /**
+     * 子进程输出编码不可预知：可能是 UTF-8，也可能是宿主平台代码页
+     * （Windows 中文系统默认 GBK/CP936，部分程序甚至混用 UTF-8 与本地代码页）。
+     * 先严格按 UTF-8 解码，遇到非法字节序列再回退到平台默认 charset 与常见中文
+     * 代码页（GB18030 兼容 GBK，Java 内置、所有平台可用），避免在 UTF-8 环境下
+     * 把 GBK 输出渲染成乱码。GB18030/GBK 仅作为 UTF-8 失败时的兜底，对合法
+     * UTF-8 输出无影响。
+     */
+    internal fun decodeProcessOutput(bytes: ByteArray): String {
+        if (bytes.isEmpty()) return ""
+        decodeStrict(bytes, StandardCharsets.UTF_8)?.let { return it }
+        val candidates = buildList {
+            add(Charset.defaultCharset().name())
+            addAll(listOf("gb18030", "gbk", "ms936"))
+        }
+        for (name in candidates) {
+            val charset = runCatching { Charset.forName(name) }.getOrNull() ?: continue
+            decodeStrict(bytes, charset)?.let { return it }
+        }
+        return String(bytes, StandardCharsets.ISO_8859_1)
+    }
+
+    private fun decodeStrict(bytes: ByteArray, charset: Charset): String? =
+        runCatching {
+            val decoder = charset.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+            decoder.decode(ByteBuffer.wrap(bytes)).toString()
+        }.getOrNull()
 
     private fun destroyProcessTree(process: Process) {
         process.descendants().use { descendants ->
