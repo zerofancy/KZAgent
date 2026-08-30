@@ -1,5 +1,6 @@
 package com.kzagent.kagent.desktop
 
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
@@ -7,7 +8,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -31,13 +31,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.ModelSelection
 import com.kzagent.kagent.config.ModelDescriptor
 import com.kzagent.kagent.config.ProviderConfig
-import com.kzagent.kagent.config.ProviderId
+import com.kzagent.kagent.config.ProviderKind
 import com.kzagent.kagent.tools.ApprovalMode
 import io.github.composefluent.FluentTheme
 import io.github.composefluent.background.Layer
@@ -72,10 +71,7 @@ internal fun userCommandButtonPresentation(
 
 @Composable
 fun SettingsPanel(
-    initialDeepSeekApiKey: String,
-    initialDeepSeekBaseUrl: String,
-    initialOpenRouterApiKey: String,
-    initialOpenRouterBaseUrl: String,
+    initialProviders: List<ProviderConfig>,
     initialDefaultModel: ModelSelection,
     initialContextWindowSize: Int,
     initialSensitivePathProtection: Boolean,
@@ -103,10 +99,11 @@ fun SettingsPanel(
         installed = commandInstalled,
         installing = commandInstalling,
     )
-    var deepSeekApiKey by remember { mutableStateOf(initialDeepSeekApiKey) }
-    var deepSeekBaseUrl by remember { mutableStateOf(initialDeepSeekBaseUrl) }
-    var openRouterApiKey by remember { mutableStateOf(initialOpenRouterApiKey) }
-    var openRouterBaseUrl by remember { mutableStateOf(initialOpenRouterBaseUrl) }
+    var providers by remember {
+        mutableStateOf(
+            initialProviders.ifEmpty { emptyList() }.map { ProviderEditor(it.id, it.name, it.kind, it.apiKey, it.baseUrl) },
+        )
+    }
     var defaultProvider by remember { mutableStateOf(initialDefaultModel.provider) }
     var defaultModelId by remember { mutableStateOf(initialDefaultModel.modelId) }
     var defaultModelContextWindowSize by remember { mutableStateOf(initialDefaultModel.contextWindowSize) }
@@ -117,22 +114,39 @@ fun SettingsPanel(
     var approvalMode by remember { mutableStateOf(initialApprovalMode) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var confirmFullMode by remember { mutableStateOf(false) }
+    var showAddProvider by remember { mutableStateOf(false) }
+
+    fun updateProvider(index: Int, transform: (ProviderEditor) -> ProviderEditor) {
+        providers = providers.mapIndexed { i, item -> if (i == index) transform(item) else item }
+        errorMessage = null
+    }
 
     fun validate(): Boolean {
-        if (deepSeekApiKey.isBlank() && openRouterApiKey.isBlank()) {
+        val nonBlank = providers.filter { it.apiKey.isNotBlank() }
+        if (nonBlank.isEmpty()) {
             errorMessage = "至少需要配置一个 Provider 的 API Key"
             return false
         }
-        if (deepSeekApiKey.isNotBlank() && deepSeekBaseUrl.isBlank()) {
-            errorMessage = "DeepSeek Base URL 不能为空"
+        for (p in providers) {
+            if (p.id.isBlank()) {
+                errorMessage = "Provider ID 不能为空"
+                return false
+            }
+            if (p.name.isBlank()) {
+                errorMessage = "Provider 名称不能为空"
+                return false
+            }
+            if (p.apiKey.isNotBlank() && p.baseUrl.isBlank()) {
+                errorMessage = "Provider「${p.name.ifBlank { p.id }}」Base URL 不能为空"
+                return false
+            }
+        }
+        val ids = providers.map { it.id.trim() }
+        if (ids.size != ids.toSet().size) {
+            errorMessage = "Provider ID 不能重复"
             return false
         }
-        if (openRouterApiKey.isNotBlank() && openRouterBaseUrl.isBlank()) {
-            errorMessage = "OpenRouter Base URL 不能为空"
-            return false
-        }
-        if ((defaultProvider == ProviderId.DEEPSEEK && deepSeekApiKey.isBlank()) ||
-            (defaultProvider == ProviderId.OPENROUTER && openRouterApiKey.isBlank())) {
+        if (defaultProvider !in ids) {
             errorMessage = "默认 Provider 尚未配置 API Key"
             return false
         }
@@ -150,12 +164,7 @@ fun SettingsPanel(
 
     fun submitConfig() {
         val config = AppConfig(
-            deepSeek = deepSeekApiKey.trim().takeIf(String::isNotEmpty)?.let {
-                ProviderConfig(it, deepSeekBaseUrl.trim().trimEnd('/'))
-            },
-            openRouter = openRouterApiKey.trim().takeIf(String::isNotEmpty)?.let {
-                ProviderConfig(it, openRouterBaseUrl.trim().trimEnd('/'))
-            },
+            providers = providers.map { it.toConfig() },
             defaultModel = ModelSelection(
                 provider = defaultProvider,
                 modelId = defaultModelId.trim(),
@@ -172,7 +181,7 @@ fun SettingsPanel(
 
     fun doSave() {
         if (!validate()) return
-        if (requiresFullModeConfirmation(initialApprovalMode, approvalMode)) {
+        if (initialApprovalMode != ApprovalMode.FULL && approvalMode == ApprovalMode.FULL) {
             confirmFullMode = true
         } else {
             submitConfig()
@@ -206,61 +215,67 @@ fun SettingsPanel(
 
                 SettingsSection(
                     title = "模型与 API",
-                    description = "配置至少一个模型 Provider。API Key 只保存在本机配置中。",
+                    description = "配置一个或多个 OpenAI 兼容 Provider。API Key 只保存在本机配置中。",
                 ) {
-                    SettingsTextField(
-                        label = "DeepSeek API Key",
-                        value = deepSeekApiKey,
-                        onValueChange = { deepSeekApiKey = it; errorMessage = null },
-                        placeholder = "sk-...",
-                        visualTransformation = PasswordVisualTransformation(),
-                    )
-                    SettingsTextField(
-                        label = "DeepSeek Base URL",
-                        value = deepSeekBaseUrl,
-                        onValueChange = { deepSeekBaseUrl = it; errorMessage = null },
-                        placeholder = "https://api.deepseek.com",
-                    )
-                    SettingsTextField(
-                        label = "OpenRouter API Key",
-                        value = openRouterApiKey,
-                        onValueChange = { openRouterApiKey = it; errorMessage = null },
-                        placeholder = "sk-or-...",
-                        visualTransformation = PasswordVisualTransformation(),
-                    )
-                    SettingsTextField(
-                        label = "OpenRouter Base URL",
-                        value = openRouterBaseUrl,
-                        onValueChange = { openRouterBaseUrl = it; errorMessage = null },
-                        placeholder = "https://openrouter.ai/api/v1",
-                    )
+                    providers.forEachIndexed { index, provider ->
+                        ProviderEditorCard(
+                            provider = provider,
+                            isDefault = defaultProvider == provider.id,
+                            onDefaultChanged = {
+                                defaultProvider = provider.id
+                                if (provider.kind == ProviderKind.DEEPSEEK && defaultModelId.startsWith("openrouter/")) {
+                                    defaultModelId = AppConfig.DEFAULT_MODEL
+                                } else if (provider.kind == ProviderKind.OPENROUTER && !defaultModelId.contains('/')) {
+                                    defaultModelId = "openrouter/auto"
+                                }
+                                defaultModelContextWindowSize = null
+                                defaultSupportsToolChoice = true
+                                errorMessage = null
+                            },
+                            onIdChange = { value -> updateProvider(index) { it.copy(id = value) } },
+                            onNameChange = { value -> updateProvider(index) { it.copy(name = value) } },
+                            onApiKeyChange = { value -> updateProvider(index) { it.copy(apiKey = value) } },
+                            onBaseUrlChange = { value -> updateProvider(index) { it.copy(baseUrl = value) } },
+                            onRemove = {
+                                val removing = providers[index]
+                                providers = providers.filterIndexed { i, _ -> i != index }
+                                if (defaultProvider == removing.id) {
+                                    defaultProvider = providers.firstOrNull()?.id.orEmpty()
+                                }
+                                errorMessage = null
+                            },
+                            removable = providers.size > 1,
+                        )
+                    }
+                    Button(onClick = { showAddProvider = true }) {
+                        Text("添加 Provider")
+                    }
                     Text("新会话与 CLI 默认 Provider", style = FluentTheme.typography.bodyStrong)
-                    ProviderId.entries.forEach { provider ->
-                        val configured = when (provider) {
-                            ProviderId.DEEPSEEK -> deepSeekApiKey.isNotBlank()
-                            ProviderId.OPENROUTER -> openRouterApiKey.isNotBlank()
-                        }
-                        val selectProvider = {
-                            defaultProvider = provider
-                            if (provider == ProviderId.DEEPSEEK && defaultModelId.startsWith("openrouter/")) {
-                                defaultModelId = AppConfig.DEFAULT_MODEL
-                            } else if (provider == ProviderId.OPENROUTER && !defaultModelId.contains('/')) {
-                                defaultModelId = "openrouter/auto"
+                    if (providers.isEmpty()) {
+                        Text(
+                            "请先添加至少一个 Provider。",
+                            color = FluentTheme.colors.text.text.secondary,
+                        )
+                    } else {
+                        providers.forEach { provider ->
+                            val fullyConfigured = provider.apiKey.isNotBlank()
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable(enabled = fullyConfigured) {
+                                    defaultProvider = provider.id
+                                    errorMessage = null
+                                },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(
+                                    selected = defaultProvider == provider.id,
+                                    onClick = {
+                                        defaultProvider = provider.id
+                                        errorMessage = null
+                                    }.takeIf { fullyConfigured },
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("${provider.name}（${provider.id}）")
                             }
-                            defaultModelContextWindowSize = null
-                            defaultSupportsToolChoice = true
-                            errorMessage = null
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clickable(enabled = configured, onClick = selectProvider),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(
-                                selected = defaultProvider == provider,
-                                onClick = selectProvider.takeIf { configured },
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(provider.displayName)
                         }
                     }
                     SettingsTextField(
@@ -427,6 +442,30 @@ fun SettingsPanel(
         }
     }
 
+    if (showAddProvider) {
+        AddProviderDialog(
+            onDismiss = { showAddProvider = false },
+            onAdd = { template ->
+                showAddProvider = false
+                val usedIds = providers.map { it.id.trim() }.toMutableSet()
+                var candidate = slugify(template.kind.name)
+                var n = 1
+                while (candidate in usedIds) {
+                    candidate = "${slugify(template.kind.name)}-$n"
+                    n++
+                }
+                providers = providers + ProviderEditor(
+                    id = candidate,
+                    name = template.name,
+                    kind = template.kind,
+                    apiKey = "",
+                    baseUrl = template.defaultBaseUrl,
+                )
+                errorMessage = null
+            },
+        )
+    }
+
     ContentDialog(
         title = "确认全部放行",
         visible = confirmFullMode,
@@ -447,107 +486,10 @@ fun SettingsPanel(
     )
 }
 
-@Composable
-private fun SettingsSection(
-    title: String,
-    description: String,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Layer(
-        modifier = Modifier.fillMaxWidth(),
-        shape = FluentTheme.shapes.overlay,
-        color = FluentTheme.colors.background.layer.default,
-        border = BorderStroke(1.dp, FluentTheme.colors.stroke.card.default),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, style = FluentTheme.typography.subtitle)
-                Text(
-                    description,
-                    style = FluentTheme.typography.caption,
-                    color = FluentTheme.colors.text.text.secondary,
-                )
-            }
-            content()
-        }
-    }
-}
+private fun slugify(value: String): String = value.lowercase()
+    .replace(Regex("[^a-z0-9]+"), "-")
+    .trim('-')
 
-@Composable
-private fun SettingsTextField(
-    label: String,
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    visualTransformation: androidx.compose.ui.text.input.VisualTransformation =
-        androidx.compose.ui.text.input.VisualTransformation.None,
-    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
-) {
-    TextField(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = true,
-        visualTransformation = visualTransformation,
-        keyboardOptions = keyboardOptions,
-        header = { Text(label, style = FluentTheme.typography.bodyStrong) },
-        placeholder = { Text(placeholder) },
-    )
-}
 
-@Composable
-private fun ApprovalModeOption(
-    mode: ApprovalMode,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    val title = when (mode) {
-        ApprovalMode.AUTO -> "自动审批（默认）"
-        ApprovalMode.MANUAL -> "手动审批"
-        ApprovalMode.FULL -> "全部放行"
-    }
-    val description = when (mode) {
-        ApprovalMode.AUTO -> "安全操作自动放行，其余由审批 Agent 或人工判断。"
-        ApprovalMode.MANUAL -> "所有命令和受保护文件读取都由人工确认。"
-        ApprovalMode.FULL -> "以当前系统用户权限直接执行，并允许读取工作区外文件。"
-    }
-    val borderColor = if (selected) {
-        FluentTheme.colors.fillAccent.default
-    } else {
-        FluentTheme.colors.stroke.card.default
-    }
 
-    Layer(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = FluentTheme.shapes.control,
-        color = if (selected) {
-            FluentTheme.colors.background.layer.alt
-        } else {
-            FluentTheme.colors.background.layer.default
-        },
-        border = BorderStroke(1.dp, borderColor),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            RadioButton(selected = selected, onClick = onClick)
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, style = FluentTheme.typography.bodyStrong)
-                Text(
-                    description,
-                    style = FluentTheme.typography.caption,
-                    color = if (mode == ApprovalMode.FULL) {
-                        FluentTheme.colors.system.critical
-                    } else {
-                        FluentTheme.colors.text.text.secondary
-                    },
-                )
-            }
-        }
-    }
-}
+

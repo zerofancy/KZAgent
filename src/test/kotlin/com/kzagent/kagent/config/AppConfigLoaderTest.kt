@@ -11,13 +11,18 @@ import kotlin.test.assertTrue
 import com.kzagent.kagent.tools.ApprovalMode
 
 class AppConfigLoaderTest {
+    private fun jsonFile(dir: java.nio.file.Path): java.nio.file.Path =
+        dir.resolve("config.json")
+
+    private fun deepseekConfig(apiKey: String = "sk-test-local"): ProviderConfig =
+        ProviderConfig("deepseek", "DeepSeek", ProviderKind.DEEPSEEK, apiKey, "https://api.deepseek.com")
+
     @Test
-    fun loadsUserConfigProperties() {
-        val dir = Files.createTempDirectory("kagent-config-test")
-        val configFile = dir.resolve("kzagent").resolve("config.properties")
-        Files.createDirectories(configFile.parent)
+    fun legacyPropertiesAutoMigrateToJsonAndRoundTrip() {
+        val dir = Files.createTempDirectory("kagent-config-migrate-test")
+        val legacy = dir.resolve("config.properties")
         Files.writeString(
-            configFile,
+            legacy,
             """
             deepseek.api.key=sk-test-local
             deepseek.model=deepseek-v4-pro
@@ -25,90 +30,85 @@ class AppConfigLoaderTest {
             """.trimIndent(),
         )
 
-        val config = AppConfigLoader.load(configFile, emptyMap())
+        val config = AppConfigLoader.load(jsonFile(dir), emptyMap())
 
-        assertEquals("sk-test-local", config.apiKey)
-        assertEquals("deepseek-v4-pro", config.model)
-        assertEquals("https://api.deepseek.com", config.baseUrl)
+        assertEquals(1, config.providers.size)
+        assertEquals("sk-test-local", config.providers.single().apiKey)
+        assertEquals("deepseek-v4-pro", config.defaultModel.modelId)
+        assertEquals("deepseek", config.defaultModel.provider)
+        // The migrated JSON config file is written for future loads.
+        assertTrue(Files.exists(jsonFile(dir)))
     }
 
     @Test
-    fun loadsConfigPropertiesWithUtf8Bom() {
-        val dir = Files.createTempDirectory("kagent-config-bom-test")
-        val configFile = dir.resolve("kzagent").resolve("config.properties")
-        Files.createDirectories(configFile.parent)
-        Files.writeString(configFile, "\uFEFFdeepseek.api.key=sk-test-local")
-
-        val config = AppConfigLoader.load(configFile, emptyMap())
-
-        assertEquals("sk-test-local", config.apiKey)
-    }
-
-    @Test
-    fun environmentKeyOverridesConfigFile() {
-        val dir = Files.createTempDirectory("kagent-config-env-test")
-        val configFile = dir.resolve("kzagent").resolve("config.properties")
-        Files.createDirectories(configFile.parent)
-        Files.writeString(
-            configFile,
-            """
-            deepseek.api.key=sk-test-file
-            deepseek.model=deepseek-v4-pro
-            """.trimIndent(),
-        )
-
-        val config = AppConfigLoader.load(configFile, mapOf("DEEPSEEK_API_KEY" to "sk-test-env"))
-
-        assertEquals("sk-test-env", config.apiKey)
-        assertEquals("deepseek-v4-pro", config.model)
-    }
-
-    @Test
-    fun supportsOpenRouterOnlyAndRoundTripsDefaultSelection() {
-        val configFile = Files.createTempDirectory("kagent-openrouter-config-test").resolve("config.properties")
+    fun jsonConfigRoundTripsMultipleProvidersAndDefaultSelection() {
+        val dir = Files.createTempDirectory("kagent-config-json-test")
+        val configFile = jsonFile(dir)
         val original = AppConfig(
-            openRouter = ProviderConfig("sk-or-test-secret", "https://openrouter.ai/api/v1"),
-            defaultModel = ModelSelection(ProviderId.OPENROUTER, "anthropic/claude-test", 200_000, false),
+            providers = listOf(
+                deepseekConfig(),
+                ProviderConfig("custom", "My Provider", ProviderKind.OPENAI_COMPATIBLE, "sk-custom", "https://api.example.com/v1"),
+            ),
+            defaultModel = ModelSelection("custom", "gpt-4.1", 128_000, true),
+            approvalMode = ApprovalMode.FULL,
+            userPrompt = "Follow the spec.",
         )
 
         ConfigWriter.save(configFile, original)
         val loaded = AppConfigLoader.load(configFile, emptyMap())
 
-        assertEquals(null, loaded.deepSeek)
-        assertEquals("sk-or-test-secret", loaded.openRouter?.apiKey)
-        assertEquals(original.defaultModel, loaded.defaultModel)
+        assertEquals(2, loaded.providers.size)
+        assertEquals("My Provider", loaded.provider("custom")?.name)
+        assertEquals("gpt-4.1", loaded.defaultModel.modelId)
+        assertEquals("custom", loaded.defaultModel.provider)
+        assertEquals(ApprovalMode.FULL, loaded.approvalMode)
+        assertEquals("Follow the spec.", loaded.userPrompt)
+    }
+
+    @Test
+    fun environmentKeyFillsMissingDeepSeekProvider() {
+        val dir = Files.createTempDirectory("kagent-config-env-test")
+        val configFile = jsonFile(dir)
+        Files.writeString(
+            configFile,
+            """
+            {"providers":[],"defaultModel":{"provider":"deepseek","modelId":"deepseek-v4-pro"}}
+            """.trimIndent(),
+        )
+
+        val config = AppConfigLoader.load(configFile, mapOf("DEEPSEEK_API_KEY" to "sk-test-env"))
+
+        assertEquals("sk-test-env", config.provider("deepseek")?.apiKey)
     }
 
     @Test
     fun openRouterEnvironmentKeyCanBeTheOnlyCredential() {
-        val configFile = Files.createTempDirectory("kagent-openrouter-env-test").resolve("config.properties")
+        val configFile = jsonFile(Files.createTempDirectory("kagent-openrouter-env-test"))
         val loaded = AppConfigLoader.load(configFile, mapOf("OPENROUTER_API_KEY" to "sk-or-env-secret"))
 
-        assertEquals(ProviderId.OPENROUTER, loaded.defaultModel.provider)
+        assertEquals("openrouter", loaded.defaultModel.provider)
         assertEquals("openrouter/auto", loaded.defaultModel.modelId)
     }
 
     @Test
     fun rejectsDefaultProviderWithoutCredentials() {
-        val configFile = Files.createTempDirectory("kagent-invalid-default-provider-test")
-            .resolve("config.properties")
+        val dir = Files.createTempDirectory("kagent-invalid-default-provider-test")
         Files.writeString(
-            configFile,
-            "deepseek.api.key=sk-test-local\nkzagent.default.provider=openrouter\n" +
-                "kzagent.default.model=vendor/model\n",
+            jsonFile(dir),
+            """
+            {"providers":[{"id":"deepseek","name":"DeepSeek","kind":"DEEPSEEK","apiKey":"sk-test-local","baseUrl":"https://api.deepseek.com"}],
+             "defaultModel":{"provider":"custom","modelId":"vendor/model"}}
+            """.trimIndent(),
         )
 
         assertFailsWith<IllegalArgumentException> {
-            AppConfigLoader.load(configFile, emptyMap())
+            AppConfigLoader.load(jsonFile(dir), emptyMap())
         }
     }
 
     @Test
     fun usesDefaultsWithEnvironmentKeyOnly() {
-        val configFile = Files.createTempDirectory("kagent-config-default-test")
-            .resolve("kzagent")
-            .resolve("config.properties")
-
+        val configFile = jsonFile(Files.createTempDirectory("kagent-config-default-test"))
         val config = AppConfigLoader.load(configFile, mapOf("DEEPSEEK_API_KEY" to "sk-test-env"))
 
         assertEquals("sk-test-env", config.apiKey)
@@ -120,68 +120,50 @@ class AppConfigLoaderTest {
     @Test
     fun failsWhenKeyIsMissing() {
         val dir = Files.createTempDirectory("kagent-config-missing-test")
-        val configFile = dir.resolve("kzagent").resolve("config.properties")
-
         val error = assertFailsWith<IllegalStateException> {
-            AppConfigLoader.load(configFile, emptyMap())
+            AppConfigLoader.load(jsonFile(dir), emptyMap())
         }
-
-        assertContains(error.message.orEmpty(), configFile.toString())
-        assertContains(error.message.orEmpty(), "deepseek.api.key")
+        assertContains(error.message.orEmpty(), "Missing model provider API key")
     }
 
     @Test
-    fun rejectsInvalidContextWindowSizesFromConfigFile() {
-        val configFile = Files.createTempDirectory("kagent-invalid-context-test")
-            .resolve("config.properties")
-
+    fun rejectsInvalidContextWindowSizes() {
+        val dir = Files.createTempDirectory("kagent-invalid-context-test")
         Files.writeString(
-            configFile,
-            "deepseek.api.key=sk-test-local\ndeepseek.context.window.size=not-a-number\n",
+            jsonFile(dir),
+            """
+            {"providers":[{"id":"deepseek","name":"DeepSeek","kind":"DEEPSEEK","apiKey":"sk-test-local","baseUrl":"https://api.deepseek.com"}],
+             "contextWindowSize":0}
+            """.trimIndent(),
         )
         assertFailsWith<IllegalArgumentException> {
-            AppConfigLoader.load(configFile, emptyMap())
-        }
-
-        Files.writeString(
-            configFile,
-            "deepseek.api.key=sk-test-local\ndeepseek.context.window.size=0\n",
-        )
-        assertFailsWith<IllegalArgumentException> {
-            AppConfigLoader.load(configFile, emptyMap())
+            AppConfigLoader.load(jsonFile(dir), emptyMap())
         }
     }
 
     @Test
-    fun userPromptRoundTripsBackslashesAndNewlines() {
-        val configFile = Files.createTempDirectory("kagent-prompt-roundtrip-test")
-            .resolve("kzagent")
-            .resolve("config.properties")
+    fun approvalModeRoundTripsAcrossJson() {
+        val dir = Files.createTempDirectory("kagent-approval-config-test")
+        val configFile = jsonFile(dir)
+        val original = AppConfig(providers = listOf(deepseekConfig()), approvalMode = ApprovalMode.FULL)
+
+        ConfigWriter.save(configFile, original)
+        assertEquals(ApprovalMode.FULL, AppConfigLoader.load(configFile, emptyMap()).approvalMode)
+    }
+
+    @Test
+    fun userPromptRoundTrips() {
+        val dir = Files.createTempDirectory("kagent-prompt-roundtrip-test")
+        val configFile = jsonFile(dir)
         val prompt = """Use C:\Users\name and regex \d+\s+\w+.
 Keep the literal text \n unchanged.
 This is a real second line."""
-        val original = AppConfig(apiKey = "sk-test-local", userPrompt = prompt)
+        val original = AppConfig(providers = listOf(deepseekConfig()), userPrompt = prompt)
 
         ConfigWriter.save(configFile, original)
         val loaded = AppConfigLoader.load(configFile, emptyMap())
 
         assertEquals(prompt, loaded.userPrompt)
-    }
-
-    @Test
-    fun approvalModeRoundTripsAndInvalidValueFallsBackToAuto() {
-        val configFile = Files.createTempDirectory("kagent-approval-config-test")
-            .resolve("config.properties")
-        val original = AppConfig(apiKey = "sk-test-local", approvalMode = ApprovalMode.FULL)
-
-        ConfigWriter.save(configFile, original)
-        assertEquals(ApprovalMode.FULL, AppConfigLoader.load(configFile, emptyMap()).approvalMode)
-
-        Files.writeString(
-            configFile,
-            "deepseek.api.key=sk-test-local\nkzagent.approval.mode=unknown\n",
-        )
-        assertEquals(ApprovalMode.AUTO, AppConfigLoader.load(configFile, emptyMap()).approvalMode)
     }
 
     @Test

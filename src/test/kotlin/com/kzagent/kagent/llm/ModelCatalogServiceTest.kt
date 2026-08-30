@@ -3,7 +3,7 @@ package com.kzagent.kagent.llm
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.ModelSelection
 import com.kzagent.kagent.config.ProviderConfig
-import com.kzagent.kagent.config.ProviderId
+import com.kzagent.kagent.config.ProviderKind
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -19,13 +19,16 @@ class ModelCatalogServiceTest {
             server.enqueue(MockResponse().setBody("""
                 {"data":[{"id":"deepseek-v4-pro"},{"id":"deepseek-v4-flash"}]}
             """.trimIndent()))
+            val provider = ProviderConfig(
+                "deepseek", "DeepSeek", ProviderKind.DEEPSEEK, "sk-test-secret", server.url("/").toString(),
+            )
             val config = AppConfig(
-                deepSeek = ProviderConfig("sk-test-secret", server.url("/").toString()),
-                defaultModel = ModelSelection(ProviderId.DEEPSEEK, "deepseek-v4-pro", 123_456),
+                providers = listOf(provider),
+                defaultModel = ModelSelection("deepseek", "deepseek-v4-pro", 123_456),
                 contextWindowSize = 123_456,
             )
 
-            val models = ModelCatalogService().loadProvider(config, ProviderId.DEEPSEEK)
+            val models = ModelCatalogService().loadProvider(config, config.providers.single())
 
             assertEquals(setOf("deepseek-v4-pro", "deepseek-v4-flash"), models.map { it.id }.toSet())
             assertTrue(models.all { it.contextWindowSize == 123_456 })
@@ -47,12 +50,15 @@ class ModelCatalogServiceTest {
                    "architecture":{"output_modalities":["image"]}}
                 ]}
             """.trimIndent()))
+            val provider = ProviderConfig(
+                "openrouter", "OpenRouter", ProviderKind.OPENROUTER, "sk-or-test-secret", server.url("/api/v1").toString(),
+            )
             val config = AppConfig(
-                openRouter = ProviderConfig("sk-or-test-secret", server.url("/api/v1").toString()),
-                defaultModel = ModelSelection(ProviderId.OPENROUTER, "vendor/agent"),
+                providers = listOf(provider),
+                defaultModel = ModelSelection("openrouter", "vendor/agent"),
             )
 
-            val models = ModelCatalogService().loadProvider(config, ProviderId.OPENROUTER)
+            val models = ModelCatalogService().loadProvider(config, config.providers.single())
 
             assertEquals(listOf("vendor/agent"), models.map { it.id })
             assertEquals(200_000, models.single().contextWindowSize)
@@ -61,6 +67,33 @@ class ModelCatalogServiceTest {
             assertEquals("/api/v1/models?supported_parameters=tools", request.path)
             assertEquals("Bearer sk-or-test-secret", request.getHeader("Authorization"))
             assertFalse(request.body.readUtf8().contains("sk-or-test-secret"))
+        }
+    }
+
+    @Test
+    fun loadsMiMoModelsFromOpenAiCompatibleModelsEndpoint() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("""
+                {"object":"list","data":[
+                  {"id":"mimo-v2.5-pro","object":"model","owned_by":"xiaomi"},
+                  {"id":"mimo-v2.5","object":"model","owned_by":"xiaomi"}
+                ]}
+            """.trimIndent()))
+            val provider = ProviderConfig(
+                "mimocode", "MiMo Code", ProviderKind.MIMOCODE, "sk-mimo-secret", server.url("/v1").toString(),
+            )
+            val config = AppConfig(
+                providers = listOf(provider),
+                defaultModel = ModelSelection("mimocode", "mimo-v2.5-pro"),
+            )
+
+            val models = ModelCatalogService().loadProvider(config, config.providers.single())
+
+            assertEquals(setOf("mimo-v2.5-pro", "mimo-v2.5"), models.map { it.id }.toSet())
+            assertTrue(models.all { it.providerName == "MiMo Code" })
+            val request = server.takeRequest()
+            assertEquals("/v1/models", request.path)
+            assertEquals("Bearer sk-mimo-secret", request.getHeader("Authorization"))
         }
     }
 }

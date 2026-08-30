@@ -53,7 +53,7 @@ object AgentRuntimeFactory {
         val config = AppConfigLoader.load()
         val selection = modelSelection ?: config.defaultModel
         val providerConfig = requireNotNull(config.provider(selection.provider)) {
-            "${selection.provider.displayName} is not configured."
+            "Provider ${selection.provider} is not configured."
         }
         val model = OpenAiCompatibleClient(selection.provider, providerConfig, selection)
         val effectiveApprovalPolicy = ModeApprovalPolicy(

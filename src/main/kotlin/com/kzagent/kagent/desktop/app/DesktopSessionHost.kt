@@ -32,7 +32,6 @@ import com.kzagent.kagent.config.AppConfigLoader
 import com.kzagent.kagent.config.ConfigWriter
 import com.kzagent.kagent.config.ModelDescriptor
 import com.kzagent.kagent.config.ModelSelection
-import com.kzagent.kagent.config.ProviderId
 import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.agent.estimateContextTokens
 import com.kzagent.kagent.config.SecretRedactor
@@ -213,7 +212,7 @@ internal fun KZAgentDesktopApp(
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Exception) {
-                        errors += "${provider.displayName}: ${SecretRedactor.redact(error.message ?: error.toString())}"
+                        errors += "${provider.name}: ${SecretRedactor.redact(error.message ?: error.toString())}"
                     }
                 }
                 availableModels.clear()
@@ -226,7 +225,7 @@ internal fun KZAgentDesktopApp(
         modelCatalogJob = refreshJob
     }
 
-    LaunchedEffect(savedConfig?.deepSeek, savedConfig?.openRouter) {
+    LaunchedEffect(savedConfig?.providers) {
         if (savedConfig != null) refreshModels()
     }
 
@@ -539,12 +538,9 @@ internal fun KZAgentDesktopApp(
         ) {
             if (showSettings) {
                 SettingsPanel(
-                    initialDeepSeekApiKey = savedConfig?.deepSeek?.apiKey.orEmpty(),
-                    initialDeepSeekBaseUrl = savedConfig?.deepSeek?.baseUrl ?: AppConfig.DEFAULT_BASE_URL,
-                    initialOpenRouterApiKey = savedConfig?.openRouter?.apiKey.orEmpty(),
-                    initialOpenRouterBaseUrl = savedConfig?.openRouter?.baseUrl ?: AppConfig.DEFAULT_OPENROUTER_BASE_URL,
+                    initialProviders = savedConfig?.providers.orEmpty(),
                     initialDefaultModel = savedConfig?.defaultModel ?: ModelSelection(
-                        ProviderId.DEEPSEEK,
+                        AppConfig.DEFAULT_PROVIDER_ID,
                         AppConfig.DEFAULT_MODEL,
                         AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
                     ),

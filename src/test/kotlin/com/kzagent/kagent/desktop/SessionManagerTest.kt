@@ -2,7 +2,6 @@ package com.kzagent.kagent.desktop
 
 import com.kzagent.kagent.agent.SessionWriter
 import com.kzagent.kagent.config.ModelSelection
-import com.kzagent.kagent.config.ProviderId
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.ApprovalDecision
@@ -29,7 +28,7 @@ class SessionManagerTest {
     fun modelSelectionSurvivesReloadInItsSidecar() = runBlocking {
         val workspace = testWorkspace()
         val sessionsRoot = Files.createTempDirectory("kagent-model-session-test")
-        val openRouter = ModelSelection(ProviderId.OPENROUTER, "vendor/agent", 128_000, false)
+        val openRouter = ModelSelection("openrouter", "vendor/agent", 128_000, false)
         val manager = SessionManager(denyAll, sessionsRoot, initialDefaultModel = openRouter)
         manager.loadOrCreate(workspace)
 

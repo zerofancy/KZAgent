@@ -25,7 +25,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.ModelDescriptor
 import com.kzagent.kagent.config.ModelSelection
-import com.kzagent.kagent.config.ProviderId
 import io.github.composefluent.FluentTheme
 import io.github.composefluent.component.Button
 import io.github.composefluent.component.ContentDialog
@@ -52,7 +51,7 @@ internal fun ModelSelector(
         modifier = modifier.height(32.dp).widthIn(max = 280.dp),
     ) {
         Text(
-            "${selection.provider.displayName} / ${selection.modelId}  ▾",
+            "${selection.provider} / ${selection.modelId}  ▾",
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -99,10 +98,10 @@ internal fun ModelSelector(
                         modifier = Modifier.fillMaxWidth().verticalScroll(scrollState).padding(end = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        ProviderId.entries.forEach { provider ->
-                            val providerModels = filtered.filter { it.provider == provider }
+                        val grouped = filtered.groupBy { it.providerName.ifBlank { it.provider } }
+                        grouped.forEach { (providerName, providerModels) ->
                             if (providerModels.isNotEmpty()) {
-                                Text(provider.displayName, style = FluentTheme.typography.bodyStrong)
+                                Text(providerName, style = FluentTheme.typography.bodyStrong)
                                 providerModels.forEach { model ->
                                     Button(
                                         onClick = {

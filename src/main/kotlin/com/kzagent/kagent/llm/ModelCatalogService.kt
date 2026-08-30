@@ -2,7 +2,8 @@ package com.kzagent.kagent.llm
 
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.ModelDescriptor
-import com.kzagent.kagent.config.ProviderId
+import com.kzagent.kagent.config.ProviderConfig
+import com.kzagent.kagent.config.ProviderKind
 import com.kzagent.kagent.config.SecretRedactor
 import java.io.IOException
 import kotlin.coroutines.resume
@@ -26,16 +27,16 @@ class ModelCatalogService(
         }
     }
 
-    suspend fun loadProvider(config: AppConfig, provider: ProviderId): List<ModelDescriptor> {
-        val providerConfig = config.provider(provider)
-            ?: throw IllegalArgumentException("${provider.displayName} is not configured.")
-        val suffix = when (provider) {
-            ProviderId.DEEPSEEK -> "/models"
-            ProviderId.OPENROUTER -> "/models?supported_parameters=tools"
+    suspend fun loadProvider(config: AppConfig, provider: ProviderConfig): List<ModelDescriptor> {
+        val suffix = when (provider.kind) {
+            ProviderKind.DEEPSEEK -> "/models"
+            ProviderKind.OPENROUTER -> "/models?supported_parameters=tools"
+            ProviderKind.MIMOCODE -> "/models"
+            ProviderKind.OPENAI_COMPATIBLE -> "/models"
         }
         val request = Request.Builder()
-            .url("${providerConfig.baseUrl.trimEnd('/')}$suffix")
-            .header("Authorization", "Bearer ${providerConfig.apiKey}")
+            .url("${provider.baseUrl.trimEnd('/')}$suffix")
+            .header("Authorization", "Bearer ${provider.apiKey}")
             .header("Accept", "application/json")
             .get()
             .build()
@@ -44,28 +45,46 @@ class ModelCatalogService(
             val body = it.body?.string().orEmpty()
             if (!it.isSuccessful) {
                 throw ProviderApiException(
-                    "${provider.displayName} Models API HTTP ${it.code}" +
+                    "${provider.name} Models API HTTP ${it.code}" +
                         body.takeIf(String::isNotBlank)?.let { value -> ": ${SecretRedactor.redact(value)}" }.orEmpty(),
                     statusCode = it.code,
                 )
             }
             val catalog = runCatching { json.decodeFromString<ModelListResponse>(body) }
                 .getOrElse { error ->
-                    throw ProviderApiException("${provider.displayName} Models API returned invalid JSON.", cause = error)
+                    throw ProviderApiException("${provider.name} Models API returned invalid JSON.", cause = error)
                 }
             return catalog.data.mapNotNull { model ->
-                when (provider) {
-                    ProviderId.DEEPSEEK -> ModelDescriptor(
-                        provider = provider,
+                when (provider.kind) {
+                    ProviderKind.DEEPSEEK -> ModelDescriptor(
+                        provider = provider.id,
+                        providerName = provider.name,
                         id = model.id,
                         displayName = model.name ?: model.id,
                         contextWindowSize = config.contextWindowSize,
                     )
-                    ProviderId.OPENROUTER -> {
+                    ProviderKind.MIMOCODE -> ModelDescriptor(
+                        provider = provider.id,
+                        providerName = provider.name,
+                        id = model.id,
+                        displayName = model.name ?: model.id,
+                        contextWindowSize = model.contextLength?.takeIf { it > 0 },
+                        supportsToolChoice = true,
+                    )
+                    ProviderKind.OPENAI_COMPATIBLE -> ModelDescriptor(
+                        provider = provider.id,
+                        providerName = provider.name,
+                        id = model.id,
+                        displayName = model.name ?: model.id,
+                        contextWindowSize = model.contextLength?.takeIf { it > 0 },
+                        supportsToolChoice = true,
+                    )
+                    ProviderKind.OPENROUTER -> {
                         val supportsTools = "tools" in model.supportedParameters.orEmpty()
                         val textOutput = model.architecture?.outputModalities?.let { "text" in it } ?: true
                         if (!supportsTools || !textOutput) null else ModelDescriptor(
-                            provider = provider,
+                            provider = provider.id,
+                            providerName = provider.name,
                             id = model.id,
                             displayName = model.name ?: model.id,
                             contextWindowSize = model.contextLength?.takeIf { it > 0 },

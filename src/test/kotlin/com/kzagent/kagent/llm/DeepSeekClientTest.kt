@@ -3,7 +3,7 @@ package com.kzagent.kagent.llm
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.ModelSelection
 import com.kzagent.kagent.config.ProviderConfig
-import com.kzagent.kagent.config.ProviderId
+import com.kzagent.kagent.config.ProviderKind
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.CoroutineStart
@@ -38,9 +38,9 @@ class DeepSeekClientTest {
                     ),
             )
             val client = OpenAiCompatibleClient(
-                ProviderId.OPENROUTER,
-                ProviderConfig("sk-or-test-secret", server.url("/api/v1").toString()),
-                ModelSelection(ProviderId.OPENROUTER, "vendor/agent"),
+                "openrouter",
+                ProviderConfig("openrouter", "OpenRouter", ProviderKind.OPENROUTER, "sk-or-test-secret", server.url("/api/v1").toString()),
+                ModelSelection("openrouter", "vendor/agent"),
             )
 
             val error = assertFailsWith<ProviderApiException> {
@@ -207,8 +207,15 @@ class DeepSeekClientTest {
     }
 
     private fun testConfig(server: MockWebServer): AppConfig = AppConfig(
-        apiKey = "sk-network-test-secret",
-        baseUrl = server.url("/").toString(),
-        model = "deepseek-test",
+        providers = listOf(
+            ProviderConfig(
+                "deepseek",
+                "DeepSeek",
+                ProviderKind.DEEPSEEK,
+                "sk-network-test-secret",
+                server.url("/").toString(),
+            ),
+        ),
+        defaultModel = ModelSelection("deepseek", "deepseek-test"),
     )
 }

@@ -3,7 +3,6 @@ package com.kzagent.kagent.llm
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.ModelSelection
 import com.kzagent.kagent.config.ProviderConfig
-import com.kzagent.kagent.config.ProviderId
 import com.kzagent.kagent.config.SecretRedactor
 import java.time.Duration
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +28,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.math.min
 
 class OpenAiCompatibleClient(
-    private val providerId: ProviderId,
+    private val providerId: String,
     private val providerConfig: ProviderConfig,
     private val selection: ModelSelection,
 ) : ChatModel, AutoCloseable {
@@ -80,14 +79,14 @@ class OpenAiCompatibleClient(
             }.orEmpty()
             response.close()
             throw ProviderApiException(
-                message = "${providerId.displayName} API HTTP ${response.code}" +
+                message = "${providerConfig.name} API HTTP ${response.code}" +
                     errorBody.takeIf(String::isNotBlank)?.let { ": ${SecretRedactor.redact(it)}" }.orEmpty(),
                 statusCode = response.code,
             )
         }
 
         response.use { resp ->
-            val body = resp.body ?: throw ProviderApiException("${providerId.displayName} API returned an empty streaming body.")
+            val body = resp.body ?: throw ProviderApiException("${providerConfig.name} API returned an empty streaming body.")
             val contentBuilder = StringBuilder()
             val toolCallBuilders = mutableMapOf<Int, ToolCallBuilder>()
             var totalTokens: Int? = null
@@ -110,13 +109,13 @@ class OpenAiCompatibleClient(
                         json.decodeFromString(ChatCompletionChunk.serializer(), data)
                     } catch (error: Exception) {
                         throw ProviderApiException(
-                            "${providerId.displayName} API returned malformed streaming data.",
+                            "${providerConfig.name} API returned malformed streaming data.",
                             cause = error,
                         )
                     }
                     chunk.error?.let { streamError ->
                         throw ProviderApiException(
-                            "${providerId.displayName} API streaming error: " +
+                            "${providerConfig.name} API streaming error: " +
                                 SecretRedactor.redact(streamError.message),
                         )
                     }
@@ -146,10 +145,10 @@ class OpenAiCompatibleClient(
             }
 
             if (!sawDone) {
-                throw ProviderApiException("${providerId.displayName} API streaming response ended before [DONE].")
+                throw ProviderApiException("${providerConfig.name} API streaming response ended before [DONE].")
             }
             if (!sawChoice) {
-                throw ProviderApiException("${providerId.displayName} API streaming response contained no choices.")
+                throw ProviderApiException("${providerConfig.name} API streaming response contained no choices.")
             }
 
             val toolCalls = toolCallBuilders.entries
@@ -220,12 +219,12 @@ class DeepSeekClient private constructor(
 ) : ChatModel by delegate, AutoCloseable by delegate {
     constructor(config: AppConfig) : this(
         OpenAiCompatibleClient(
-            providerId = ProviderId.DEEPSEEK,
+            providerId = "deepseek",
             providerConfig = requireNotNull(config.deepSeek) { "DeepSeek is not configured." },
-            selection = if (config.defaultModel.provider == ProviderId.DEEPSEEK) {
+            selection = if (config.defaultModel.provider == "deepseek") {
                 config.defaultModel
             } else {
-                ModelSelection(ProviderId.DEEPSEEK, AppConfig.DEFAULT_MODEL, config.contextWindowSize)
+                ModelSelection("deepseek", AppConfig.DEFAULT_MODEL, config.contextWindowSize)
             },
         ),
     )

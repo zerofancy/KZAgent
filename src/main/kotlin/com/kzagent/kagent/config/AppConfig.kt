@@ -11,19 +11,23 @@ import java.util.Properties
 import io.github.vinceglb.filekit.FileKit
 import io.github.vinceglb.filekit.filesDir
 import com.kzagent.kagent.tools.ApprovalMode
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 data class AppConfig(
-    val deepSeek: ProviderConfig? = null,
-    val openRouter: ProviderConfig? = null,
-    val defaultModel: ModelSelection = ModelSelection(ProviderId.DEEPSEEK, DEFAULT_MODEL, DEFAULT_CONTEXT_WINDOW_SIZE),
+    val providers: List<ProviderConfig> = emptyList(),
+    val defaultModel: ModelSelection = ModelSelection(DEFAULT_PROVIDER_ID, DEFAULT_MODEL, DEFAULT_CONTEXT_WINDOW_SIZE),
     val sensitivePathProtection: Boolean = DEFAULT_SENSITIVE_PATH_PROTECTION,
     val contextWindowSize: Int = DEFAULT_CONTEXT_WINDOW_SIZE,
     val userPrompt: String = "",
     val approvalMode: ApprovalMode = DEFAULT_APPROVAL_MODE,
 ) {
     init {
-        require(deepSeek != null || openRouter != null) { "At least one model provider must be configured." }
-        require(provider(defaultModel.provider) != null) { "The default model provider is not configured." }
+        require(providers.isNotEmpty()) { "At least one model provider must be configured." }
+        require(provider(defaultModel.provider) != null) {
+            "The default model provider ${defaultModel.provider} is not configured."
+        }
         require(contextWindowSize > 0) { "Context window size must be a positive integer." }
     }
 
@@ -37,64 +41,189 @@ data class AppConfig(
         userPrompt: String = "",
         approvalMode: ApprovalMode = DEFAULT_APPROVAL_MODE,
     ) : this(
-        deepSeek = ProviderConfig(apiKey, baseUrl),
-        defaultModel = ModelSelection(ProviderId.DEEPSEEK, model, contextWindowSize),
+        providers = listOf(
+            ProviderConfig(
+                id = "deepseek",
+                name = ProviderKind.DEEPSEEK.displayName,
+                kind = ProviderKind.DEEPSEEK,
+                apiKey = apiKey,
+                baseUrl = baseUrl,
+            ),
+        ),
+        defaultModel = ModelSelection("deepseek", model, contextWindowSize),
         sensitivePathProtection = sensitivePathProtection,
         contextWindowSize = contextWindowSize,
         userPrompt = userPrompt,
         approvalMode = approvalMode,
     )
 
-    fun provider(id: ProviderId): ProviderConfig? = when (id) {
-        ProviderId.DEEPSEEK -> deepSeek
-        ProviderId.OPENROUTER -> openRouter
-    }
+    fun provider(id: String): ProviderConfig? = providers.firstOrNull { it.id == id }
 
-    val configuredProviders: List<ProviderId>
-        get() = ProviderId.entries.filter { provider(it) != null }
+    /** Alias used by callers iterating over the configured providers. */
+    val configuredProviders: List<ProviderConfig>
+        get() = providers
+
+    internal fun toDto(): AppConfigDto = AppConfigDto(
+        providers = providers,
+        defaultModel = defaultModel,
+        sensitivePathProtection = sensitivePathProtection,
+        contextWindowSize = contextWindowSize,
+        userPrompt = userPrompt,
+        approvalMode = approvalMode,
+    )
 
     // Source-compatible accessors for the existing DeepSeek-focused call sites.
+    val deepSeek: ProviderConfig? get() = providers.firstOrNull { it.kind == ProviderKind.DEEPSEEK }
+    val openRouter: ProviderConfig? get() = providers.firstOrNull { it.kind == ProviderKind.OPENROUTER }
+    @Deprecated("Use provider(id) or providers instead.")
     val apiKey: String get() = deepSeek?.apiKey.orEmpty()
+    @Deprecated("Use provider(id) or providers instead.")
     val baseUrl: String get() = deepSeek?.baseUrl ?: DEFAULT_BASE_URL
+    @Deprecated("Use defaultModel.modelId instead.")
     val model: String get() = defaultModel.modelId
 
     companion object {
         const val DEFAULT_BASE_URL = "https://api.deepseek.com"
         const val DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+        const val DEFAULT_PROVIDER_ID = "deepseek"
         const val DEFAULT_MODEL = "deepseek-v4-pro"
+        const val DEFAULT_MIMO_MODEL = "mimo-v2.5-pro"
         const val DEFAULT_SENSITIVE_PATH_PROTECTION = false
         const val DEFAULT_CONTEXT_WINDOW_SIZE = 1_000_000
         val DEFAULT_APPROVAL_MODE = ApprovalMode.AUTO
     }
 }
 
+/**
+ * Serialization-friendly mirror of [AppConfig] without invariant checks. Deserializing
+ * through this intermediate prevents [AppConfig]'s constructor validation from firing
+ * before environment-variable fallback providers are applied.
+ */
+@Serializable
+internal data class AppConfigDto(
+    val providers: List<ProviderConfig> = emptyList(),
+    val defaultModel: ModelSelection = ModelSelection(
+        AppConfig.DEFAULT_PROVIDER_ID,
+        AppConfig.DEFAULT_MODEL,
+        AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
+    ),
+    val sensitivePathProtection: Boolean = AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION,
+    val contextWindowSize: Int = AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
+    val userPrompt: String = "",
+    val approvalMode: ApprovalMode = AppConfig.DEFAULT_APPROVAL_MODE,
+) {
+    fun toAppConfig(): AppConfig = AppConfig(
+        providers = providers,
+        defaultModel = defaultModel,
+        sensitivePathProtection = sensitivePathProtection,
+        contextWindowSize = contextWindowSize,
+        userPrompt = userPrompt,
+        approvalMode = approvalMode,
+    )
+}
+
+object JsonConfigCodec {
+    val json: Json = Json {
+        ignoreUnknownKeys = true
+        explicitNulls = false
+        encodeDefaults = true
+    }
+
+    fun encode(config: AppConfig): String = json.encodeToString(config.toDto())
+
+    /** Decodes JSON into the invariant-checked model (used where construction-time validation is desired). */
+    fun decode(text: String): AppConfig = decodeDto(text).toAppConfig()
+
+    /** Decodes JSON into the unvalidated DTO, deferring checks until callers apply environment fallbacks. */
+    internal fun decodeDto(text: String): AppConfigDto = json.decodeFromString(text)
+}
+
 object AppConfigLoader {
+    private const val JSON_FILE_NAME = "config.json"
+    private const val LEGACY_FILE_NAME = "config.properties"
+
     fun load(env: Map<String, String> = System.getenv()): AppConfig =
         load(configFile = defaultConfigFile(env), env = env)
 
     internal fun load(configFile: Path, env: Map<String, String> = System.getenv()): AppConfig {
+        val fileName = configFile.fileName.toString()
+        return if (fileName.endsWith(".json")) {
+            loadJson(configFile, env)
+        } else {
+            // Backward-compatible path for callers that pass a legacy properties file.
+            loadProperties(configFile, env)
+        }
+    }
+
+    private fun loadJson(configFile: Path, env: Map<String, String>): AppConfig {
+        val props = Properties()
+        val legacyFile = configFile.resolveSibling(LEGACY_FILE_NAME)
+        if (Files.exists(legacyFile)) {
+            loadPropertiesInto(legacyFile, props)
+        }
+
+        if (Files.exists(configFile) && Files.size(configFile) > 0) {
+            val content = Files.readString(configFile, StandardCharsets.UTF_8).removePrefix("\uFEFF")
+            val dto = JsonConfigCodec.decodeDto(content)
+            return applyEnvironmentFallbacks(dto, props, env).toAppConfig()
+        }
+
+        // No JSON file yet: build from legacy properties (auto-migrating) or environment keys.
+        val migrated = configFromProperties(props, env)
+        writeJsonIfAbsent(configFile, migrated)
+        return migrated
+    }
+
+    private fun loadProperties(configFile: Path, env: Map<String, String>): AppConfig {
         val props = Properties()
         if (Files.exists(configFile)) {
-            StringReader(Files.readString(configFile, StandardCharsets.UTF_8).removePrefix("\uFEFF")).use {
-                props.load(it)
+            loadPropertiesInto(configFile, props)
+        }
+        return configFromProperties(props, env)
+    }
+
+    /** Applies environment-key overrides to a freshly deserialized config DTO. */
+    private fun applyEnvironmentFallbacks(config: AppConfigDto, props: Properties, env: Map<String, String>): AppConfigDto {
+        // Environment keys only apply when no JSON provider of that kind already has a key.
+        val providers = config.providers.toMutableList()
+        for (spec in ENV_PROVIDER_SPECS) {
+            if (spec.baseUrl.isBlank()) continue
+            val keyValue = env[spec.envKey]?.trim()?.takeIf(String::isNotEmpty) ?: continue
+            if (providers.none { it.kind == spec.kind }) {
+                providers.add(
+                    ProviderConfig(
+                        id = spec.defaultId,
+                        name = spec.kind.displayName,
+                        kind = spec.kind,
+                        apiKey = keyValue,
+                        baseUrl = (props.getProperty("${spec.defaultId}.base.url")
+                            ?.trim()?.takeIf(String::isNotEmpty) ?: spec.baseUrl).trimEnd('/'),
+                    ),
+                )
             }
         }
+        return config.copy(providers = providers)
+    }
 
-        fun provider(prefix: String, envKey: String, defaultBaseUrl: String): ProviderConfig? {
-            val key = env[envKey]?.trim()?.takeIf(String::isNotEmpty)
-                ?: props.getProperty("$prefix.api.key")?.trim()?.takeIf(String::isNotEmpty)
-                ?: return null
-            val baseUrl = props.getProperty("$prefix.base.url")?.trim()?.takeIf(String::isNotEmpty)
-                ?: defaultBaseUrl
-            return ProviderConfig(key, baseUrl.trimEnd('/'))
+    private fun configFromProperties(props: Properties, env: Map<String, String>): AppConfig {
+        val providers = buildList {
+            for (spec in ENV_PROVIDER_SPECS) {
+                if (spec.baseUrl.isBlank()) continue
+                legacyProvider(
+                    props,
+                    env,
+                    prefix = spec.prefix,
+                    envKey = spec.envKey,
+                    kind = spec.kind,
+                    defaultId = spec.defaultId,
+                    defaultBaseUrl = spec.baseUrl,
+                )?.let { add(it) }
+            }
         }
-
-        val deepSeek = provider("deepseek", "DEEPSEEK_API_KEY", AppConfig.DEFAULT_BASE_URL)
-        val openRouter = provider("openrouter", "OPENROUTER_API_KEY", AppConfig.DEFAULT_OPENROUTER_BASE_URL)
-        if (deepSeek == null && openRouter == null) {
+        if (providers.isEmpty()) {
             throw IllegalStateException(
                 "Missing model provider API key. Set DEEPSEEK_API_KEY, OPENROUTER_API_KEY, " +
-                    "or configure deepseek.api.key/openrouter.api.key in $configFile."
+                    "MIMOCODE_API_KEY, or configure a provider in the JSON config file."
             )
         }
 
@@ -127,24 +256,23 @@ object AppConfigLoader {
             ?: props.getProperty("deepseek.user.prompt"))?.trim() ?: ""
         val approvalMode = ApprovalMode.fromConfig(props.getProperty("kzagent.approval.mode"))
 
-        val defaultProviderValue = props.getProperty("kzagent.default.provider")?.trim()?.takeIf(String::isNotEmpty)
-        val configuredDefaultProvider = ProviderId.fromConfig(defaultProviderValue)
-        if (defaultProviderValue != null && configuredDefaultProvider == null) {
-            throw IllegalArgumentException("Unknown kzagent.default.provider: $defaultProviderValue")
-        }
-        if (configuredDefaultProvider != null && when (configuredDefaultProvider) {
-                ProviderId.DEEPSEEK -> deepSeek == null
-                ProviderId.OPENROUTER -> openRouter == null
+        val defaultProviderId = props.getProperty("kzagent.default.provider")?.trim()?.takeIf(String::isNotEmpty)
+        if (defaultProviderId != null) {
+            // Legacy values used the provider config value, which matches our provider ids.
+            val ids = providers.map { it.id }
+            if (defaultProviderId !in ids) {
+                throw IllegalArgumentException(
+                    "kzagent.default.provider $defaultProviderId is not configured.",
+                )
             }
-        ) {
-            throw IllegalArgumentException(
-                "kzagent.default.provider ${configuredDefaultProvider.configValue} is not configured.",
-            )
         }
-        val defaultProvider = configuredDefaultProvider
-            ?: if (deepSeek != null) ProviderId.DEEPSEEK else ProviderId.OPENROUTER
+        val defaultProvider = defaultProviderId ?: providers.first().id
         val defaultModelId = props.getProperty("kzagent.default.model")?.trim()?.takeIf(String::isNotEmpty)
-            ?: if (defaultProvider == ProviderId.DEEPSEEK) legacyModel else "openrouter/auto"
+            ?: when (defaultProvider) {
+                "openrouter" -> "openrouter/auto"
+                "mimocode" -> AppConfig.DEFAULT_MIMO_MODEL
+                else -> legacyModel
+            }
         val defaultContext = props.getProperty("kzagent.default.context.window.size")?.trim()?.toIntOrNull()
             ?.takeIf { it > 0 }
             ?: contextWindowSize
@@ -152,8 +280,7 @@ object AppConfigLoader {
             ?.trim()?.toBooleanStrictOrNull() ?: true
 
         return AppConfig(
-            deepSeek = deepSeek,
-            openRouter = openRouter,
+            providers = providers,
             defaultModel = ModelSelection(defaultProvider, defaultModelId, defaultContext, supportsToolChoice),
             sensitivePathProtection = sensitivePathProtection,
             contextWindowSize = contextWindowSize,
@@ -162,8 +289,77 @@ object AppConfigLoader {
         )
     }
 
-    internal fun defaultConfigFile(@Suppress("UNUSED_PARAMETER") env: Map<String, String> = System.getenv()): Path =
-        FileKitPaths.filesDir().resolve("config.properties")
+    private fun legacyProvider(
+        props: Properties,
+        env: Map<String, String>,
+        prefix: String,
+        envKey: String,
+        kind: ProviderKind,
+        defaultId: String,
+        defaultBaseUrl: String,
+    ): ProviderConfig? {
+        val key = env[envKey]?.trim()?.takeIf(String::isNotEmpty)
+            ?: props.getProperty("$prefix.api.key")?.trim()?.takeIf(String::isNotEmpty)
+            ?: return null
+        val baseUrl = props.getProperty("$prefix.base.url")?.trim()?.takeIf(String::isNotEmpty)
+            ?: defaultBaseUrl
+        return ProviderConfig(
+            id = defaultId,
+            name = kind.displayName,
+            kind = kind,
+            apiKey = key,
+            baseUrl = baseUrl.trimEnd('/'),
+        )
+    }
+
+    private class EnvProviderSpec(
+        val envKey: String,
+        val prefix: String,
+        val kind: ProviderKind,
+        val defaultId: String,
+        val baseUrl: String,
+    )
+
+    private val ENV_PROVIDER_SPECS = listOf(
+        EnvProviderSpec("DEEPSEEK_API_KEY", "deepseek", ProviderKind.DEEPSEEK, "deepseek", AppConfig.DEFAULT_BASE_URL),
+        EnvProviderSpec(
+            "OPENROUTER_API_KEY",
+            "openrouter",
+            ProviderKind.OPENROUTER,
+            "openrouter",
+            AppConfig.DEFAULT_OPENROUTER_BASE_URL,
+        ),
+        EnvProviderSpec(
+            "MIMOCODE_API_KEY",
+            "mimocode",
+            ProviderKind.MIMOCODE,
+            "mimocode",
+            ProviderKind.MIMOCODE.defaultBaseUrl,
+        ),
+    )
+
+    private fun loadPropertiesInto(configFile: Path, props: Properties) {
+        StringReader(Files.readString(configFile, StandardCharsets.UTF_8).removePrefix("\uFEFF")).use {
+            props.load(it)
+        }
+    }
+
+    private fun writeJsonIfAbsent(configFile: Path, config: AppConfig) {
+        if (Files.exists(configFile)) return
+        Files.createDirectories(configFile.parent)
+        Files.writeString(
+            configFile,
+            JsonConfigCodec.encode(config),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+        )
+    }
+
+    internal fun defaultConfigFile(env: Map<String, String> = System.getenv()): Path =
+        FileKitPaths.filesDir().resolve(JSON_FILE_NAME)
+
+    internal fun legacyConfigFile(): Path = FileKitPaths.filesDir().resolve(LEGACY_FILE_NAME)
 }
 
 object ConfigWriter {
@@ -174,41 +370,14 @@ object ConfigWriter {
 
     internal fun save(configFile: Path, config: AppConfig) {
         Files.createDirectories(configFile.parent)
-        val content = buildString {
-            config.deepSeek?.let {
-                appendLine("deepseek.api.key=${it.apiKey}")
-                appendLine("deepseek.base.url=${it.baseUrl}")
-            }
-            config.openRouter?.let {
-                appendLine("openrouter.api.key=${it.apiKey}")
-                appendLine("openrouter.base.url=${it.baseUrl}")
-            }
-            appendLine("kzagent.default.provider=${config.defaultModel.provider.configValue}")
-            appendLine("kzagent.default.model=${config.defaultModel.modelId}")
-            config.defaultModel.contextWindowSize?.let {
-                appendLine("kzagent.default.context.window.size=$it")
-            }
-            appendLine("kzagent.default.supports.tool.choice=${config.defaultModel.supportsToolChoice}")
-            appendLine("kzagent.sensitive.path.protection=${config.sensitivePathProtection}")
-            appendLine("kzagent.context.window.size=${config.contextWindowSize}")
-            appendLine("kzagent.approval.mode=${config.approvalMode.configValue}")
-            if (config.userPrompt.isNotBlank()) {
-                appendLine("kzagent.user.prompt=${escapePropertyValue(config.userPrompt)}")
-            }
-        }
         Files.writeString(
             configFile,
-            content,
+            JsonConfigCodec.encode(config),
             StandardCharsets.UTF_8,
             StandardOpenOption.CREATE,
             StandardOpenOption.TRUNCATE_EXISTING,
         )
     }
-
-    private fun escapePropertyValue(value: String): String = value
-        .replace("\\", "\\\\")
-        .replace("\r", "\\r")
-        .replace("\n", "\\n")
 }
 
 object AppDataDir {

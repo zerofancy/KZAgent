@@ -156,19 +156,27 @@ fun printUsage() {
                  After each answer, type your next question. Empty line to exit.
           (no command) - Same as chat.
 
-        Configuration (%APPDATA%\kzagent\config.properties on Windows,
-        ~/Library/Application Support/kzagent/config.properties on macOS,
-        or ~/.config/kzagent/config.properties on Linux):
-          deepseek.api.key=...
-          deepseek.base.url=https://api.deepseek.com
-          openrouter.api.key=...
-          openrouter.base.url=https://openrouter.ai/api/v1
-          kzagent.default.provider=deepseek  # deepseek | openrouter
-          kzagent.default.model=deepseek-v4-pro
-          kzagent.sensitive.path.protection=false
-          kzagent.approval.mode=auto  # auto | manual | full
+        Configuration JSON (%APPDATA%/kzagent/config.json on Windows,
+        ~/Library/Application Support/kzagent/config.json on macOS,
+        or ~/.config/kzagent/config.json on Linux):
+          {
+            "providers": [
+              { "id": "deepseek", "name": "DeepSeek", "kind": "DEEPSEEK",
+                "apiKey": "...", "baseUrl": "https://api.deepseek.com" },
+              { "id": "custom", "name": "My Provider", "kind": "OPENAI_COMPATIBLE",
+                "apiKey": "...", "baseUrl": "https://api.example.com/v1" }
+            ],
+            "defaultModel": { "provider": "deepseek", "modelId": "deepseek-v4-pro" },
+            "sensitivePathProtection": false,
+            "approvalMode": "AUTO"   // AUTO | MANUAL | FULL
+          }
 
-        DEEPSEEK_API_KEY and OPENROUTER_API_KEY take priority over the config file.
+        You can add any number of providers. kind may be DEEPSEEK, OPENROUTER,
+        MIMOCODE (Xiaomi MiMo Code), or OPENAI_COMPATIBLE (a generic OpenAI-compatible
+        endpoint). MiMo Code defaults to https://api.xiaomimimo.com/v1.
+        Legacy config.properties (deepseek.* / openrouter.* keys) is auto-migrated.
+        DEEPSEEK_API_KEY, OPENROUTER_API_KEY and MIMOCODE_API_KEY take priority when no
+        matching provider is configured in the JSON file.
         """.trimIndent(),
     )
 }

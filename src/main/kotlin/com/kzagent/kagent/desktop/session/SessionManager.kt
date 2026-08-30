@@ -11,7 +11,6 @@ import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.ModelSelection
-import com.kzagent.kagent.config.ProviderId
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.UserQuestionPrompter
@@ -40,7 +39,7 @@ class SessionData(
     error: String? = null,
     todoSnapshot: TodoSnapshot = TodoSnapshot(),
     modelSelection: ModelSelection = ModelSelection(
-        ProviderId.DEEPSEEK,
+        AppConfig.DEFAULT_PROVIDER_ID,
         AppConfig.DEFAULT_MODEL,
         AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
     ),
@@ -71,7 +70,7 @@ class SessionManager internal constructor(
     private val repository: SessionRepository = FileSessionRepository(sessionsRoot),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     initialDefaultModel: ModelSelection = ModelSelection(
-        ProviderId.DEEPSEEK,
+        AppConfig.DEFAULT_PROVIDER_ID,
         AppConfig.DEFAULT_MODEL,
         AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
     ),

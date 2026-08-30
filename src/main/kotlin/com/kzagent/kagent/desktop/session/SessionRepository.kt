@@ -5,7 +5,6 @@ import com.kzagent.kagent.agent.SessionEntry
 import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.config.ModelSelection
-import com.kzagent.kagent.config.ProviderId
 import com.kzagent.kagent.todo.TodoFiles
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -150,7 +149,7 @@ internal class FileSessionRepository(
                 if (index <= 0) null else line.substring(0, index) to line.substring(index + 1)
             }.toMap()
         ModelSelection(
-            provider = requireNotNull(ProviderId.fromConfig(values["provider"])),
+            provider = requireNotNull(values["provider"]) { "Missing provider in model sidecar." },
             modelId = values.getValue("model"),
             contextWindowSize = values["contextWindowSize"]?.toIntOrNull(),
             supportsToolChoice = values["supportsToolChoice"]?.toBooleanStrictOrNull() ?: true,
@@ -161,7 +160,7 @@ internal class FileSessionRepository(
         writeMetadata(
             path,
             buildString {
-                appendLine("provider=${selection.provider.configValue}")
+                appendLine("provider=${selection.provider}")
                 appendLine("model=${selection.modelId}")
                 selection.contextWindowSize?.let { appendLine("contextWindowSize=$it") }
                 appendLine("supportsToolChoice=${selection.supportsToolChoice}")

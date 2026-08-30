@@ -39,44 +39,61 @@ KZAgent 的核心思想是让大语言模型（LLM）通过工具调用（Tool C
 
 ### 1. 配置 API Key
 
-**方式一（推荐）：通过桌面应用内置设置面板配置。** 首次启动桌面应用时如未检测到任何 Provider API Key，将自动打开设置面板；你也可以随时通过侧边栏的「⚙ 设置」按钮进入。至少配置 DeepSeek 或 OpenRouter 之一。保存后可在对话顶部从在线目录搜索和切换模型。
+**方式一（推荐）：通过桌面应用内置设置面板配置。** 首次启动桌面应用时如未检测到任何 Provider API Key，将自动打开设置面板；你也可以随时通过侧边栏的「⚙ 设置」按钮进入。你可以添加一个或多个任意类型的 OpenAI 兼容 Provider（内置 DeepSeek / OpenRouter 模板，也支持自定义端点），并选择其中一个作为默认。保存后可在对话顶部从在线目录搜索和切换模型。
 
-**方式二：手动创建配置文件。** 在用户配置目录创建 `kzagent/config.properties` 文件：
+**方式二：手动创建配置文件 `kzagent/config.json`：**
 
-- Windows: `%APPDATA%\kzagent\config.properties`
-- macOS: `~/Library/Application Support/kzagent/config.properties`
-- Linux: `$XDG_CONFIG_HOME/kzagent/config.properties`，未设置时使用 `~/.config/kzagent/config.properties`
+- Windows: `%APPDATA%\kzagent\config.json`
+- macOS: `~/Library/Application Support/kzagent/config.json`
+- Linux: `$XDG_CONFIG_HOME/kzagent/config.json`，未设置时使用 `~/.config/kzagent/config.json`
 
-```properties
-deepseek.api.key=sk-xxxxxxxxxxxxxxxx
-deepseek.base.url=https://api.deepseek.com
-openrouter.api.key=sk-or-xxxxxxxxxxxxxxxx
-openrouter.base.url=https://openrouter.ai/api/v1
-kzagent.default.provider=deepseek
-kzagent.default.model=deepseek-v4-pro
+```json
+{
+  "providers": [
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "kind": "DEEPSEEK",
+      "apiKey": "sk-xxxxxxxxxxxxxxxx",
+      "baseUrl": "https://api.deepseek.com"
+    },
+    {
+      "id": "custom",
+      "name": "My Provider",
+      "kind": "OPENAI_COMPATIBLE",
+      "apiKey": "sk-xxxxxxxxxxxxxxxx",
+      "baseUrl": "https://api.example.com/v1"
+    }
+  ],
+  "defaultModel": {
+    "provider": "deepseek",
+    "modelId": "deepseek-v4-pro"
+  }
+}
 ```
 
-也可以通过环境变量提供，且优先级高于配置文件：
+`kind` 支持 `DEEPSEEK`、`OPENROUTER`、`MIMOCODE`（小米 MiMo Code，默认端点 `https://api.xiaomimimo.com/v1`）以及 `OPENAI_COMPATIBLE`（任意 OpenAI 兼容端点，通过 `GET {baseUrl}/models` 获取模型列表）。`id` 是每个 Provider 的唯一标识，用于持久化会话的模型选择。
+
+也可以通过环境变量提供，且当 JSON 中未配置对应 Provider 时生效：
 
 ```bash
 export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 export OPENROUTER_API_KEY=sk-or-xxxxxxxxxxxxxxxx
+export MIMOCODE_API_KEY=sk-mimo-xxxxxxxxxxxxxxxx
 ```
 
 ### 可选配置项
 
-| 属性 | 默认值 | 说明 |
-|------|:------:|------|
-| `deepseek.base.url` | `https://api.deepseek.com` | API 端点地址（兼容 OpenAI 格式的均可） |
-| `openrouter.base.url` | `https://openrouter.ai/api/v1` | OpenRouter API 端点 |
-| `kzagent.default.provider` | 首个已配置 Provider | CLI 和新会话默认 Provider |
-| `kzagent.default.model` | `deepseek-v4-pro` / `openrouter/auto` | CLI 和新会话默认模型；桌面切换后自动更新 |
-| `kzagent.sensitive.path.protection` | `false` | 敏感路径保护开关。开启后拦截对 `local.properties`、`.env` 等本地敏感配置文件的访问 |
-| `kzagent.context.window.size` | `1000000` | 模型目录未返回上下文长度时的回退值 |
-| `kzagent.approval.mode` | `auto` | 审批模式：`auto`、`manual` 或 `full` |
+`config.json` 顶层还支持以下可选字段：
 
-旧版 `deepseek.model`、`deepseek.context.window.size`、`deepseek.sensitive.path.protection` 和
-`deepseek.user.prompt` 仍可读取；下次从设置页保存时会写成新的通用 `kzagent.*` 配置键。
+| 字段 | 默认值 | 说明 |
+|------|:------:|------|
+| `sensitivePathProtection` | `false` | 敏感路径保护开关。开启后拦截对 `local.properties`、`.env` 等本地敏感配置文件的访问 |
+| `contextWindowSize` | `1000000` | 模型目录未返回上下文长度时的回退值 |
+| `approvalMode` | `AUTO` | 审批模式：`AUTO`、`MANUAL` 或 `FULL` |
+| `userPrompt` | `""` | 附加在系统提示词之后的自定义规则 |
+
+> **旧版 `config.properties` 自动迁移：** 首次启动时若只存在旧的 `config.properties`（`deepseek.*` / `openrouter.*` key）而没有 `config.json`，KZAgent 会自动读取并迁移为 `config.json`，无需手动转换。
 
 ### 2. 运行
 
@@ -426,25 +443,59 @@ src/main/kotlin/com/kzagent/kagent/
 
 ## 配置参考
 
-### 用户配置文件 `kzagent/config.properties`
+### 用户配置文件 `kzagent/config.json`
 
-```properties
-deepseek.api.key=sk-xxxxxxxxxxxxxxxx          # DeepSeek API Key（二选一）
-deepseek.base.url=https://api.deepseek.com    # API 地址（可选）
-openrouter.api.key=sk-or-xxxxxxxxxxxxxxxx     # OpenRouter API Key（二选一）
-openrouter.base.url=https://openrouter.ai/api/v1
-kzagent.default.provider=deepseek             # deepseek | openrouter
-kzagent.default.model=deepseek-v4-pro
-kzagent.sensitive.path.protection=false       # 敏感路径保护（可选）
-kzagent.context.window.size=1000000           # 上下文窗口回退值（可选）
-kzagent.approval.mode=auto                    # auto | manual | full（可选，默认 auto）
+```json
+{
+  "providers": [
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "kind": "DEEPSEEK",
+      "apiKey": "sk-xxxxxxxxxxxxxxxx",
+      "baseUrl": "https://api.deepseek.com"
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "kind": "OPENROUTER",
+      "apiKey": "sk-or-xxxxxxxxxxxxxxxx",
+      "baseUrl": "https://openrouter.ai/api/v1"
+    },
+    {
+      "id": "mimocode",
+      "name": "MiMo Code",
+      "kind": "MIMOCODE",
+      "apiKey": "sk-mimo-xxxxxxxxxxxxxxxx",
+      "baseUrl": "https://api.xiaomimimo.com/v1"
+    },
+    {
+      "id": "custom",
+      "name": "自定义",
+      "kind": "OPENAI_COMPATIBLE",
+      "apiKey": "sk-xxxxxxxxxxxxxxxx",
+      "baseUrl": "https://api.example.com/v1"
+    }
+  ],
+  "defaultModel": {
+    "provider": "deepseek",
+    "modelId": "deepseek-v4-pro"
+  },
+  "sensitivePathProtection": false,
+  "contextWindowSize": 1000000,
+  "approvalMode": "AUTO"
+}
 ```
+
+`providers` 列表可以包含任意数量的 provider，`kind` 取 `DEEPSEEK` / `OPENROUTER` /
+`MIMOCODE` / `OPENAI_COMPATIBLE`。旧版 `config.properties` 会自动迁移为上述 JSON 格式。
 
 ### 环境变量
 
 ```bash
-DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx    # 优先级高于 config.properties
-OPENROUTER_API_KEY=sk-or-xxxxxxxxxxxx   # 优先级高于 config.properties
+DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx    # JSON 中未配置 DeepSeek 时生效
+OPENROUTER_API_KEY=sk-or-xxxxxxxxxxxx   # JSON 中未配置 OpenRouter 时生效
+MIMOCODE_API_KEY=sk-mimo-xxxxxxxxxxxx   # JSON 中未配置 MiMo Code 时生效
 ```
 
 ---

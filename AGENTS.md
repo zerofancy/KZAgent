@@ -7,7 +7,7 @@
 
 ## 项目架构
 
-- 本项目使用 Kotlin 2.4、JVM 17、Compose Desktop，以及支持 DeepSeek/OpenRouter 的 OpenAI-compatible Chat Completions API。
+- 本项目使用 Kotlin 2.4、JVM 17、Compose Desktop，以及任意 OpenAI-compatible Chat Completions API。内置 DeepSeek、OpenRouter 与小米 MiMo Code 预设，并支持用户添加自定义 `OPENAI_COMPATIBLE` Provider。
 - CLI 与桌面端共享 `AgentRuntimeFactory`、`CodingAgent` 和本地工具实现；共同能力应放在共享运行时中，不要复制两套逻辑。
 - 新增或修改 `AgentMessage` 类型时，必须同步检查 API 序列化、JSONL 会话读写、上下文压缩、token 估算和桌面消息展示。
 - 文件和目录处理必须保持 Windows、macOS 与 Linux 兼容，优先使用 `java.nio.file.Path`，不要硬编码平台路径分隔符。
