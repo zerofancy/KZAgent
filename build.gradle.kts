@@ -7,10 +7,10 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
 plugins {
-    kotlin("jvm") version "2.4.0"
-    kotlin("plugin.serialization") version "2.4.0"
-    id("org.jetbrains.compose") version "1.11.1"
-    id("org.jetbrains.kotlin.plugin.compose") version "2.4.0"
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.compose.multiplatform)
+    alias(libs.plugins.compose.compiler)
 }
 
 group = "com.kzagent"
@@ -54,25 +54,25 @@ java {
 }
 
 dependencies {
-    implementation(compose.desktop.currentOs)
-    implementation("org.jetbrains.compose.material3:material3:1.9.0")
+    implementation(libs.compose.desktop.currentOs)
+    implementation(libs.material3)
     // Material 3 remains available for the markdown renderer and controls that have not
     // migrated yet; application dialogs use Compose Fluent's ContentDialog.
-    implementation("io.github.compose-fluent:fluent:v0.1.0")
-    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.43.0")
-    implementation("com.mikepenz:multiplatform-markdown-renderer-code:0.43.0")
-    implementation("com.mikepenz:multiplatform-markdown-renderer-coil3:0.43.0")
-    implementation("io.coil-kt.coil3:coil-network-okhttp:3.5.0")
-    implementation("io.coil-kt.coil3:coil-svg:3.5.0")
-    implementation("io.github.vinceglb:filekit-dialogs:0.14.2")
-    implementation("net.java.dev.jna:jna:5.19.1")
-    implementation("net.java.dev.jna:jna-platform:5.19.1")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("org.jsoup:jsoup:1.22.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    implementation(libs.compose.fluent)
+    implementation(libs.markdown.renderer.m3)
+    implementation(libs.markdown.renderer.code)
+    implementation(libs.markdown.renderer.coil3)
+    implementation(libs.coil3.network.okhttp)
+    implementation(libs.coil3.svg)
+    implementation(libs.filekit.dialogs)
+    implementation(libs.jna)
+    implementation(libs.jna.platform)
+    implementation(libs.okhttp)
+    implementation(libs.jsoup)
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.coroutines.swing)
+    implementation(libs.kotlinx.serialization.json)
+    testImplementation(libs.okhttp.mockwebserver)
     testImplementation(kotlin("test"))
 }
 
