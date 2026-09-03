@@ -18,8 +18,10 @@ kotlinx-serialization = "1.9.0"
 jvm-target = "17"
 
 [libraries]
-# Compose Desktop
-compose-desktop-currentOs = { module = "org.jetbrains.compose.desktop:desktop", version.ref = "compose-multiplatform" }
+# NOTE: Compose Desktop's platform-aware dependency (compose.desktop.currentOs) is intentionally
+# NOT modeled here: the plain Maven coordinate org.jetbrains.compose.desktop:desktop does not
+# carry the per-OS Skiko native runtime, which caused the macOS window to go blank.
+# Keep using the plugin accessor in build.gradle.kts instead.
 
 # Material 3 (for markdown renderer and legacy controls)
 material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "material3" }

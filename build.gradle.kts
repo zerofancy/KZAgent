@@ -54,7 +54,12 @@ java {
 }
 
 dependencies {
-    implementation(libs.compose.desktop.currentOs)
+    // compose.desktop.currentOs is the Compose plugin's platform-aware accessor: it resolves
+    // to the current-OS artifact (e.g. desktop-jvm-macos-arm64) which carries the matching
+    // Skiko native runtime. Using the plain Maven coordinate org.jetbrains.compose.desktop:desktop
+    // here would drop skiko-awt-runtime-<os>-<arch> (declared via Maven profiles, which Gradle
+    // ignores) and make the Compose window fail with "Cannot find libskiko-<os>-<arch>.dylib".
+    implementation(compose.desktop.currentOs)
     implementation(libs.material3)
     // Material 3 remains available for the markdown renderer and controls that have not
     // migrated yet; application dialogs use Compose Fluent's ContentDialog.
