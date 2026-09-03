@@ -295,6 +295,11 @@ private fun packagedAppPath(): Path =
 internal fun desktopLog(message: String, throwable: Throwable? = null) {
     val line = "${OffsetDateTime.now()} KZAgent desktop: ${SecretRedactor.redact(message)}"
     println(line)
+    if (throwable != null) {
+        // Emit the full (redacted) stack trace to stdout as well as to the log file so a
+        // failure's root cause is visible directly in the terminal, not only in desktop.log.
+        println(SecretRedactor.redact(throwable.stackTraceToString()))
+    }
     val logPath = desktopLogPath()
     runCatching {
         logPath.parent?.let(Files::createDirectories)
