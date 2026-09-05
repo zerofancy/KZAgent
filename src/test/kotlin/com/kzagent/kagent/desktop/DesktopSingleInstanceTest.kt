@@ -1,5 +1,9 @@
 package com.kzagent.kagent.desktop
 
+import com.kzagent.kagent.desktop.app.DesktopInstanceStart
+import com.kzagent.kagent.desktop.app.DesktopLaunchRequest
+import com.kzagent.kagent.desktop.app.DesktopSingleInstanceCoordinator
+import com.kzagent.kagent.desktop.app.requireReadableWorkspace
 import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.Path
@@ -12,6 +16,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 
 class DesktopSingleInstanceTest {
     @Test
@@ -39,7 +44,7 @@ class DesktopSingleInstanceTest {
                 ),
             )
 
-            val requests = withTimeout(2_000) {
+            val requests = withTimeout(2_000.milliseconds) {
                 first.coordinator.requests.take(2).toList()
             }
             assertEquals(

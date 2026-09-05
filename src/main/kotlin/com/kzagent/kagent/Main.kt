@@ -1,7 +1,7 @@
 package com.kzagent.kagent
 
 import com.kzagent.kagent.cli.runCli
-import com.kzagent.kagent.desktop.runDesktopApp
+import com.kzagent.kagent.desktop.app.runDesktopApp
 import com.kzagent.kagent.config.FileKitPaths
 import java.nio.file.Path
 import kotlin.system.exitProcess
@@ -26,7 +26,22 @@ sealed interface LaunchRequest {
         val createStartupSession: Boolean,
     ) : LaunchRequest
 
-    data class Cli(val args: Array<String>) : LaunchRequest
+    data class Cli(val args: Array<String>) : LaunchRequest {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (javaClass != other?.javaClass) return false
+
+            other as Cli
+
+            if (!args.contentEquals(other.args)) return false
+
+            return true
+        }
+
+        override fun hashCode(): Int {
+            return args.contentHashCode()
+        }
+    }
 }
 
 object LaunchModeResolver {

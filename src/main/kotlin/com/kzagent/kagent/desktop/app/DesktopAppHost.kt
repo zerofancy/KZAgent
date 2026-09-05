@@ -1,16 +1,17 @@
-package com.kzagent.kagent.desktop
+package com.kzagent.kagent.desktop.app
 
 import androidx.compose.ui.awt.ComposePanel
 import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.config.SecretRedactor
-import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Desktop
 import java.awt.Dimension
 import java.awt.EventQueue
 import java.awt.Frame
+import java.awt.Graphics2D
 import java.awt.Image
 import java.awt.desktop.AppReopenedListener
+import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -74,7 +75,10 @@ fun runDesktopApp(
     if (openPackagedAppBeforeAwt()) {
         exitProcess(0)
     }
-    val initialRequest = desktopLaunchRequest(initialWorkspace, createStartupSession)
+    val initialRequest = desktopLaunchRequest(
+        initialWorkspace,
+        createStartupSession
+    )
     val instanceStart = DesktopSingleInstanceCoordinator.startOrForward(
         lockFile = AppDataDir.appDir().resolve("desktop-instance.lock"),
         request = initialRequest,
@@ -105,7 +109,7 @@ fun runDesktopApp(
                 }
                 minimumSize = Dimension(880, 600)
                 preferredSize = Dimension(1120, 760)
-                iconImage = loadAppIcon()
+                iconImages = loadAppIcons()
                 contentPane.layout = BorderLayout()
                 contentPane.add(loadingPanel, BorderLayout.CENTER)
                 addWindowListener(object : java.awt.event.WindowAdapter() {
@@ -115,6 +119,7 @@ fun runDesktopApp(
                 })
                 pack()
             }
+            setTaskbarIconIfSupported(frame.iconImages.firstOrNull())
             desktopLog("JFrame created")
             installMacAppReopenHandler(frame, windowLifecycle)
             showWindowInForeground(frame)
@@ -158,13 +163,11 @@ fun runDesktopApp(
             initialized.countDown()
         }
     }
-    try {
+    instanceCoordinator.use { _ ->
         initialized.await()
         startupFailure?.let { throw it }
         closed.await()
         desktopLog("closed")
-    } finally {
-        instanceCoordinator.close()
     }
 }
 
@@ -208,13 +211,56 @@ private fun installMacAppReopenHandler(
     }
 }
 
-private fun loadAppIcon(): Image? = runCatching {
-    checkNotNull(Thread.currentThread().contextClassLoader.getResourceAsStream("icons/kzagent.png")) {
-        "Application icon resource was not found"
-    }.use(ImageIO::read)
+/** Icon sizes commonly used by Linux window managers and the macOS Dock. */
+private val DESKTOP_ICON_SIZES = intArrayOf(16, 24, 32, 48, 64, 128, 256)
+
+/**
+ * Load multiple sizes of the application icon.  Linux window managers and the
+ * macOS Dock select the closest match from the provided list; supplying several
+ * sizes avoids blurry scaling artifacts.
+ */
+private fun loadAppIcons(): List<Image> = runCatching {
+    val source = checkNotNull(
+        Thread.currentThread().contextClassLoader.getResourceAsStream("icons/kzagent.png")
+    ) { "Application icon resource was not found" }.use(ImageIO::read)
+    DESKTOP_ICON_SIZES.map { size ->
+        if (source.width == size && source.height == size) source
+        else {
+            val scaled = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
+            val g: Graphics2D = scaled.createGraphics()
+            try {
+                g.setRenderingHint(
+                    java.awt.RenderingHints.KEY_INTERPOLATION,
+                    java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR
+                )
+                g.drawImage(source, 0, 0, size, size, null)
+            } finally {
+                g.dispose()
+            }
+            scaled
+        }
+    }
 }.onFailure {
-    desktopLog("failed to load application icon: ${it.message}", it)
-}.getOrNull()
+    desktopLog("failed to load application icons: ${it.message}", it)
+}.getOrDefault(emptyList())
+
+/**
+ * On macOS the Dock icon must be set explicitly via [java.awt.Taskbar]; the
+ * JFrame icon alone is not enough.
+ */
+private fun setTaskbarIconIfSupported(icon: Image?) {
+    if (icon == null) return
+    runCatching {
+        if (java.awt.Taskbar.isTaskbarSupported()) {
+            val taskbar = java.awt.Taskbar.getTaskbar()
+            if (taskbar.isSupported(java.awt.Taskbar.Feature.ICON_IMAGE)) {
+                taskbar.iconImage = icon
+            }
+        }
+    }.onFailure {
+        desktopLog("failed to set taskbar icon: ${it.message}", it)
+    }
+}
 
 private fun startPackagedAppFallbackWatchdog(
     windowShown: AtomicBoolean,

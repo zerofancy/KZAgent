@@ -11,6 +11,8 @@ class DesktopRuntimeErrorTest {
             IllegalArgumentException("Unsupported charset GB18030"),
         )
 
-        assertEquals("Unsupported charset GB18030", runtimeErrorMessage(failure))
+        assertEquals("Unsupported charset GB18030",
+            _root_ide_package_.com.kzagent.kagent.desktop.app.runtimeErrorMessage(failure)
+        )
     }
 }

@@ -6,8 +6,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import java.nio.file.Path
-import com.kzagent.kagent.desktop.DesktopLaunchRequest
-import com.kzagent.kagent.desktop.desktopLaunchRequest
+import com.kzagent.kagent.desktop.app.DesktopLaunchRequest
+import com.kzagent.kagent.desktop.app.desktopLaunchRequest
 
 class LaunchModeResolverTest {
     @Test

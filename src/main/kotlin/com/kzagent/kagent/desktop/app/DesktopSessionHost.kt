@@ -1,4 +1,4 @@
-package com.kzagent.kagent.desktop
+package com.kzagent.kagent.desktop.app
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,7 +25,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.AppConfigLoader
@@ -35,6 +34,30 @@ import com.kzagent.kagent.config.ModelSelection
 import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.agent.estimateContextTokens
 import com.kzagent.kagent.config.SecretRedactor
+import com.kzagent.kagent.desktop.ApprovalDialog
+import com.kzagent.kagent.desktop.Composer
+import com.kzagent.kagent.desktop.DisplayMessage
+import com.kzagent.kagent.desktop.ErrorBanner
+import com.kzagent.kagent.desktop.Header
+import com.kzagent.kagent.desktop.KZAgentFluentTheme
+import com.kzagent.kagent.desktop.KZAgentNavigationView
+import com.kzagent.kagent.desktop.MessageList
+import com.kzagent.kagent.desktop.PendingApproval
+import com.kzagent.kagent.desktop.PendingUserQuestions
+import com.kzagent.kagent.desktop.SessionData
+import com.kzagent.kagent.desktop.SessionManager
+import com.kzagent.kagent.desktop.SettingsPanel
+import com.kzagent.kagent.desktop.TodoDialog
+import com.kzagent.kagent.desktop.TodoPanel
+import com.kzagent.kagent.desktop.TodoPanelWidth
+import com.kzagent.kagent.desktop.UserCommandAvailability
+import com.kzagent.kagent.desktop.UserCommandInstaller
+import com.kzagent.kagent.desktop.UserQuestionDialog
+import com.kzagent.kagent.desktop.chooseWorkspace
+import com.kzagent.kagent.desktop.formatToolCallSummary
+import com.kzagent.kagent.desktop.loadSessionWorkspaceExpandState
+import com.kzagent.kagent.desktop.saveSessionWorkspaceExpandState
+import com.kzagent.kagent.desktop.shouldShowPersistentTodoPanel
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.llm.ModelCatalogService
 import com.kzagent.kagent.tools.ApprovalDecision
@@ -43,7 +66,6 @@ import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.ApprovalResult
 import com.kzagent.kagent.tools.ApprovalSource
 import com.kzagent.kagent.tools.ToolResult
-import com.kzagent.kagent.tools.UserQuestionAnswer
 import com.kzagent.kagent.tools.UserQuestionPrompter
 import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
@@ -58,7 +80,6 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
 import kotlin.coroutines.resume
-import kotlin.system.exitProcess
 
 @Composable
 internal fun KZAgentDesktopApp(
@@ -351,7 +372,13 @@ internal fun KZAgentDesktopApp(
                 session.status = "请求模型（第 ${turn} 轮）..."
             }
             override suspend fun onAssistantMessage(content: String) {
-                session.messages.add(DisplayMessage("assistant", content, timestampMillis = Instant.now().toEpochMilli()))
+                session.messages.add(
+                    DisplayMessage(
+                        "assistant",
+                        content,
+                        timestampMillis = Instant.now().toEpochMilli()
+                    )
+                )
             }
             override suspend fun onToolCallStarted(name: String, argsJson: String) {
                 val summary = formatToolCallSummary(name, argsJson)
@@ -366,13 +393,13 @@ internal fun KZAgentDesktopApp(
                 )
                 session.status = when (name) {
                     "run_command" -> when (savedConfig?.approvalMode) {
-                        com.kzagent.kagent.tools.ApprovalMode.MANUAL -> "等待命令审批..."
-                        com.kzagent.kagent.tools.ApprovalMode.AUTO -> "正在自动审批命令..."
-                        com.kzagent.kagent.tools.ApprovalMode.FULL -> "执行命令..."
+                        ApprovalMode.MANUAL -> "等待命令审批..."
+                        ApprovalMode.AUTO -> "正在自动审批命令..."
+                        ApprovalMode.FULL -> "执行命令..."
                         null -> "正在自动审批命令..."
                     }
                     "read_file" -> when (savedConfig?.approvalMode) {
-                        com.kzagent.kagent.tools.ApprovalMode.FULL -> "读取文件..."
+                        ApprovalMode.FULL -> "读取文件..."
                         else -> "检查文件读取权限..."
                     }
                     "fetch_web_page" -> "正在获取并解析网页..."
@@ -419,10 +446,18 @@ internal fun KZAgentDesktopApp(
             throw error
         } catch (error: Exception) {
             desktopLog(
-                "failed to initialize session ${session.id}: ${runtimeErrorMessage(error)}",
+                "failed to initialize session ${session.id}: ${
+                    runtimeErrorMessage(
+                        error
+                    )
+                }",
                 error,
             )
-            session.error = SecretRedactor.redact(runtimeErrorMessage(error))
+            session.error = SecretRedactor.redact(
+                runtimeErrorMessage(
+                    error
+                )
+            )
             session.status = "配置不可用"
         }
     }
@@ -507,7 +542,8 @@ internal fun KZAgentDesktopApp(
                         } catch (error: CancellationException) {
                             throw error
                         } catch (error: Exception) {
-                            sessionLoadError = SecretRedactor.redact(error.message ?: error.toString())
+                            sessionLoadError =
+                                SecretRedactor.redact(error.message ?: error.toString())
                         }
                     }
                 }
@@ -519,8 +555,9 @@ internal fun KZAgentDesktopApp(
             },
             onChooseWorkspace = {
                 scope.launch {
-                    val session = sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)
-                        ?: return@launch
+                    val session =
+                        sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)
+                            ?: return@launch
                     try {
                         chooseWorkspace(session.workspace)?.let { newWorkspace ->
                             sessionManager.startSessionInWorkspace(session, newWorkspace)
@@ -544,10 +581,13 @@ internal fun KZAgentDesktopApp(
                         AppConfig.DEFAULT_MODEL,
                         AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
                     ),
-                    initialContextWindowSize = savedConfig?.contextWindowSize ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
-                    initialSensitivePathProtection = savedConfig?.sensitivePathProtection ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION,
+                    initialContextWindowSize = savedConfig?.contextWindowSize
+                        ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
+                    initialSensitivePathProtection = savedConfig?.sensitivePathProtection
+                        ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION,
                     initialUserPrompt = savedConfig?.userPrompt ?: "",
-                    initialApprovalMode = savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE,
+                    initialApprovalMode = savedConfig?.approvalMode
+                        ?: AppConfig.DEFAULT_APPROVAL_MODE,
                     availableModels = availableModels,
                     modelsLoading = modelsLoading,
                     modelsError = modelsError,
@@ -592,8 +632,10 @@ internal fun KZAgentDesktopApp(
                             workspace = session.workspace,
                             status = session.status,
                             isBusy = session.isBusy,
-                            contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000),
-                            approvalMode = savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE,
+                            contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize
+                                ?: 1_000_000),
+                            approvalMode = savedConfig?.approvalMode
+                                ?: AppConfig.DEFAULT_APPROVAL_MODE,
                             modelSelection = session.modelSelection,
                             availableModels = availableModels,
                             modelsLoading = modelsLoading,
@@ -647,7 +689,10 @@ internal fun KZAgentDesktopApp(
                                         val titleRevision = session.titleRevision
                                         val job = scope.launch {
                                             try {
-                                                val result = currentRuntime.agent.runConversation(prompt, session.conversationHistory)
+                                                val result = currentRuntime.agent.runConversation(
+                                                    prompt,
+                                                    session.conversationHistory
+                                                )
                                                 session.conversationHistory = result.history
                                                 session.usedTokens = result.totalTokens
                                                 session.status = "就绪"
@@ -655,7 +700,10 @@ internal fun KZAgentDesktopApp(
                                                 if (result.history.count { it is AgentMessage.User } == 1) {
                                                     scope.launch {
                                                         try {
-                                                            val title = currentRuntime.agent.generateTitle(prompt)
+                                                            val title =
+                                                                currentRuntime.agent.generateTitle(
+                                                                    prompt
+                                                                )
                                                             sessionManager.renameSessionIfRevisionMatches(
                                                                 sessionId,
                                                                 titleRevision,
@@ -671,7 +719,8 @@ internal fun KZAgentDesktopApp(
                                             } catch (_: CancellationException) {
                                                 session.status = "已终止"
                                             } catch (e: Exception) {
-                                                session.error = SecretRedactor.redact(e.message ?: e.toString())
+                                                session.error =
+                                                    SecretRedactor.redact(e.message ?: e.toString())
                                                 session.status = "请求失败"
                                             } finally {
                                                 session.isBusy = false

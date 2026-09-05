@@ -7,20 +7,20 @@ class DesktopWindowLifecycleTest {
     @Test
     fun macOsKeepsApplicationRunningAfterWindowCloses() {
         assertEquals(
-            DesktopWindowLifecycle.KEEP_RUNNING,
-            desktopWindowLifecycle("Mac OS X"),
+            com.kzagent.kagent.desktop.app.DesktopWindowLifecycle.KEEP_RUNNING,
+            _root_ide_package_.com.kzagent.kagent.desktop.app.desktopWindowLifecycle("Mac OS X"),
         )
     }
 
     @Test
     fun windowsAndLinuxExitAfterWindowCloses() {
         assertEquals(
-            DesktopWindowLifecycle.EXIT_AFTER_CLOSE,
-            desktopWindowLifecycle("Windows 11"),
+            com.kzagent.kagent.desktop.app.DesktopWindowLifecycle.EXIT_AFTER_CLOSE,
+            _root_ide_package_.com.kzagent.kagent.desktop.app.desktopWindowLifecycle("Windows 11"),
         )
         assertEquals(
-            DesktopWindowLifecycle.EXIT_AFTER_CLOSE,
-            desktopWindowLifecycle("Linux"),
+            com.kzagent.kagent.desktop.app.DesktopWindowLifecycle.EXIT_AFTER_CLOSE,
+            _root_ide_package_.com.kzagent.kagent.desktop.app.desktopWindowLifecycle("Linux"),
         )
     }
 }

@@ -10,7 +10,7 @@ import kotlin.test.assertTrue
 
 /**
  * Covers the desktop logger's console behavior: when an exception is passed to
- * [desktopLog], the full (redacted) stack trace must also be printed to stdout,
+ * [com.kzagent.kagent.desktop.app.desktopLog], the full (redacted) stack trace must also be printed to stdout,
  * not only written to the log file, so root causes are visible in the terminal.
  */
 class DesktopLogStacktraceTest {
@@ -39,7 +39,10 @@ class DesktopLogStacktraceTest {
         val captured = ByteArrayOutputStream()
         System.setOut(PrintStream(captured, true, Charsets.UTF_8))
         try {
-            desktopLog("failure happened", RuntimeException("boom"))
+            _root_ide_package_.com.kzagent.kagent.desktop.app.desktopLog(
+                "failure happened",
+                RuntimeException("boom")
+            )
         } finally {
             System.setOut(originalOut)
         }
@@ -64,7 +67,7 @@ class DesktopLogStacktraceTest {
         val captured = ByteArrayOutputStream()
         System.setOut(PrintStream(captured, true, Charsets.UTF_8))
         try {
-            desktopLog("plain message")
+            _root_ide_package_.com.kzagent.kagent.desktop.app.desktopLog("plain message")
         } finally {
             System.setOut(originalOut)
         }

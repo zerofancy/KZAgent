@@ -1,4 +1,4 @@
-package com.kzagent.kagent.desktop
+package com.kzagent.kagent.desktop.app
 
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -81,7 +81,10 @@ internal class DesktopSingleInstanceCoordinator private constructor(
                 serverSocket.accept().use(::handleClient)
             } catch (error: Exception) {
                 if (running.get()) {
-                    desktopLog("single-instance server request failed: ${error.message ?: error}", error)
+                    desktopLog(
+                        "single-instance server request failed: ${error.message ?: error}",
+                        error
+                    )
                 }
             }
         }
