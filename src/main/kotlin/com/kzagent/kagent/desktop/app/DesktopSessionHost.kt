@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
@@ -28,14 +27,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.AppConfig
-import com.kzagent.kagent.config.AppConfigLoader
-import com.kzagent.kagent.config.ConfigWriter
-import com.kzagent.kagent.config.ModelDescriptor
 import com.kzagent.kagent.config.ModelSelection
-import com.kzagent.kagent.agent.AgentObserver
-import com.kzagent.kagent.agent.estimateContextTokens
 import com.kzagent.kagent.config.SecretRedactor
-import com.kzagent.kagent.desktop.ApprovalDialog
 import com.kzagent.kagent.desktop.Composer
 import com.kzagent.kagent.desktop.DisplayMessage
 import com.kzagent.kagent.desktop.ErrorBanner
@@ -51,32 +44,19 @@ import com.kzagent.kagent.desktop.SettingsPanel
 import com.kzagent.kagent.desktop.TodoDialog
 import com.kzagent.kagent.desktop.TodoPanel
 import com.kzagent.kagent.desktop.TodoPanelWidth
-import com.kzagent.kagent.desktop.UserCommandAvailability
-import com.kzagent.kagent.desktop.UserCommandInstaller
-import com.kzagent.kagent.desktop.UserQuestionDialog
 import com.kzagent.kagent.desktop.chooseWorkspace
-import com.kzagent.kagent.desktop.formatToolCallSummary
 import com.kzagent.kagent.desktop.loadSessionWorkspaceExpandState
 import com.kzagent.kagent.desktop.saveSessionWorkspaceExpandState
 import com.kzagent.kagent.desktop.shouldShowPersistentTodoPanel
 import com.kzagent.kagent.llm.AgentMessage
-import com.kzagent.kagent.llm.ModelCatalogService
 import com.kzagent.kagent.tools.ApprovalDecision
-import com.kzagent.kagent.tools.ApprovalMode
 import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.ApprovalResult
 import com.kzagent.kagent.tools.ApprovalSource
-import com.kzagent.kagent.tools.ToolResult
 import com.kzagent.kagent.tools.UserQuestionPrompter
-import io.github.composefluent.component.ContentDialog
-import io.github.composefluent.component.ContentDialogButton
-import io.github.composefluent.component.Button as FluentButton
-import io.github.composefluent.component.Text as FluentText
-import io.github.composefluent.component.TextField as FluentTextField
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -99,43 +79,9 @@ internal fun KZAgentDesktopApp(
     var renameSuggesting by remember { mutableStateOf(false) }
     var showCompressConfirm by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
-    var savedConfig by remember { mutableStateOf<AppConfig?>(null) }
-    var configLoaded by remember { mutableStateOf(false) }
-    val availableModels = remember { mutableStateListOf<ModelDescriptor>() }
-    var modelsLoading by remember { mutableStateOf(false) }
-    var modelsError by remember { mutableStateOf<String?>(null) }
-    var modelCatalogJob by remember { mutableStateOf<Job?>(null) }
-    var settingsSaving by remember { mutableStateOf(false) }
-    var settingsSaveError by remember { mutableStateOf<String?>(null) }
-    var commandAvailability by remember { mutableStateOf<UserCommandAvailability?>(null) }
-    var commandInstalling by remember { mutableStateOf(false) }
-    var commandInstallMessage by remember { mutableStateOf<String?>(null) }
-    var commandInstallFailed by remember { mutableStateOf(false) }
     var sessionLoadError by remember { mutableStateOf<String?>(null) }
     val sessionWorkspaceExpandedState = remember { mutableStateMapOf<String, Boolean>() }
     val scope = rememberCoroutineScope()
-    val userCommandInstaller = remember { UserCommandInstaller() }
-    val modelCatalogService = remember { ModelCatalogService() }
-
-    // Check configuration on startup; if API key is missing, open settings
-    LaunchedEffect(Unit) {
-        try {
-            savedConfig = withContext(Dispatchers.IO) { AppConfigLoader.load() }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            savedConfig = null
-            showSettings = true
-        } finally {
-            configLoaded = true
-        }
-    }
-
-    LaunchedEffect(userCommandInstaller) {
-        commandAvailability = withContext(Dispatchers.IO) {
-            userCommandInstaller.availability()
-        }
-    }
 
     LaunchedEffect(Unit) {
         val loaded = withContext(Dispatchers.IO) { loadSessionWorkspaceExpandState() }
@@ -180,16 +126,28 @@ internal fun KZAgentDesktopApp(
     val sessionManager = remember {
         SessionManager(approvalPolicy, userQuestionPrompter = userQuestionPrompter)
     }
-    DisposableEffect(sessionManager, modelCatalogService) {
+
+    val settingsState = rememberDesktopSessionSettingsState(
+        sessionManager = sessionManager,
+        scope = scope,
+        onDismiss = { showSettings = false },
+        onConfigurationRequired = { showSettings = true },
+        onSessionError = { msg ->
+            sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)?.error = msg
+        },
+    )
+
+    DisposableEffect(sessionManager, settingsState) {
         onDispose {
             sessionManager.close()
-            modelCatalogService.close()
+            settingsState.close()
         }
     }
 
-    LaunchedEffect(sessionManager, initialWorkspace, createStartupSession, configLoaded, savedConfig?.defaultModel) {
-        if (!configLoaded || savedConfig == null) return@LaunchedEffect
-        sessionManager.updateDefaultModel(savedConfig!!.defaultModel)
+    LaunchedEffect(sessionManager, initialWorkspace, createStartupSession, settingsState.configLoaded, settingsState.savedConfig?.defaultModel) {
+        if (!settingsState.configLoaded) return@LaunchedEffect
+        val config = settingsState.savedConfig ?: return@LaunchedEffect
+        sessionManager.updateDefaultModel(config.defaultModel)
         try {
             sessionManager.loadOrCreate(initialWorkspace, createStartupSession)
         } catch (error: CancellationException) {
@@ -218,123 +176,6 @@ internal fun KZAgentDesktopApp(
         }
     }
 
-    fun refreshModels() {
-        val config = savedConfig ?: return
-        modelCatalogJob?.cancel()
-        modelsLoading = true
-        modelsError = null
-        lateinit var refreshJob: Job
-        refreshJob = scope.launch {
-            val loaded = mutableListOf<ModelDescriptor>()
-            val errors = mutableListOf<String>()
-            try {
-                config.configuredProviders.forEach { provider ->
-                    try {
-                        loaded += withContext(Dispatchers.IO) {
-                            modelCatalogService.loadProvider(config, provider)
-                        }
-                    } catch (error: CancellationException) {
-                        throw error
-                    } catch (error: Exception) {
-                        errors += "${provider.name}: ${SecretRedactor.redact(error.message ?: error.toString())}"
-                    }
-                }
-                availableModels.clear()
-                availableModels.addAll(loaded)
-                modelsError = errors.takeIf { it.isNotEmpty() }?.joinToString("\n")
-            } finally {
-                if (modelCatalogJob === refreshJob) modelsLoading = false
-            }
-        }
-        modelCatalogJob = refreshJob
-    }
-
-    LaunchedEffect(savedConfig?.providers) {
-        if (savedConfig != null) refreshModels()
-    }
-
-    // Persist configuration away from the UI dispatcher, then invalidate only the runtimes.
-    fun saveSettings(config: AppConfig) {
-        if (settingsSaving) return
-        settingsSaving = true
-        settingsSaveError = null
-        scope.launch {
-            try {
-                withContext(Dispatchers.IO) { ConfigWriter.save(config) }
-                savedConfig = withContext(Dispatchers.IO) { AppConfigLoader.load() }
-                sessionManager.updateDefaultModel(savedConfig!!.defaultModel)
-                sessionManager.invalidateRuntimes()
-                sessionManager.sessions.filter { savedConfig!!.provider(it.modelSelection.provider) == null }
-                    .forEach { session -> sessionManager.updateModel(session, savedConfig!!.defaultModel) }
-                showSettings = false
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                settingsSaveError = SecretRedactor.redact(error.message ?: error.toString())
-                if (!showSettings) {
-                    sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)?.error =
-                        "保存设置失败：$settingsSaveError"
-                }
-            } finally {
-                settingsSaving = false
-            }
-        }
-    }
-
-    fun onApprovalModeChanged(mode: ApprovalMode) {
-        val current = savedConfig ?: return
-        if (current.approvalMode != mode) saveSettings(current.copy(approvalMode = mode))
-    }
-
-    fun onModelChanged(session: SessionData, selection: ModelSelection) {
-        val currentConfig = savedConfig ?: return
-        if (session.isBusy || currentConfig.provider(selection.provider) == null) return
-        scope.launch {
-            try {
-                sessionManager.updateModel(session, selection)
-                val updatedConfig = currentConfig.copy(defaultModel = selection)
-                withContext(Dispatchers.IO) { ConfigWriter.save(updatedConfig) }
-                savedConfig = updatedConfig
-                sessionManager.updateDefaultModel(selection)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                session.error = SecretRedactor.redact(error.message ?: error.toString())
-                session.status = "模型切换失败"
-            }
-        }
-    }
-
-    fun installUserCommand() {
-        if (commandInstalling || commandAvailability?.available != true) return
-        commandInstalling = true
-        commandInstallMessage = null
-        commandInstallFailed = false
-        scope.launch {
-            try {
-                val result = withContext(Dispatchers.IO) {
-                    userCommandInstaller.install()
-                }
-                commandAvailability = withContext(Dispatchers.IO) {
-                    userCommandInstaller.availability()
-                }
-                commandInstallMessage = buildString {
-                    append("已安装到 ${result.commandPath}。")
-                    if (result.restartTerminalRequired) {
-                        append(" 请重新打开终端后使用。")
-                    }
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                commandInstallFailed = true
-                commandInstallMessage = SecretRedactor.redact(error.message ?: error.toString())
-            } finally {
-                commandInstalling = false
-            }
-        }
-    }
-
     // Auto-collapse tool messages when a session becomes idle
     LaunchedEffect(sessionManager.sessions.map { it.isBusy }) {
         sessionManager.sessions.forEach { session ->
@@ -348,99 +189,12 @@ internal fun KZAgentDesktopApp(
         }
     }
 
-    fun createObserver(session: SessionData): AgentObserver {
-        return object : AgentObserver {
-            override suspend fun onContextCompressionStarted(usagePercent: Int) {
-                session.status = "上下文超 80%，自动压缩..."
-                session.messages.add(
-                    DisplayMessage(
-                        "tool_result",
-                        "⚠️ 上下文使用率达 $usagePercent%，自动触发压缩...",
-                        timestampMillis = Instant.now().toEpochMilli(),
-                    ),
-                )
-            }
-            override suspend fun onContextCompressionCompleted(estimatedTokens: Int) {
-                session.usedTokens = estimatedTokens
-                session.status = "上下文压缩完成"
-                session.messages.add(
-                    DisplayMessage(
-                        "tool_result",
-                        "✅ 上下文已自动压缩，保留最近消息并生成了历史摘要。",
-                        timestampMillis = Instant.now().toEpochMilli(),
-                    ),
-                )
-            }
-            override suspend fun onModelRequest(turn: Int) {
-                session.status = "请求模型（第 ${turn} 轮）..."
-            }
-            override suspend fun onAssistantMessage(content: String) {
-                session.messages.add(
-                    DisplayMessage(
-                        "assistant",
-                        content,
-                        timestampMillis = Instant.now().toEpochMilli()
-                    )
-                )
-            }
-            override suspend fun onToolCallStarted(name: String, argsJson: String) {
-                val summary = formatToolCallSummary(name, argsJson)
-                session.messages.add(
-                    DisplayMessage(
-                        "tool_call",
-                        summary,
-                        collapsible = true,
-                        collapsed = false,
-                        timestampMillis = Instant.now().toEpochMilli(),
-                    ),
-                )
-                session.status = when (name) {
-                    "run_command" -> when (savedConfig?.approvalMode) {
-                        ApprovalMode.MANUAL -> "等待命令审批..."
-                        ApprovalMode.AUTO -> "正在自动审批命令..."
-                        ApprovalMode.FULL -> "执行命令..."
-                        null -> "正在自动审批命令..."
-                    }
-                    "read_file" -> when (savedConfig?.approvalMode) {
-                        ApprovalMode.FULL -> "读取文件..."
-                        else -> "检查文件读取权限..."
-                    }
-                    "fetch_web_page" -> "正在获取并解析网页..."
-                    "todo_read" -> "正在查看 Todo..."
-                    "todo_write" -> "正在更新 Todo..."
-                    "ask_user" -> "等待用户回答..."
-                    else -> "执行工具：$name"
-                }
-            }
-            override suspend fun onToolResult(name: String, result: ToolResult) {
-                session.messages.add(
-                    DisplayMessage(
-                        "tool_result",
-                        result.content,
-                        collapsible = true,
-                        collapsed = false,
-                        timestampMillis = Instant.now().toEpochMilli(),
-                    ),
-                )
-                session.status = when (result.approvalSource) {
-                    ApprovalSource.STATIC_RULE -> "静态规则已放行：$name"
-                    ApprovalSource.APPROVAL_AGENT ->
-                        if (result.isError) "审批 Agent 已拒绝：$name" else "审批 Agent 已放行：$name"
-                    ApprovalSource.HUMAN ->
-                        if (result.isError) "人工已拒绝：$name" else "人工已批准：$name"
-                    ApprovalSource.FULL_MODE -> "全部放行：$name"
-                    null -> if (result.isError) "工具返回错误：$name" else "工具完成：$name"
-                }
-            }
-        }
-    }
-
     // Ensure active session has a runtime
     val activeSession = sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)
     LaunchedEffect(sessionManager, activeSession?.id, activeSession?.workspace, activeSession?.runtime) {
         val session = activeSession ?: return@LaunchedEffect
         session.status = "正在加载..."
-        val observer = createObserver(session)
+        val observer = createAgentObserver(session, settingsState.savedConfig?.approvalMode)
         session.error = null
         try {
             sessionManager.ensureRuntime(session, observer)
@@ -472,34 +226,6 @@ internal fun KZAgentDesktopApp(
         }
     }
 
-    // Reusable context compression helper
-    suspend fun performCompression(session: SessionData, manageBusyState: Boolean = true): Boolean {
-        if ((manageBusyState && session.isBusy) || session.runtime == null) return false
-        if (manageBusyState) session.isBusy = true
-        session.status = "正在压缩上下文..."
-        return try {
-            val compressed = session.runtime!!.agent.compressHistory(session.conversationHistory)
-            session.conversationHistory = compressed
-            session.usedTokens = estimateContextTokens(compressed)
-            session.messages.add(
-                DisplayMessage(
-                    "tool_result",
-                    "✅ 上下文已压缩。之前的对话已总结为摘要，保留最近几条消息。",
-                    timestampMillis = Instant.now().toEpochMilli(),
-                ),
-            )
-            session.status = "就绪"
-            true
-        } catch (error: CancellationException) {
-            throw error
-        } catch (e: Exception) {
-            session.error = "压缩失败: ${SecretRedactor.redact(e.message ?: e.toString())}"
-            session.status = "压缩失败"
-            false
-        } finally {
-            if (manageBusyState) session.isBusy = false
-        }
-    }
 
     KZAgentFluentTheme {
         KZAgentNavigationView(
@@ -561,37 +287,37 @@ internal fun KZAgentDesktopApp(
         ) {
             if (showSettings) {
                 SettingsPanel(
-                    initialProviders = savedConfig?.providers.orEmpty(),
-                    initialDefaultModel = savedConfig?.defaultModel ?: ModelSelection(
+                    initialProviders = settingsState.savedConfig?.providers.orEmpty(),
+                    initialDefaultModel = settingsState.savedConfig?.defaultModel ?: ModelSelection(
                         AppConfig.DEFAULT_PROVIDER_ID,
                         AppConfig.DEFAULT_MODEL,
                         AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
                     ),
-                    initialContextWindowSize = savedConfig?.contextWindowSize
+                    initialContextWindowSize = settingsState.savedConfig?.contextWindowSize
                         ?: AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
-                    initialSensitivePathProtection = savedConfig?.sensitivePathProtection
+                    initialSensitivePathProtection = settingsState.savedConfig?.sensitivePathProtection
                         ?: AppConfig.DEFAULT_SENSITIVE_PATH_PROTECTION,
-                    initialUserPrompt = savedConfig?.userPrompt ?: "",
-                    initialApprovalMode = savedConfig?.approvalMode
+                    initialUserPrompt = settingsState.savedConfig?.userPrompt ?: "",
+                    initialApprovalMode = settingsState.savedConfig?.approvalMode
                         ?: AppConfig.DEFAULT_APPROVAL_MODE,
-                    availableModels = availableModels,
-                    modelsLoading = modelsLoading,
-                    modelsError = modelsError,
-                    onRefreshModels = ::refreshModels,
-                    saving = settingsSaving,
-                    saveError = settingsSaveError,
-                    commandAvailable = commandAvailability?.available == true,
-                    commandInstalled = commandAvailability?.installed == true,
-                    commandPath = commandAvailability?.commandPath?.toString(),
-                    commandUnavailableReason = commandAvailability?.unavailableReason
-                        ?: if (commandAvailability == null) "正在检测可用性..." else null,
-                    commandInstalling = commandInstalling,
-                    commandInstallMessage = commandInstallMessage,
-                    commandInstallFailed = commandInstallFailed,
-                    onInstallCommand = ::installUserCommand,
-                    onSave = ::saveSettings,
+                    availableModels = settingsState.availableModels,
+                    modelsLoading = settingsState.modelsLoading,
+                    modelsError = settingsState.modelsError,
+                    onRefreshModels = { settingsState.refreshModels() },
+                    saving = settingsState.settingsSaving,
+                    saveError = settingsState.settingsSaveError,
+                    commandAvailable = settingsState.commandAvailability?.available == true,
+                    commandInstalled = settingsState.commandAvailability?.installed == true,
+                    commandPath = settingsState.commandAvailability?.commandPath?.toString(),
+                    commandUnavailableReason = settingsState.commandAvailability?.unavailableReason
+                        ?: if (settingsState.commandAvailability == null) "正在检测可用性..." else null,
+                    commandInstalling = settingsState.commandInstalling,
+                    commandInstallMessage = settingsState.commandInstallMessage,
+                    commandInstallFailed = settingsState.commandInstallFailed,
+                    onInstallCommand = { settingsState.installUserCommand() },
+                    onSave = settingsState::saveSettings,
                     onCancel = {
-                        if (savedConfig != null) {
+                        if (settingsState.savedConfig != null) {
                             showSettings = false
                         }
                     },
@@ -620,18 +346,18 @@ internal fun KZAgentDesktopApp(
                             isBusy = session.isBusy,
                             contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize
                                 ?: 1_000_000),
-                            approvalMode = savedConfig?.approvalMode
+                            approvalMode = settingsState.savedConfig?.approvalMode
                                 ?: AppConfig.DEFAULT_APPROVAL_MODE,
                             modelSelection = session.modelSelection,
-                            availableModels = availableModels,
-                            modelsLoading = modelsLoading,
-                            modelsError = modelsError,
+                            availableModels = settingsState.availableModels,
+                            modelsLoading = settingsState.modelsLoading,
+                            modelsError = settingsState.modelsError,
                             todoSnapshot = session.todoSnapshot,
                             showTodoButton = !showPersistentTodo,
                             onShowTodo = { showTodoDialog = true },
-                            onApprovalModeChanged = { onApprovalModeChanged(it) },
-                            onModelChanged = { onModelChanged(session, it) },
-                            onRefreshModels = ::refreshModels,
+                            onApprovalModeChanged = { settingsState.onApprovalModeChanged(it) },
+                            onModelChanged = { settingsState.onModelChanged(session, it) },
+                            onRefreshModels = { settingsState.refreshModels() },
                             onCompressContext = { showCompressConfirm = true },
                         )
                         Spacer(Modifier.height(10.dp))
@@ -734,147 +460,56 @@ internal fun KZAgentDesktopApp(
         }
     }
 
-    pendingApprovals.firstOrNull()?.let { approval ->
-        ApprovalDialog(approval)
-    }
-    pendingUserQuestions.firstOrNull()?.let { pending ->
-        UserQuestionDialog(pending)
-    }
-
-    // Compress confirmation dialog
-    if (showCompressConfirm) {
-        val session = sessionManager.activeSession()
-        val ctxPct = (session.usedTokens * 100) / (session.runtime?.contextWindowSize ?: 1_000_000)
-        ContentDialog(
-            title = "压缩上下文",
-            visible = true,
-            content = {
-                FluentText(
-                    "当前上下文使用率 $ctxPct%。压缩将使用 LLM 把较早的对话总结为摘要，" +
-                        "仅保留最近几条消息。是否继续？",
-                )
-            },
-            primaryButtonText = "压缩",
-            closeButtonText = "取消",
-            onButtonClick = { button ->
-                showCompressConfirm = false
-                if (button == ContentDialogButton.Primary) {
-                    scope.launch {
-                        performCompression(session)
-                        session.isBusy = false
-                    }
+    val activeSessionForDialogs = sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)
+    SessionDialogs(
+        pendingApprovals = pendingApprovals,
+        pendingUserQuestions = pendingUserQuestions,
+        showCompressConfirm = showCompressConfirm,
+        onDismissCompressConfirm = { showCompressConfirm = false },
+        onCompress = {
+            activeSessionForDialogs?.let { session ->
+                scope.launch {
+                    performCompression(session)
+                    session.isBusy = false
                 }
-            },
-        )
-    }
-
-    // Delete confirmation dialog
-    if (showDeleteConfirmIndex >= 0) {
-        val sessionName = sessionManager.sessions.getOrNull(showDeleteConfirmIndex)?.name ?: ""
-        ContentDialog(
-            title = "删除会话",
-            visible = true,
-            content = {
-                FluentText("确定要删除会话「$sessionName」吗？此操作不可撤销。")
-            },
-            primaryButtonText = "删除",
-            closeButtonText = "取消",
-            onButtonClick = { button ->
-                if (button == ContentDialogButton.Primary) {
-                    val index = showDeleteConfirmIndex
-                    showDeleteConfirmIndex = -1
-                    scope.launch {
-                        try {
-                            sessionManager.deleteSession(index)
-                        } catch (error: CancellationException) {
-                            throw error
-                        } catch (error: Exception) {
-                            sessionLoadError = SecretRedactor.redact(error.message ?: error.toString())
-                        }
-                    }
-                } else {
-                    showDeleteConfirmIndex = -1
+            }
+        },
+        showDeleteConfirmIndex = showDeleteConfirmIndex,
+        onDismissDeleteConfirm = { showDeleteConfirmIndex = -1 },
+        onDeleteSession = { index ->
+            showDeleteConfirmIndex = -1
+            handleDeleteSession(index, sessionManager, scope) { error ->
+                sessionLoadError = error
+            }
+        },
+        showRenameDialogIndex = showRenameDialogIndex,
+        renameText = renameText,
+        onRenameTextChange = { renameText = it },
+        renameSuggesting = renameSuggesting,
+        onSuggestName = {
+            val session = sessionManager.sessions.getOrNull(showRenameDialogIndex)
+            handleSuggestName(session, { renameText = it }, { renameSuggesting = it }, scope)
+        },
+        onDismissRenameDialog = { showRenameDialogIndex = -1 },
+        onRenameSession = { name ->
+            val index = showRenameDialogIndex
+            showRenameDialogIndex = -1
+            scope.launch {
+                try {
+                    sessionManager.renameSession(index, name)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    sessionLoadError = SecretRedactor.redact(error.message ?: error.toString())
                 }
-            },
-        )
-    }
-
-    // Rename dialog
-    if (showRenameDialogIndex >= 0) {
-        ContentDialog(
-            title = "重命名会话",
-            visible = true,
-            content = {
-                Column {
-                    FluentTextField(
-                        value = renameText,
-                        onValueChange = { renameText = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        header = { FluentText("会话名称") },
-                        singleLine = true,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    FluentButton(
-                        onClick = {
-                            val session = sessionManager.sessions.getOrNull(showRenameDialogIndex)
-                            val agent = session?.runtime?.agent
-                            if (agent != null) {
-                                renameSuggesting = true
-                                scope.launch {
-                                    try {
-                                        val recentText = session.conversationHistory
-                                            .filterIsInstance<AgentMessage.User>()
-                                            .takeLast(4)
-                                            .joinToString("\n") { it.content.take(200) }
-                                        if (recentText.isNotBlank()) {
-                                            renameText = agent.generateTitle(recentText)
-                                        }
-                                    } catch (error: CancellationException) {
-                                        throw error
-                                    } catch (_: Exception) {
-                                        // Best-effort
-                                    } finally {
-                                        renameSuggesting = false
-                                    }
-                                }
-                            }
-                        },
-                        disabled = renameSuggesting,
-                    ) {
-                        if (renameSuggesting) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp).align(Alignment.CenterVertically),
-                                strokeWidth = 2.dp,
-                            )
-                            Spacer(Modifier.width(4.dp))
-                        }
-                        FluentText(if (renameSuggesting) "推荐中..." else "推荐名称")
-                    }
-                }
-            },
-            primaryButtonText = "确定",
-            closeButtonText = "取消",
-            onButtonClick = { button ->
-                if (button == ContentDialogButton.Primary) {
-                    val index = showRenameDialogIndex
-                    val name = renameText
-                    showRenameDialogIndex = -1
-                    if (name.isNotBlank()) {
-                        scope.launch {
-                            try {
-                                sessionManager.renameSession(index, name)
-                            } catch (error: CancellationException) {
-                                throw error
-                            } catch (error: Exception) {
-                                sessionLoadError = SecretRedactor.redact(error.message ?: error.toString())
-                            }
-                        }
-                    }
-                } else {
-                    showRenameDialogIndex = -1
-                }
-                renameSuggesting = false
-            },
-        )
-    }
+            }
+        },
+        onCancelRenameDialog = {
+            showRenameDialogIndex = -1
+            renameSuggesting = false
+        },
+        sessionManager = sessionManager,
+        contextWindowSize = activeSessionForDialogs?.runtime?.contextWindowSize ?: 1_000_000,
+        sessionUsedTokens = activeSessionForDialogs?.usedTokens ?: 0,
+    )
 }
