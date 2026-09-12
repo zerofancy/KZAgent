@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
@@ -69,6 +70,7 @@ import com.kzagent.kagent.tools.ToolResult
 import com.kzagent.kagent.tools.UserQuestionPrompter
 import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
+import io.github.composefluent.component.Button as FluentButton
 import io.github.composefluent.component.Text as FluentText
 import io.github.composefluent.component.TextField as FluentTextField
 import java.time.Instant
@@ -94,6 +96,7 @@ internal fun KZAgentDesktopApp(
     var showDeleteConfirmIndex by remember { mutableStateOf(-1) }
     var showRenameDialogIndex by remember { mutableStateOf(-1) }
     var renameText by remember { mutableStateOf("") }
+    var renameSuggesting by remember { mutableStateOf(false) }
     var showCompressConfirm by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var savedConfig by remember { mutableStateOf<AppConfig?>(null) }
@@ -472,8 +475,6 @@ internal fun KZAgentDesktopApp(
     // Reusable context compression helper
     suspend fun performCompression(session: SessionData, manageBusyState: Boolean = true): Boolean {
         if ((manageBusyState && session.isBusy) || session.runtime == null) return false
-        val sessionId = session.id
-        val titleRevision = session.titleRevision
         if (manageBusyState) session.isBusy = true
         session.status = "正在压缩上下文..."
         return try {
@@ -488,21 +489,6 @@ internal fun KZAgentDesktopApp(
                 ),
             )
             session.status = "就绪"
-            // Auto-update session title from compression summary
-            val summary = compressed.firstOrNull()
-            if (summary is AgentMessage.Summary) {
-                val agent = session.runtime!!.agent
-                scope.launch {
-                    try {
-                        val title = agent.generateTitle(summary.content)
-                        sessionManager.renameSessionIfRevisionMatches(sessionId, titleRevision, title)
-                    } catch (error: CancellationException) {
-                        throw error
-                    } catch (_: Exception) {
-                        // Title generation is best-effort and must not fail compression.
-                    }
-                }
-            }
             true
         } catch (error: CancellationException) {
             throw error
@@ -687,6 +673,20 @@ internal fun KZAgentDesktopApp(
                                         )
                                         val sessionId = session.id
                                         val titleRevision = session.titleRevision
+                                        // Auto-title on first user message: fire immediately, don't wait for the answer
+                                        val isFirstUserMessage = session.conversationHistory.none { it is AgentMessage.User }
+                                        if (isFirstUserMessage) {
+                                            scope.launch {
+                                                try {
+                                                    val title = currentRuntime.agent.generateTitle(prompt)
+                                                    sessionManager.renameSessionIfRevisionMatches(sessionId, titleRevision, title)
+                                                } catch (error: CancellationException) {
+                                                    throw error
+                                                } catch (_: Exception) {
+                                                    // Title generation is best-effort.
+                                                }
+                                            }
+                                        }
                                         val job = scope.launch {
                                             try {
                                                 val result = currentRuntime.agent.runConversation(
@@ -696,26 +696,6 @@ internal fun KZAgentDesktopApp(
                                                 session.conversationHistory = result.history
                                                 session.usedTokens = result.totalTokens
                                                 session.status = "就绪"
-                                                // Auto-title on first user message
-                                                if (result.history.count { it is AgentMessage.User } == 1) {
-                                                    scope.launch {
-                                                        try {
-                                                            val title =
-                                                                currentRuntime.agent.generateTitle(
-                                                                    prompt
-                                                                )
-                                                            sessionManager.renameSessionIfRevisionMatches(
-                                                                sessionId,
-                                                                titleRevision,
-                                                                title,
-                                                            )
-                                                        } catch (error: CancellationException) {
-                                                            throw error
-                                                        } catch (_: Exception) {
-                                                            // Title generation is best-effort and does not fail the user request.
-                                                        }
-                                                    }
-                                                }
                                             } catch (_: CancellationException) {
                                                 session.status = "已终止"
                                             } catch (e: Exception) {
@@ -825,13 +805,52 @@ internal fun KZAgentDesktopApp(
             title = "重命名会话",
             visible = true,
             content = {
-                FluentTextField(
-                    value = renameText,
-                    onValueChange = { renameText = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    header = { FluentText("会话名称") },
-                    singleLine = true,
-                )
+                Column {
+                    FluentTextField(
+                        value = renameText,
+                        onValueChange = { renameText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        header = { FluentText("会话名称") },
+                        singleLine = true,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    FluentButton(
+                        onClick = {
+                            val session = sessionManager.sessions.getOrNull(showRenameDialogIndex)
+                            val agent = session?.runtime?.agent
+                            if (agent != null) {
+                                renameSuggesting = true
+                                scope.launch {
+                                    try {
+                                        val recentText = session.conversationHistory
+                                            .filterIsInstance<AgentMessage.User>()
+                                            .takeLast(4)
+                                            .joinToString("\n") { it.content.take(200) }
+                                        if (recentText.isNotBlank()) {
+                                            renameText = agent.generateTitle(recentText)
+                                        }
+                                    } catch (error: CancellationException) {
+                                        throw error
+                                    } catch (_: Exception) {
+                                        // Best-effort
+                                    } finally {
+                                        renameSuggesting = false
+                                    }
+                                }
+                            }
+                        },
+                        disabled = renameSuggesting,
+                    ) {
+                        if (renameSuggesting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp).align(Alignment.CenterVertically),
+                                strokeWidth = 2.dp,
+                            )
+                            Spacer(Modifier.width(4.dp))
+                        }
+                        FluentText(if (renameSuggesting) "推荐中..." else "推荐名称")
+                    }
+                }
             },
             primaryButtonText = "确定",
             closeButtonText = "取消",
@@ -854,6 +873,7 @@ internal fun KZAgentDesktopApp(
                 } else {
                     showRenameDialogIndex = -1
                 }
+                renameSuggesting = false
             },
         )
     }
