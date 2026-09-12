@@ -1,5 +1,6 @@
 package com.kzagent.kagent.desktop
 
+import com.kzagent.kagent.desktop.app.desktopLog
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.nio.file.Files
@@ -39,7 +40,7 @@ class DesktopLogStacktraceTest {
         val captured = ByteArrayOutputStream()
         System.setOut(PrintStream(captured, true, Charsets.UTF_8))
         try {
-            _root_ide_package_.com.kzagent.kagent.desktop.app.desktopLog(
+            desktopLog(
                 "failure happened",
                 RuntimeException("boom")
             )
@@ -67,7 +68,7 @@ class DesktopLogStacktraceTest {
         val captured = ByteArrayOutputStream()
         System.setOut(PrintStream(captured, true, Charsets.UTF_8))
         try {
-            _root_ide_package_.com.kzagent.kagent.desktop.app.desktopLog("plain message")
+            desktopLog("plain message")
         } finally {
             System.setOut(originalOut)
         }

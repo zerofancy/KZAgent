@@ -1,5 +1,6 @@
 package com.kzagent.kagent.desktop
 
+import com.kzagent.kagent.desktop.app.runtimeErrorMessage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -12,7 +13,7 @@ class DesktopRuntimeErrorTest {
         )
 
         assertEquals("Unsupported charset GB18030",
-            _root_ide_package_.com.kzagent.kagent.desktop.app.runtimeErrorMessage(failure)
+            runtimeErrorMessage(failure)
         )
     }
 }
