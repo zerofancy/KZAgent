@@ -33,7 +33,7 @@ class TodoTools(private val store: TodoStore) {
 
     private fun todoWriteTool(): ToolDefinition = ToolDefinition(
         name = "todo_write",
-        description = "Atomically update the session Todo list. Mark each item completed as soon as its stage finishes instead of waiting until the final response. Do not set an already-pending item to pending to signal work started: pending already includes work in progress. Operations run in order and may create, update, complete/reopen, or delete hierarchical items. Use short stable unique ids; a parent created earlier in the same call may be referenced by later operations.",
+        description = "Atomically update the session Todo list. Mark each item completed as soon as its stage finishes instead of waiting until the final response. Do not set an already-pending item to pending to signal work started: pending already includes work in progress. Operations run in order and may create, update, complete/reopen, or delete hierarchical items. Use short stable unique ids; a parent created earlier in the same call may be referenced by later operations. Arguments must be a JSON object with a single \"operations\" key holding a JSON array of operation objects. Example: {\"operations\":[{\"operation\":\"create\",\"id\":\"1\",\"content\":\"Task one\"},{\"operation\":\"set_status\",\"id\":\"1\",\"status\":\"completed\"}]}",
         parameters = objectSchema(
             properties = mapOf(
                 "operations" to buildJsonObject {
@@ -70,7 +70,10 @@ class TodoTools(private val store: TodoStore) {
     ) { args ->
         try {
             val operations = args["operations"] as? JsonArray
-                ?: throw IllegalArgumentException("operations must be an array.")
+                ?: throw IllegalArgumentException(
+                    "operations must be a JSON array. The top-level field must be named \"operations\" (not \"todos\") and hold an array, not a string. " +
+                        "Expected shape: {\"operations\":[{\"operation\":\"create\",\"id\":\"1\",\"content\":\"Task one\"}]}.",
+                )
             val parsed = operations.mapIndexed { index, element ->
                 parseOperation(index, element.jsonObject)
             }

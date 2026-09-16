@@ -134,4 +134,26 @@ class TodoToolsTest {
         assertContains(result.content, "Supported values are pending and completed")
         assertContains(result.content, "use pending for work in progress")
     }
+
+    @Test
+    fun invalidOperationsShapeErrorShowsExpectedFormatAndFieldName() = runBlocking {
+        val sessionFile = Files.createTempFile("kagent-todo-tools-shape-error", ".jsonl")
+        val registry = TodoTools(TodoStore(TodoFiles.forSession(sessionFile))).registry()
+        val writeTool = registry.get("todo_write")!!
+
+        // Models sometimes emit the batch as {"todos": "<json string>"} instead
+        // of {"operations": [...]}. The error must teach the correct shape.
+        val result = writeTool.handler(buildJsonObject {
+            put("todos", "[{\"operation\":\"create\",\"id\":\"1\",\"content\":\"Task\"}]")
+        })
+
+        assertTrue(result.isError)
+        assertContains(result.content, "operations must be a JSON array")
+        assertContains(result.content, "not \"todos\"")
+        assertContains(result.content, "Expected shape")
+        assertContains(
+            registry.toolSchemas().single { it.toString().contains("\"todo_write\"") }.toString(),
+            "Example: {\\\"operations\\\":",
+        )
+    }
 }
