@@ -2,7 +2,6 @@ package com.kzagent.kagent.desktop.app
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -38,16 +36,12 @@ import com.kzagent.kagent.desktop.KZAgentNavigationView
 import com.kzagent.kagent.desktop.MessageList
 import com.kzagent.kagent.desktop.PendingApproval
 import com.kzagent.kagent.desktop.PendingUserQuestions
-import com.kzagent.kagent.desktop.SessionData
 import com.kzagent.kagent.desktop.SessionManager
+import com.kzagent.kagent.desktop.ui.SessionSidePanel
 import com.kzagent.kagent.desktop.SettingsPanel
-import com.kzagent.kagent.desktop.TodoDialog
-import com.kzagent.kagent.desktop.TodoPanel
-import com.kzagent.kagent.desktop.TodoPanelWidth
 import com.kzagent.kagent.desktop.chooseWorkspace
 import com.kzagent.kagent.desktop.loadSessionWorkspaceExpandState
 import com.kzagent.kagent.desktop.saveSessionWorkspaceExpandState
-import com.kzagent.kagent.desktop.shouldShowPersistentTodoPanel
 import com.kzagent.kagent.llm.AgentMessage
 import com.kzagent.kagent.tools.ApprovalDecision
 import com.kzagent.kagent.tools.ApprovalPolicy
@@ -79,6 +73,7 @@ internal fun KZAgentDesktopApp(
     var renameSuggesting by remember { mutableStateOf(false) }
     var showCompressConfirm by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var showSessionSidePanel by remember { mutableStateOf(true) }
     var sessionLoadError by remember { mutableStateOf<String?>(null) }
     val sessionWorkspaceExpandedState = remember { mutableStateMapOf<String, Boolean>() }
     val scope = rememberCoroutineScope()
@@ -332,33 +327,24 @@ internal fun KZAgentDesktopApp(
                 }
             } else {
                 val session = sessionManager.activeSession()
-                var showTodoDialog by remember(session.id) { mutableStateOf(false) }
-                BoxWithConstraints(
+                Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 20.dp, vertical = 14.dp),
                 ) {
-                    val showPersistentTodo = shouldShowPersistentTodoPanel(maxWidth)
                     Column(modifier = Modifier.fillMaxSize()) {
                         Header(
                             workspace = session.workspace,
                             status = session.status,
                             isBusy = session.isBusy,
-                            contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize
-                                ?: 1_000_000),
-                            approvalMode = settingsState.savedConfig?.approvalMode
-                                ?: AppConfig.DEFAULT_APPROVAL_MODE,
                             modelSelection = session.modelSelection,
                             availableModels = settingsState.availableModels,
                             modelsLoading = settingsState.modelsLoading,
                             modelsError = settingsState.modelsError,
-                            todoSnapshot = session.todoSnapshot,
-                            showTodoButton = !showPersistentTodo,
-                            onShowTodo = { showTodoDialog = true },
-                            onApprovalModeChanged = { settingsState.onApprovalModeChanged(it) },
+                            sidePanelVisible = showSessionSidePanel,
+                            onToggleSidePanel = { showSessionSidePanel = !showSessionSidePanel },
                             onModelChanged = { settingsState.onModelChanged(session, it) },
                             onRefreshModels = { settingsState.refreshModels() },
-                            onCompressContext = { showCompressConfirm = true },
                         )
                         Spacer(Modifier.height(10.dp))
                         session.error?.let {
@@ -441,19 +427,19 @@ internal fun KZAgentDesktopApp(
                                     },
                                 )
                             }
-                            if (showPersistentTodo) {
-                                TodoPanel(
-                                    snapshot = session.todoSnapshot,
-                                    modifier = Modifier.width(TodoPanelWidth).fillMaxHeight(),
+                            if (showSessionSidePanel) {
+                                SessionSidePanel(
+                                    approvalMode = settingsState.savedConfig?.approvalMode
+                                        ?: AppConfig.DEFAULT_APPROVAL_MODE,
+                                    onApprovalModeChanged = { settingsState.onApprovalModeChanged(it) },
+                                    todoSnapshot = session.todoSnapshot,
+                                    contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize
+                                        ?: 1_000_000),
+                                    isBusy = session.isBusy,
+                                    onCompressContext = { showCompressConfirm = true },
                                 )
                             }
                         }
-                    }
-                    if (!showPersistentTodo && showTodoDialog) {
-                        TodoDialog(
-                            snapshot = session.todoSnapshot,
-                            onDismiss = { showTodoDialog = false },
-                        )
                     }
                 }
             }

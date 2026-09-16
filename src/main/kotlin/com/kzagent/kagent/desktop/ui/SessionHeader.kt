@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -34,7 +32,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.kzagent.kagent.todo.TodoSnapshot
 import com.kzagent.kagent.tools.ApprovalMode
 import com.kzagent.kagent.config.ModelDescriptor
 import com.kzagent.kagent.config.ModelSelection
@@ -48,19 +45,14 @@ internal fun Header(
     workspace: Path,
     status: String,
     isBusy: Boolean,
-    contextPercent: Int,
-    approvalMode: ApprovalMode,
     modelSelection: ModelSelection,
     availableModels: List<ModelDescriptor>,
     modelsLoading: Boolean,
     modelsError: String?,
-    todoSnapshot: TodoSnapshot,
-    showTodoButton: Boolean,
-    onShowTodo: () -> Unit,
-    onApprovalModeChanged: (ApprovalMode) -> Unit,
+    sidePanelVisible: Boolean,
+    onToggleSidePanel: () -> Unit,
     onModelChanged: (ModelSelection) -> Unit,
     onRefreshModels: () -> Unit,
-    onCompressContext: () -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val useSingleRow = maxWidth >= 720.dp
@@ -77,16 +69,11 @@ internal fun Header(
                     availableModels = availableModels,
                     modelsLoading = modelsLoading,
                     modelsError = modelsError,
-                    approvalMode = approvalMode,
-                    contextPercent = contextPercent,
                     isBusy = isBusy,
-                    todoSnapshot = todoSnapshot,
-                    showTodoButton = showTodoButton,
-                    onShowTodo = onShowTodo,
-                    onApprovalModeChanged = onApprovalModeChanged,
+                    sidePanelVisible = sidePanelVisible,
+                    onToggleSidePanel = onToggleSidePanel,
                     onModelChanged = onModelChanged,
                     onRefreshModels = onRefreshModels,
-                    onCompressContext = onCompressContext,
                 )
             }
         } else {
@@ -116,16 +103,11 @@ internal fun Header(
                     availableModels = availableModels,
                     modelsLoading = modelsLoading,
                     modelsError = modelsError,
-                    approvalMode = approvalMode,
-                    contextPercent = contextPercent,
                     isBusy = isBusy,
-                    todoSnapshot = todoSnapshot,
-                    showTodoButton = showTodoButton,
-                    onShowTodo = onShowTodo,
-                    onApprovalModeChanged = onApprovalModeChanged,
+                    sidePanelVisible = sidePanelVisible,
+                    onToggleSidePanel = onToggleSidePanel,
                     onModelChanged = onModelChanged,
                     onRefreshModels = onRefreshModels,
-                    onCompressContext = onCompressContext,
                     modifier = Modifier.align(Alignment.End),
                     showModelSelector = false,
                 )
@@ -159,16 +141,11 @@ internal fun HeaderActions(
     availableModels: List<ModelDescriptor>,
     modelsLoading: Boolean,
     modelsError: String?,
-    approvalMode: ApprovalMode,
-    contextPercent: Int,
     isBusy: Boolean,
-    todoSnapshot: TodoSnapshot,
-    showTodoButton: Boolean,
-    onShowTodo: () -> Unit,
-    onApprovalModeChanged: (ApprovalMode) -> Unit,
+    sidePanelVisible: Boolean,
+    onToggleSidePanel: () -> Unit,
     onModelChanged: (ModelSelection) -> Unit,
     onRefreshModels: () -> Unit,
-    onCompressContext: () -> Unit,
     modifier: Modifier = Modifier,
     showModelSelector: Boolean = true,
 ) {
@@ -188,26 +165,12 @@ internal fun HeaderActions(
                 onRefresh = onRefreshModels,
             )
         }
-        ApprovalModeMenu(approvalMode, onApprovalModeChanged)
-        if (showTodoButton) {
-            OutlinedButton(
-                onClick = onShowTodo,
-                modifier = Modifier.height(32.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-            ) {
-                Text(todoButtonLabel(todoSnapshot), maxLines = 1)
-            }
-        }
-        Button(
-            onClick = onCompressContext,
-            enabled = !isBusy,
+        OutlinedButton(
+            onClick = onToggleSidePanel,
             modifier = Modifier.height(32.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (contextPercent > 80) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-            ),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
         ) {
-            Text("上下文 $contextPercent%", maxLines = 1)
+            Text(if (sidePanelVisible) "收起侧栏" else "展开侧栏", maxLines = 1)
         }
     }
 }
@@ -247,13 +210,17 @@ internal fun requiresFullModeConfirmation(current: ApprovalMode, target: Approva
     target == ApprovalMode.FULL && current != ApprovalMode.FULL
 
 @Composable
-internal fun ApprovalModeMenu(approvalMode: ApprovalMode, onApprovalModeChanged: (ApprovalMode) -> Unit) {
+internal fun ApprovalModeMenu(
+    approvalMode: ApprovalMode,
+    onApprovalModeChanged: (ApprovalMode) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     var expanded by remember { mutableStateOf(false) }
     var confirmFullMode by remember { mutableStateOf(false) }
-    Box {
+    Box(modifier) {
         OutlinedButton(
             onClick = { expanded = true },
-            modifier = Modifier.height(32.dp),
+            modifier = Modifier.fillMaxWidth().height(32.dp),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
         ) { Text("审批：${approvalModeLabel(approvalMode)} ▾", maxLines = 1) }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
