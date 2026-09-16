@@ -206,6 +206,98 @@ class DeepSeekClientTest {
         }
     }
 
+    @Test
+    fun toolCallsWithBlankIdOrNameAreDropped() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(
+                MockResponse()
+                    .setHeader("Content-Type", "text/event-stream")
+                    .setBody(
+                        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"\",\"type\":\"function\",\"function\":{\"name\":\"\",\"arguments\":\"{\\\"query\\\":\\\"x\\\"}\"}}]}}]}\n\n" +
+                            "data: [DONE]\n\n",
+                    ),
+            )
+            val client = DeepSeekClient(testConfig(server))
+
+            val reply = client.chat(
+                listOf(AgentMessage.User("hello")),
+                listOf(buildJsonObject { put("type", "function") }),
+            )
+
+            assertTrue(reply.toolCalls.isEmpty())
+        }
+    }
+
+    @Test
+    fun mimoClientForwardsReasoningContentFromHistory() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(
+                MockResponse()
+                    .setHeader("Content-Type", "text/event-stream")
+                    .setBody(
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"final\",\"reasoning_content\":\"step by step\"}}]}\n\n" +
+                            "data: [DONE]\n\n",
+                    ),
+            )
+            server.enqueue(
+                MockResponse()
+                    .setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"),
+            )
+            val client = OpenAiCompatibleClient(
+                "mimo",
+                ProviderConfig("mimo", "MiMo Code", ProviderKind.MIMOCODE, "sk-mimo-test-secret", server.url("/").toString()),
+                ModelSelection("mimo", "mimo-v2.5-pro"),
+            )
+
+            val first = client.chat(listOf(AgentMessage.User("hi")), emptyList())
+            assertEquals("step by step", first.reasoningContent)
+            client.chat(
+                listOf(
+                    AgentMessage.Assistant(first.content, first.toolCalls, first.reasoningContent),
+                    AgentMessage.User("again"),
+                ),
+                emptyList(),
+            )
+
+            server.takeRequest()
+            val request = server.takeRequest()
+            val messages = Json.parseToJsonElement(request.body.readUtf8())
+                .jsonObject["messages"]?.jsonArray.orEmpty()
+            val assistantJson = messages.first {
+                it.jsonObject["role"]?.jsonPrimitive?.content == "assistant"
+            }.jsonObject
+            assertEquals("step by step", assistantJson["reasoning_content"]?.jsonPrimitive?.content)
+        }
+    }
+
+    @Test
+    fun deepSeekOmitsReasoningContentField() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(
+                MockResponse()
+                    .setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"),
+            )
+            val client = DeepSeekClient(testConfig(server))
+
+            client.chat(
+                listOf(
+                    AgentMessage.Assistant("answer", emptyList(), "reasoning trace"),
+                    AgentMessage.User("again"),
+                ),
+                emptyList(),
+            )
+
+            val messages = Json.parseToJsonElement(server.takeRequest().body.readUtf8())
+                .jsonObject["messages"]?.jsonArray.orEmpty()
+            val assistantJson = messages.first {
+                it.jsonObject["role"]?.jsonPrimitive?.content == "assistant"
+            }.jsonObject
+            assertEquals(null, assistantJson["reasoning_content"])
+        }
+    }
+
     private fun testConfig(server: MockWebServer): AppConfig = AppConfig(
         providers = listOf(
             ProviderConfig(

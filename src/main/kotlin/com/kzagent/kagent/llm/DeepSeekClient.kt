@@ -3,6 +3,7 @@ package com.kzagent.kagent.llm
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.ModelSelection
 import com.kzagent.kagent.config.ProviderConfig
+import com.kzagent.kagent.config.ProviderKind
 import com.kzagent.kagent.config.SecretRedactor
 import java.time.Duration
 import kotlinx.coroutines.Dispatchers
@@ -54,7 +55,9 @@ class OpenAiCompatibleClient(
             ChatCompletionRequest(
                 model = selection.modelId,
                 temperature = 0.2,
-                messages = messages.map { it.toOpenAiJson() },
+                messages = messages.map {
+                    it.toOpenAiJson(includeReasoningContent = providerConfig.kind == ProviderKind.MIMOCODE)
+                },
                 tools = tools.takeIf { it.isNotEmpty() },
                 toolChoice = "auto".takeIf { tools.isNotEmpty() && selection.supportsToolChoice },
                 stream = true,
@@ -88,6 +91,7 @@ class OpenAiCompatibleClient(
         response.use { resp ->
             val body = resp.body ?: throw ProviderApiException("${providerConfig.name} API returned an empty streaming body.")
             val contentBuilder = StringBuilder()
+            val reasoningBuilder = StringBuilder()
             val toolCallBuilders = mutableMapOf<Int, ToolCallBuilder>()
             var totalTokens: Int? = null
             var promptTokens: Int? = null
@@ -129,6 +133,7 @@ class OpenAiCompatibleClient(
 
                     for (choice in chunk.choices) {
                         val delta = choice.delta
+                        delta.reasoningContent?.let { reasoningBuilder.append(it) }
                         delta.content?.let { text ->
                             contentBuilder.append(text)
                             onPartialContent(text)
@@ -154,7 +159,10 @@ class OpenAiCompatibleClient(
             val toolCalls = toolCallBuilders.entries
                 .sortedBy { it.key }
                 .map { it.value }
-                .filter { it.id != null && it.name != null }
+                // MiMo has streamed tool calls whose id/function.name are empty
+                // strings. They are unusable and must not be persisted: re-sending
+                // them makes the API reject the request with HTTP 400.
+                .filter { !it.id.isNullOrBlank() && !it.name.isNullOrBlank() }
                 .map { builder ->
                     ModelToolCall(
                         id = builder.id!!,
@@ -166,6 +174,7 @@ class OpenAiCompatibleClient(
             AssistantReply(
                 content = contentBuilder.toString().takeIf { it.isNotBlank() },
                 toolCalls = toolCalls,
+                reasoningContent = reasoningBuilder.toString().takeIf { it.isNotBlank() },
                 totalTokens = totalTokens,
                 promptTokens = promptTokens,
             )
@@ -230,7 +239,7 @@ class DeepSeekClient private constructor(
     )
 }
 
-internal fun AgentMessage.toOpenAiJson(): JsonObject = buildJsonObject {
+internal fun AgentMessage.toOpenAiJson(includeReasoningContent: Boolean = false): JsonObject = buildJsonObject {
     put(
         "role",
         if (
@@ -258,6 +267,11 @@ internal fun AgentMessage.toOpenAiJson(): JsonObject = buildJsonObject {
         is AgentMessage.User -> put("content", content)
         is AgentMessage.Assistant -> {
             put("content", content)
+            if (includeReasoningContent) {
+                reasoningContent?.takeIf { it.isNotBlank() }?.let {
+                    put("reasoning_content", it)
+                }
+            }
             if (toolCalls.isNotEmpty()) {
                 put(
                     "tool_calls",

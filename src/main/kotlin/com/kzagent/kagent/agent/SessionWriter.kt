@@ -57,6 +57,7 @@ class SessionWriter(
                             put("arguments", it.argumentsJson)
                         }
                     }))
+                    message.reasoningContent?.let { put("reasoning_content", it) }
                 }
                 is AgentMessage.Tool -> {
                     put("tool_call_id", message.toolCallId)

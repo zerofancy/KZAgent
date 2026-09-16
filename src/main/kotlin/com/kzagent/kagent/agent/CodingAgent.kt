@@ -124,7 +124,7 @@ class CodingAgent(
                 todoToolCalled = todoToolCalled,
                 reminderInjected = todoReminderInjected,
             )
-            val assistant = AgentMessage.Assistant(reply.content, reply.toolCalls)
+            val assistant = AgentMessage.Assistant(reply.content, reply.toolCalls, reply.reasoningContent)
             val reportedTotalTokens = reply.totalTokens?.takeIf { it > 0 }
             val reportedPromptTokens = reply.promptTokens?.takeIf { it > 0 }
             val replyContextTokens = when {
@@ -394,7 +394,8 @@ fun estimateContextTokens(messages: List<AgentMessage>): Int =
                 message.sourcePath.length + message.scopePath.length + message.content.length
             is AgentMessage.User -> message.content.length
             is AgentMessage.Assistant -> message.content.orEmpty().length +
-                message.toolCalls.sumOf { it.name.length + it.argumentsJson.length }
+                message.toolCalls.sumOf { it.name.length + it.argumentsJson.length } +
+                message.reasoningContent.orEmpty().length
             is AgentMessage.Tool -> message.name.length + message.content.length
         }
         // Conservative language-agnostic approximation plus per-message framing.

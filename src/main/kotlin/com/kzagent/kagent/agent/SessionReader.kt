@@ -52,7 +52,46 @@ class SessionReader(private val sessionsDir: Path) {
                 history += SessionEntry(parseObject(obj), parseTime(obj))
             }
         }
-        return history
+        return sanitizeEntries(history)
+    }
+
+    /**
+     * Guards against corrupted or provider-malformed tool calls in persisted
+     * history (e.g. MiMo has streamed tool calls whose id/function.name are
+     * empty strings). Such entries must never be re-sent to the API, which
+     * rejects them with HTTP 400. Also drops orphaned tool results whose
+     * tool_call_id no longer matches any kept assistant tool call, keeping the
+     * assistant -> tool-result pairing valid.
+     */
+    private fun sanitizeEntries(entries: List<SessionEntry>): List<SessionEntry> {
+        val validToolCallIds = mutableSetOf<String>()
+        val sanitized = mutableListOf<SessionEntry>()
+        for (entry in entries) {
+            when (val message = entry.message) {
+                is AgentMessage.Assistant -> {
+                    val keptCalls = message.toolCalls.filter {
+                        it.id.isNotBlank() && it.name.isNotBlank()
+                    }
+                    when {
+                        keptCalls.isNotEmpty() -> {
+                            validToolCallIds += keptCalls.map { it.id }
+                            sanitized += entry.copy(message = message.copy(toolCalls = keptCalls))
+                        }
+                        message.content.isNullOrBlank() -> {
+                            // Neither content nor a usable tool call: nothing to send.
+                        }
+                        else -> sanitized += entry.copy(message = message.copy(toolCalls = emptyList()))
+                    }
+                }
+                is AgentMessage.Tool -> {
+                    if (message.toolCallId.isNotBlank() && message.toolCallId in validToolCallIds) {
+                        sanitized += entry
+                    }
+                }
+                else -> sanitized += entry
+            }
+        }
+        return sanitized
     }
 
     private fun parseObject(obj: JsonObject): AgentMessage {
@@ -69,6 +108,7 @@ class SessionReader(private val sessionsDir: Path) {
             "user" -> AgentMessage.User(content = obj["content"]?.jsonPrimitive?.content.orEmpty())
             "assistant" -> {
                 val content = obj["content"]?.jsonPrimitive?.contentOrNull
+                val reasoningContent = obj["reasoning_content"]?.jsonPrimitive?.contentOrNull
                 val toolCalls = obj["tool_calls"]?.jsonArray?.map { tc ->
                     val tcObj = tc.jsonObject
                     ModelToolCall(
@@ -77,7 +117,11 @@ class SessionReader(private val sessionsDir: Path) {
                         argumentsJson = tcObj["arguments"]?.jsonPrimitive?.content.orEmpty(),
                     )
                 } ?: emptyList()
-                AgentMessage.Assistant(content = content, toolCalls = toolCalls)
+                AgentMessage.Assistant(
+                    content = content,
+                    toolCalls = toolCalls,
+                    reasoningContent = reasoningContent,
+                )
             }
             "tool" -> AgentMessage.Tool(
                 toolCallId = obj["tool_call_id"]?.jsonPrimitive?.content.orEmpty(),

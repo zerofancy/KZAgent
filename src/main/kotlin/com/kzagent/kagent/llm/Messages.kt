@@ -35,6 +35,8 @@ sealed class AgentMessage {
     data class Assistant(
         val content: String?,
         val toolCalls: List<ModelToolCall> = emptyList(),
+        /** Thinking-mode chain-of-thought; MiMo requires passing it back in later requests. */
+        val reasoningContent: String? = null,
     ) : AgentMessage() {
         override val role: String = "assistant"
     }
@@ -58,6 +60,7 @@ data class ModelToolCall(
 data class AssistantReply(
     val content: String?,
     val toolCalls: List<ModelToolCall> = emptyList(),
+    val reasoningContent: String? = null,
     val totalTokens: Int? = null,
     val promptTokens: Int? = null,
 )
@@ -147,6 +150,8 @@ internal data class ChunkChoice(
 @Serializable
 internal data class ChunkDelta(
     val content: String? = null,
+    @SerialName("reasoning_content")
+    val reasoningContent: String? = null,
     @SerialName("tool_calls")
     val toolCalls: List<ChunkToolCallDelta>? = null,
 )
