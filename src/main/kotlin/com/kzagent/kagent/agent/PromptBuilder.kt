@@ -6,6 +6,7 @@ class PromptBuilder(
     private val workspace: Path,
     private val userPrompt: String = "",
     private val rootInstructions: String = "",
+    private val skillSummaries: String = "",
 ) {
     fun build(): String = """
         You are a minimal AI coding agent running in a Kotlin JVM application (CLI or Desktop GUI).
@@ -61,5 +62,8 @@ class PromptBuilder(
             } else {
                 "$it\n\n## Project instructions from AGENTS.md\n$rootInstructions"
             }
+        }
+        .let {
+            if (skillSummaries.isBlank()) it else "$it\n\n$skillSummaries"
         }
 }

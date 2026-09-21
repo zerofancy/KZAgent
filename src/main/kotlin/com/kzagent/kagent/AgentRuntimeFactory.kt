@@ -11,6 +11,8 @@ import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.config.AppConfigLoader
 import com.kzagent.kagent.config.ModelSelection
 import com.kzagent.kagent.llm.OpenAiCompatibleClient
+import com.kzagent.kagent.skill.SkillRegistry
+import com.kzagent.kagent.skill.readSkillTool
 import com.kzagent.kagent.tools.ApprovalPolicy
 import com.kzagent.kagent.tools.AskUserTools
 import com.kzagent.kagent.tools.LocalTools
@@ -18,6 +20,7 @@ import com.kzagent.kagent.tools.ModeApprovalPolicy
 import com.kzagent.kagent.tools.ModelApprovalAgent
 import com.kzagent.kagent.tools.PathGuard
 import com.kzagent.kagent.tools.TodoTools
+import com.kzagent.kagent.tools.ToolRegistry
 import com.kzagent.kagent.tools.WebContentExtractor
 import com.kzagent.kagent.tools.WebPageService
 import com.kzagent.kagent.tools.UserQuestionPrompter
@@ -78,13 +81,21 @@ object AgentRuntimeFactory {
             sensitivePathProtection = config.sensitivePathProtection,
             webPageService = WebPageService(WebContentExtractor(model)),
         ).registry()
+        val skillsDir = AppDataDir.ensureSkillsRoot()
+        val skillRegistry = if (config.skills.enabled) {
+            SkillRegistry.load(skillsDir, config.skills)
+        } else null
+        val skillSummaries = skillRegistry?.summaries(skillsDir).orEmpty()
+        val skillToolRegistry = skillRegistry?.let { ToolRegistry(listOf(it.readSkillTool())) }
+            ?: ToolRegistry(emptyList())
         val agent = CodingAgent(
             model = model,
-            tools = localTools + TodoTools(todoStore).registry() + AskUserTools(userQuestionPrompter).registry(),
+            tools = localTools + TodoTools(todoStore).registry() + AskUserTools(userQuestionPrompter).registry() + skillToolRegistry,
             promptBuilder = PromptBuilder(
                 workspace = pathGuard.root,
                 userPrompt = config.userPrompt,
                 rootInstructions = rootInstructions,
+                skillSummaries = skillSummaries,
             ),
             sessionWriter = writer,
             observer = observer,

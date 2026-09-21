@@ -22,6 +22,7 @@ data class AppConfig(
     val contextWindowSize: Int = DEFAULT_CONTEXT_WINDOW_SIZE,
     val userPrompt: String = "",
     val approvalMode: ApprovalMode = DEFAULT_APPROVAL_MODE,
+    val skills: SkillsConfig = SkillsConfig(),
 ) {
     init {
         require(providers.isNotEmpty()) { "At least one model provider must be configured." }
@@ -70,6 +71,7 @@ data class AppConfig(
         contextWindowSize = contextWindowSize,
         userPrompt = userPrompt,
         approvalMode = approvalMode,
+        skills = skills,
     )
 
     // Source-compatible accessors for the existing DeepSeek-focused call sites.
@@ -111,6 +113,7 @@ internal data class AppConfigDto(
     val contextWindowSize: Int = AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
     val userPrompt: String = "",
     val approvalMode: ApprovalMode = AppConfig.DEFAULT_APPROVAL_MODE,
+    val skills: SkillsConfig = SkillsConfig(),
 ) {
     fun toAppConfig(): AppConfig = AppConfig(
         providers = providers,
@@ -119,8 +122,19 @@ internal data class AppConfigDto(
         contextWindowSize = contextWindowSize,
         userPrompt = userPrompt,
         approvalMode = approvalMode,
+        skills = skills,
     )
 }
+
+/**
+ * User-level skill discovery settings.
+ */
+@Serializable
+data class SkillsConfig(
+    val enabled: Boolean = true,
+    val disabled: List<String> = emptyList(),
+    val extraDirectories: List<String> = emptyList(),
+)
 
 object JsonConfigCodec {
     val json: Json = Json {
@@ -387,6 +401,11 @@ object AppDataDir {
     fun sessionsRoot(): Path = appDir().resolve("sessions")
 
     fun ensureSessionsRoot(): Path = sessionsRoot().also(Files::createDirectories)
+
+    /** User-level skills directory (built-in skills are bundled on the classpath). */
+    fun skillsRoot(): Path = appDir().resolve("skills")
+
+    fun ensureSkillsRoot(): Path = skillsRoot().also(Files::createDirectories)
 
     /** Fixed-length, collision-resistant sessions directory for a workspace. */
     fun sessionsDir(workspace: Path): Path = sessionsDir(workspace, appDir())
