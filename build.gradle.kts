@@ -16,6 +16,10 @@ plugins {
 group = "com.kzagent"
 version = "0.1.0"
 
+tasks.withType<JavaExec>().configureEach {
+    standardInput = System.`in`
+}
+
 val isMacOs = System.getProperty("os.name").lowercase().contains("mac")
 val isWindows = System.getProperty("os.name").lowercase().contains("windows")
 val windowsPackageVersion = "1.0.0"

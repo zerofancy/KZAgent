@@ -35,12 +35,14 @@ fun runCli(args: Array<String>): Int = runBlocking {
                     printUsage()
                     return@runBlocking 0
                 }
+                ensureCliConfiguration()
                 AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy, TerminalUserQuestionPrompter).use { runtime ->
                     val answer = runtime.agent.run(prompt)
                     println(answer)
                 }
             }
             "chat" -> {
+                ensureCliConfiguration()
                 AgentRuntimeFactory.create(workspace, TerminalApprovalPolicy, TerminalUserQuestionPrompter).use { runtime ->
                     val initialPrompt = effectiveArgs.drop(1).joinToString(" ").takeIf { it.isNotBlank() }
                     interactiveChat(workspace, runtime.agent, initialPrompt)
@@ -155,6 +157,9 @@ fun printUsage() {
           chat  - Interactive multi-turn chat. Provide an optional initial question.
                  After each answer, type your next question. Empty line to exit.
           (no command) - Same as chat.
+
+        Missing provider credentials start an interactive setup before ask/chat.
+        Enter /cancel or send EOF to exit setup without saving.
 
         Configuration JSON (%APPDATA%/kzagent/config.json on Windows,
         ~/Library/Application Support/kzagent/config.json on macOS,

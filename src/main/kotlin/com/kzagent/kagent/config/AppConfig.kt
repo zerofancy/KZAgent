@@ -152,6 +152,11 @@ object JsonConfigCodec {
     internal fun decodeDto(text: String): AppConfigDto = json.decodeFromString(text)
 }
 
+class MissingProviderConfigurationException : IllegalStateException(
+    "Missing model provider API key. Set DEEPSEEK_API_KEY, OPENROUTER_API_KEY, " +
+        "MIMOCODE_API_KEY, or configure a provider in the JSON config file.",
+)
+
 object AppConfigLoader {
     private const val JSON_FILE_NAME = "config.json"
     private const val LEGACY_FILE_NAME = "config.properties"
@@ -235,10 +240,7 @@ object AppConfigLoader {
             }
         }
         if (providers.isEmpty()) {
-            throw IllegalStateException(
-                "Missing model provider API key. Set DEEPSEEK_API_KEY, OPENROUTER_API_KEY, " +
-                    "MIMOCODE_API_KEY, or configure a provider in the JSON config file."
-            )
+            throw MissingProviderConfigurationException()
         }
 
         val legacyModel = props.getProperty("deepseek.model")?.trim()

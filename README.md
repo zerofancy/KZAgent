@@ -97,6 +97,10 @@ export MIMOCODE_API_KEY=sk-mimo-xxxxxxxxxxxxxxxx
 
 ### 2. 运行
 
+CLI 首次运行 `chat`（含无参数运行）或 `ask` 时，若缺少 Provider 配置，会进入交互设置：选择 DeepSeek、OpenRouter、MiMo Code 或自定义 Provider，填写 API Base URL、模型 ID 和 API Key。支持直接回车采用提示的默认值；全部填写完成后保存到同一份 `config.json`，并继续原来的命令。输入 `/cancel` 或结束输入可取消，不写入配置。已有配置会直接使用，损坏的配置文件会报错而不会被设置流程覆盖。
+
+直接在终端运行且支持控制台时，API Key 输入不回显；通过 Gradle 等没有 Console 的环境运行时会提示可能回显。脚本或 CI 建议预先通过环境变量或配置文件提供凭据，避免交互提示。
+
 项目使用 Gradle 和 JVM 17+。如果系统默认 Java 不是 17+，请先设置 `JAVA_HOME`。
 
 ```bash
