@@ -537,3 +537,9 @@ MIMOCODE_API_KEY=sk-mimo-xxxxxxxxxxxx   # JSON 中未配置 MiMo Code 时生效
 ## License
 
 本项目为开源工具。
+
+### 流式响应中断与续聊
+
+模型响应缺少 `[DONE]` 时不会保存或执行该响应中的不完整工具调用。Agent 的缓冲请求会对 HTTP 200、`text/event-stream` 的提前结束最多尝试三次，重试间隔为 500 ms、1000 ms；已经完成的工具不会因请求重试再次执行。直接使用流式回调的调用保持单次请求，避免重复输出。
+
+失败诊断写入应用数据目录的 `provider-stream.log`，仅包含 HTTP 状态、chunk 数、内容长度、工具数量、结束原因、请求 ID 和流读取耗时，不记录正文或密钥。桌面会话失败也会写入 `desktop.log`。续聊前重新加载已持久化的会话历史，因此失败前已完成的工具结果会保留。

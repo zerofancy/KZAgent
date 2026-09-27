@@ -401,6 +401,9 @@ internal fun KZAgentDesktopApp(
                                         }
                                         val job = scope.launch {
                                             try {
+                                                // Disk includes completed tools from a previous failed turn;
+                                                // the in-memory history is only updated after a successful run.
+                                                session.reloadSavedHistory()
                                                 val result = currentRuntime.agent.runConversation(
                                                     prompt,
                                                     session.conversationHistory
@@ -411,6 +414,7 @@ internal fun KZAgentDesktopApp(
                                             } catch (_: CancellationException) {
                                                 session.status = "已终止"
                                             } catch (e: Exception) {
+                                                desktopLog("Conversation failed for session ${session.id}", e)
                                                 session.error =
                                                     SecretRedactor.redact(e.message ?: e.toString())
                                                 session.status = "请求失败"

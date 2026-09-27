@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import com.kzagent.kagent.AgentRuntime
 import com.kzagent.kagent.AgentRuntimeFactory
+import com.kzagent.kagent.agent.SessionReader
 import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.config.AppConfig
@@ -56,6 +57,16 @@ class SessionData(
     var error by mutableStateOf(error)
     var todoSnapshot by mutableStateOf(todoSnapshot)
     var modelSelection by mutableStateOf(modelSelection)
+
+    suspend fun reloadSavedHistory() {
+        val saved = withContext(Dispatchers.IO) {
+            val reader = SessionReader(sessionFile.parent)
+            reader.loadFile(sessionFile).filter { it !is AgentMessage.System } to
+                reader.loadTokenCount(sessionFile)
+        }
+        conversationHistory = saved.first
+        usedTokens = saved.second
+    }
 
     fun updateName(name: String) {
         this.name = name

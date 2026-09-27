@@ -25,6 +25,32 @@ import kotlin.test.assertTrue
 
 class SessionManagerTest {
     @Test
+    fun reloadAfterFailureKeepsCompletedToolsWithoutDuplicatingTheUserTurn() = runBlocking {
+        val root = Files.createTempDirectory("kagent-recovery-test")
+        SessionManager(denyAll, root).use { manager ->
+            manager.loadOrCreate(testWorkspace())
+            val session = manager.activeSession()
+            val writer = SessionWriter(session.sessionFile)
+            val user = AgentMessage.User("review this project")
+            val assistant = AgentMessage.Assistant(null, listOf(
+                com.kzagent.kagent.llm.ModelToolCall("call-1", "read_file", "{}"),
+            ))
+            val result = AgentMessage.Tool("call-1", "read_file", "saved result", false)
+            writer.append(AgentMessage.System("system"))
+            writer.append(user)
+            writer.append(assistant, tokens = 123)
+            writer.append(result)
+            // A model failure prevented runConversation from returning its updated history.
+            assertTrue(session.conversationHistory.isEmpty())
+            session.reloadSavedHistory()
+            assertEquals(listOf(user, assistant, result), session.conversationHistory)
+            assertEquals(123, session.usedTokens)
+            session.reloadSavedHistory()
+            assertEquals(3, session.conversationHistory.size)
+        }
+    }
+
+    @Test
     fun modelSelectionSurvivesReloadInItsSidecar() = runBlocking {
         val workspace = testWorkspace()
         val sessionsRoot = Files.createTempDirectory("kagent-model-session-test")

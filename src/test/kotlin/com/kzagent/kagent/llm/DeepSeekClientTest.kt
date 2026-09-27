@@ -27,6 +27,57 @@ import kotlin.test.assertTrue
 
 class DeepSeekClientTest {
     @Test
+    fun bufferedCallsRetryTruncatedStreamsWithoutKeepingPartialContent() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream")
+                .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"discard me\"}}]}\n\n"))
+            server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream")
+                .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"complete\"}}]}\n\ndata: [DONE]\n\n"))
+            DeepSeekClient(testConfig(server)).use { client ->
+                assertEquals("complete", client.chat(listOf(AgentMessage.User("hello")), emptyList()).content)
+                assertEquals(2, server.requestCount)
+                assertEquals(server.takeRequest().body.readUtf8(), server.takeRequest().body.readUtf8())
+            }
+        }
+    }
+
+    @Test
+    fun truncatedStreamsExhaustBoundedRetriesWithMetadataOnly() = runBlocking {
+        MockWebServer().use { server ->
+            repeat(3) {
+                server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setHeader("x-request-id", "request-123")
+                    .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"private response\"},\"finish_reason\":\"stop\"}]}\n\n"))
+            }
+            DeepSeekClient(testConfig(server)).use { client ->
+                val error = assertFailsWith<ProviderApiException> {
+                    client.chat(listOf(AgentMessage.User("private prompt")), emptyList())
+                }
+                assertEquals(3, server.requestCount)
+                assertContains(error.message.orEmpty(), "requestId=request-123")
+                assertContains(error.message.orEmpty(), "finishReason=stop")
+                assertFalse(error.message.orEmpty().contains("private"))
+            }
+        }
+    }
+
+    @Test
+    fun streamingCallbacksAreNotReplayedOnTruncation() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream")
+                .setBody("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"))
+            DeepSeekClient(testConfig(server)).use { client ->
+                val partials = mutableListOf<String>()
+                assertFailsWith<ProviderApiException> {
+                    client.chatStreaming(listOf(AgentMessage.User("hello")), emptyList()) { partials += it }
+                }
+                assertEquals(listOf("partial"), partials)
+                assertEquals(1, server.requestCount)
+            }
+        }
+    }
+
+    @Test
     fun openRouterStreamingErrorIsReportedInsteadOfReturningEmptyContent() = runBlocking {
         MockWebServer().use { server ->
             server.enqueue(

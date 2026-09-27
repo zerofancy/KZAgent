@@ -6,6 +6,8 @@ import com.kzagent.kagent.config.ProviderConfig
 import com.kzagent.kagent.config.ProviderKind
 import com.kzagent.kagent.config.SecretRedactor
 import java.time.Duration
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
@@ -42,8 +44,20 @@ class OpenAiCompatibleClient(
         this.streamClient = createStreamOkHttpClient()
     }
 
-    override suspend fun chat(messages: List<AgentMessage>, tools: List<JsonObject>): AssistantReply =
-        chatStreaming(messages, tools) { }
+    override suspend fun chat(messages: List<AgentMessage>, tools: List<JsonObject>): AssistantReply {
+        // Only buffered calls are retried: callers never see partial text or execute
+        // tool calls from a discarded attempt. Streaming callbacks retain one-shot semantics.
+        for (attempt in 1..3) {
+            try {
+                return chatStreaming(messages, tools) { }
+            } catch (error: ProviderApiException) {
+                if (!error.retryable || attempt == 3) throw error
+                currentCoroutineContext().ensureActive()
+                delay(500L * attempt)
+            }
+        }
+        error("Unreachable")
+    }
 
     override suspend fun chatStreaming(
         messages: List<AgentMessage>,
@@ -96,6 +110,9 @@ class OpenAiCompatibleClient(
             var totalTokens: Int? = null
             var promptTokens: Int? = null
 
+            val startedAt = System.nanoTime()
+            var chunks = 0
+            var finishReason: String? = null
             var sawChoice = false
             var sawDone = false
             body.source().use { source ->
@@ -124,6 +141,7 @@ class OpenAiCompatibleClient(
                         )
                     }
 
+                    chunks++
                     sawChoice = sawChoice || chunk.choices.isNotEmpty()
 
                     chunk.usage?.let { usage ->
@@ -132,6 +150,7 @@ class OpenAiCompatibleClient(
                     }
 
                     for (choice in chunk.choices) {
+                        finishReason = choice.finishReason ?: finishReason
                         val delta = choice.delta
                         delta.reasoningContent?.let { reasoningBuilder.append(it) }
                         delta.content?.let { text ->
@@ -149,8 +168,23 @@ class OpenAiCompatibleClient(
                 }
             }
 
+            currentCoroutineContext().ensureActive()
             if (!sawDone) {
-                throw ProviderApiException("${providerConfig.name} API streaming response ended before [DONE].")
+                // Record metadata only; never persist prompts, response text, reasoning,
+                // tool arguments, headers containing credentials, or the request body.
+                val details = "status=${resp.code}, chunks=$chunks, " +
+                    "contentChars=${contentBuilder.length}, reasoningChars=${reasoningBuilder.length}, " +
+                    "toolCalls=${toolCallBuilders.size}, finishReason=${safeDiagnosticValue(finishReason)}, " +
+                    "requestId=${safeDiagnosticValue(resp.header("x-request-id"))}, " +
+                    "elapsedMs=${(System.nanoTime() - startedAt) / 1_000_000}"
+                val message = "${providerConfig.name} API streaming response ended before [DONE]. $details"
+                recordStreamFailure(message)
+                throw ProviderApiException(
+                    message,
+                    statusCode = resp.code,
+                    retryable = resp.code == 200 &&
+                        resp.header("Content-Type").orEmpty().startsWith("text/event-stream"),
+                )
             }
             if (!sawChoice) {
                 throw ProviderApiException("${providerConfig.name} API streaming response contained no choices.")
@@ -309,6 +343,7 @@ class ProviderApiException(
     message: String,
     val statusCode: Int? = null,
     cause: Throwable? = null,
+    val retryable: Boolean = false,
 ) : RuntimeException(message, cause)
 
 typealias DeepSeekException = ProviderApiException
@@ -316,4 +351,22 @@ typealias DeepSeekException = ProviderApiException
 private fun providerJson(): Json = Json {
     ignoreUnknownKeys = true
     explicitNulls = false
+}
+
+private fun safeDiagnosticValue(value: String?): String =
+    SecretRedactor.redact(value.orEmpty()).take(128).replace(Regex("[^a-zA-Z0-9_.:-]"), "_")
+        .ifEmpty { "unknown" }
+
+private fun recordStreamFailure(message: String) {
+    // Logging failures must not replace the model error.
+    runCatching {
+        val path = com.kzagent.kagent.config.AppDataDir.appDir().resolve("provider-stream.log")
+        java.nio.file.Files.createDirectories(path.parent)
+        java.nio.file.Files.writeString(
+            path,
+            "${java.time.Instant.now()} ${SecretRedactor.redact(message)}\n",
+            java.nio.file.StandardOpenOption.CREATE,
+            java.nio.file.StandardOpenOption.APPEND,
+        )
+    }
 }
