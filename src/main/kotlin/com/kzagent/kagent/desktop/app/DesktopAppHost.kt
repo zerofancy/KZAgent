@@ -119,7 +119,7 @@ fun runDesktopApp(
                 })
                 pack()
             }
-            setTaskbarIconIfSupported(frame.iconImages.firstOrNull())
+            setTaskbarIconIfSupported(selectTaskbarIcon(frame.iconImages))
             desktopLog("JFrame created")
             installMacAppReopenHandler(frame, windowLifecycle)
             showWindowInForeground(frame)
@@ -211,15 +211,15 @@ private fun installMacAppReopenHandler(
     }
 }
 
-/** Icon sizes commonly used by Linux window managers and the macOS Dock. */
+/** Small icon sizes used by window decorations and task switchers. */
 private val DESKTOP_ICON_SIZES = intArrayOf(16, 24, 32, 48, 64, 128, 256)
 
 /**
- * Load multiple sizes of the application icon.  Linux window managers and the
- * macOS Dock select the closest match from the provided list; supplying several
- * sizes avoids blurry scaling artifacts.
+ * Keep the full-resolution source alongside window-sized variants. The Taskbar
+ * API accepts only one image, so the Dock must receive the largest available
+ * image rather than the first (16px) window icon, especially on Retina displays.
  */
-private fun loadAppIcons(): List<Image> = runCatching {
+internal fun loadAppIcons(): List<Image> = runCatching {
     val source = checkNotNull(
         Thread.currentThread().contextClassLoader.getResourceAsStream("icons/kzagent.png")
     ) { "Application icon resource was not found" }.use(ImageIO::read)
@@ -239,10 +239,13 @@ private fun loadAppIcons(): List<Image> = runCatching {
             }
             scaled
         }
-    }
+    }.plus(source)
 }.onFailure {
     desktopLog("failed to load application icons: ${it.message}", it)
 }.getOrDefault(emptyList())
+
+internal fun selectTaskbarIcon(icons: List<Image>): Image? =
+    icons.maxByOrNull { it.getWidth(null).toLong() * it.getHeight(null) }
 
 /**
  * On macOS the Dock icon must be set explicitly via [java.awt.Taskbar]; the
