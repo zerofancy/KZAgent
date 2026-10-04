@@ -172,8 +172,9 @@ internal fun handleSuggestName(
     scope: CoroutineScope,
 ) {
     val agent = session?.runtime?.agent ?: return
+    if (session.isBusy || session.titleJob?.isActive == true) return
     onSuggestingChange(true)
-    scope.launch {
+    session.titleJob = scope.launch {
         try {
             val recentText = session.conversationHistory
                 .filterIsInstance<AgentMessage.User>()

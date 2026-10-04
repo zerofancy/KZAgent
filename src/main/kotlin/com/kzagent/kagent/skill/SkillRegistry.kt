@@ -1,8 +1,6 @@
 package com.kzagent.kagent.skill
 
 import com.kzagent.kagent.config.SkillsConfig
-import com.kzagent.kagent.tools.TextFileCodec
-import java.nio.file.Files
 import java.nio.file.Path
 
 /**
@@ -33,7 +31,7 @@ class SkillRegistry private constructor(
             )
             add("")
             add("User skills are installed under: $skillsDir")
-            add("Built-in skills are read-only. Newly installed skills only appear in the list after a new session starts.")
+            add("Built-in skills are read-only. After installation, refresh the desktop Skills page before the next turn, or restart the CLI session.")
             add("")
             for (skill in skills) {
                 val m = skill.manifest
@@ -47,76 +45,10 @@ class SkillRegistry private constructor(
     }
 
     companion object {
-        private const val SKILL_FILE = "SKILL.md"
-        private const val BUILTIN_RESOURCE_ROOT = "/builtin-skills"
-        private val NAME_PATTERN = Regex("^[a-z0-9][a-z0-9-]*$")
-
-        fun load(skillsDir: Path, config: SkillsConfig): SkillRegistry {
-            val all = mutableListOf<Skill>()
-            all += loadBuiltinSkills(config)
-            all += loadUserSkills(skillsDir, config)
-            // De-duplicate by lowercase name: built-in skills win over user skills.
-            val seen = linkedSetOf<String>()
-            val deduped = all.filter { seen.add(it.manifest.name.lowercase()) }
-            return SkillRegistry(deduped)
-        }
-
-        private fun loadBuiltinSkills(config: SkillsConfig): List<Skill> {
-            if (!config.enabled) return emptyList()
-            // The skill-installer skill is always available unless explicitly disabled.
-            return loadBuiltinSkill("skill-installer")
-                ?.takeIf { it.manifest.name !in config.disabled }
-                ?.let(::listOf)
-                ?: emptyList()
-        }
-
-        private fun loadBuiltinSkill(name: String): Skill? {
-            val resourcePath = "$BUILTIN_RESOURCE_ROOT/$name/$SKILL_FILE"
-            val stream = SkillRegistry::class.java.getResourceAsStream(resourcePath) ?: return null
-            val content = stream.use { String(it.readBytes(), Charsets.UTF_8) }
-            val manifest = SkillFrontmatterParser.parse(content) ?: return null
-            return Skill(
-                manifest = manifest,
-                source = SkillMdSource.Classpath(resourcePath),
-                builtin = true,
-            )
-        }
-
-        private fun loadUserSkills(skillsDir: Path, config: SkillsConfig): List<Skill> {
-            if (!config.enabled) return emptyList()
-
-            val roots = buildList {
-                add(skillsDir)
-                config.extraDirectories.forEach { extra ->
-                    runCatching { Path.of(extra).toAbsolutePath().normalize() }.getOrNull()
-                        ?.let { add(it) }
-                }
+        fun load(skillsDir: Path, config: SkillsConfig): SkillRegistry = SkillRegistry(
+            (if (config.enabled) SkillCatalog.scan(skillsDir, config) else emptyList()).filter { it.active }.map {
+                Skill(requireNotNull(it.manifest), requireNotNull(it.source), it.origin == SkillOrigin.BUILTIN)
             }
-
-            val skills = mutableListOf<Skill>()
-            for (root in roots) {
-                if (!Files.isDirectory(root)) continue
-                Files.list(root).use { stream ->
-                    stream.filter { Files.isDirectory(it) }.forEach { dir ->
-                        loadSkillFromDir(dir, config)?.let { skills += it }
-                    }
-                }
-            }
-            return skills
-        }
-
-        private fun loadSkillFromDir(dir: Path, config: SkillsConfig): Skill? {
-            val skillFile = dir.resolve(SKILL_FILE)
-            if (!Files.isRegularFile(skillFile)) return null
-            val content = runCatching { TextFileCodec.read(skillFile).text }.getOrNull() ?: return null
-            val manifest = SkillFrontmatterParser.parse(content) ?: return null
-            if (!NAME_PATTERN.matches(manifest.name)) return null
-            if (manifest.name in config.disabled) return null
-            return Skill(
-                manifest = manifest,
-                source = SkillMdSource.FileSystem(skillFile),
-                builtin = false,
-            )
-        }
+        )
     }
 }

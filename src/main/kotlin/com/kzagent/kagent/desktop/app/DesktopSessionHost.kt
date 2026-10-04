@@ -38,6 +38,7 @@ import com.kzagent.kagent.desktop.PendingApproval
 import com.kzagent.kagent.desktop.PendingUserQuestions
 import com.kzagent.kagent.desktop.SessionManager
 import com.kzagent.kagent.desktop.ui.SessionSidePanel
+import com.kzagent.kagent.desktop.SkillsPanel
 import com.kzagent.kagent.desktop.SettingsPanel
 import com.kzagent.kagent.desktop.chooseWorkspace
 import com.kzagent.kagent.desktop.loadSessionWorkspaceExpandState
@@ -72,6 +73,8 @@ internal fun KZAgentDesktopApp(
     var renameText by remember { mutableStateOf("") }
     var renameSuggesting by remember { mutableStateOf(false) }
     var showCompressConfirm by remember { mutableStateOf(false) }
+    var showSkills by remember { mutableStateOf(false) }
+    var deletingSkill by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showSessionSidePanel by remember { mutableStateOf(true) }
     var sessionLoadError by remember { mutableStateOf<String?>(null) }
@@ -125,7 +128,7 @@ internal fun KZAgentDesktopApp(
     val settingsState = rememberDesktopSessionSettingsState(
         sessionManager = sessionManager,
         scope = scope,
-        onDismiss = { showSettings = false },
+        onDismiss = { showSettings = false; showSkills = false },
         onConfigurationRequired = { showSettings = true },
         onSessionError = { msg ->
             sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)?.error = msg
@@ -161,7 +164,7 @@ internal fun KZAgentDesktopApp(
                     requireReadableWorkspace(request.workspace)
                 }
                 sessionManager.startNewSessionInWorkspace(workspace)
-                showSettings = false
+                showSettings = false; showSkills = false
                 sessionLoadError = null
             } catch (error: CancellationException) {
                 throw error
@@ -230,7 +233,7 @@ internal fun KZAgentDesktopApp(
             settingsSelected = showSettings,
             onSelectSession = { index ->
                 sessionManager.switchTo(index)
-                showSettings = false
+                showSettings = false; showSkills = false
             },
             onWorkspaceExpandedChanged = { key, expanded ->
                 sessionWorkspaceExpandedState[key] = expanded
@@ -245,7 +248,7 @@ internal fun KZAgentDesktopApp(
                     scope.launch {
                         try {
                             sessionManager.addNewSession()
-                            showSettings = false
+                            showSettings = false; showSkills = false
                         } catch (error: CancellationException) {
                             throw error
                         } catch (error: Exception) {
@@ -268,7 +271,7 @@ internal fun KZAgentDesktopApp(
                     try {
                         chooseWorkspace(session.workspace)?.let { newWorkspace ->
                             sessionManager.startSessionInWorkspace(session, newWorkspace)
-                            showSettings = false
+                            showSettings = false; showSkills = false
                         }
                     } catch (error: CancellationException) {
                         throw error
@@ -277,10 +280,21 @@ internal fun KZAgentDesktopApp(
                     }
                 }
             },
-            onSettings = { showSettings = true },
+            onSettings = { showSettings = true; showSkills = false },
+            skillsSelected = showSkills,
+            onSkills = { showSkills = true; showSettings = false },
             modifier = Modifier.fillMaxSize(),
         ) {
-            if (showSettings) {
+            if (showSkills) {
+                SkillsPanel(
+                    config = settingsState.savedConfig?.skills ?: com.kzagent.kagent.config.SkillsConfig(),
+                    configured = settingsState.savedConfig != null,
+                    busy = sessionManager.sessions.any { it.isBusy },
+                    save = settingsState::saveSkills,
+                    onRefresh = sessionManager::markSkillsChanged,
+                    onDeletingChanged = { deletingSkill = it },
+                )
+            } else if (showSettings) {
                 SettingsPanel(
                     initialProviders = settingsState.savedConfig?.providers.orEmpty(),
                     initialDefaultModel = settingsState.savedConfig?.defaultModel ?: ModelSelection(
@@ -313,7 +327,7 @@ internal fun KZAgentDesktopApp(
                     onSave = settingsState::saveSettings,
                     onCancel = {
                         if (settingsState.savedConfig != null) {
-                            showSettings = false
+                            showSettings = false; showSkills = false
                         }
                     },
                 )
@@ -366,41 +380,34 @@ internal fun KZAgentDesktopApp(
                                 Composer(
                                     input = input,
                                     isBusy = session.isBusy,
-                                    enabled = session.runtime != null,
+                                    enabled = !deletingSkill,
                                     onInputChange = { input = it },
                                     onSend = {
+                                        val submittedInput = input
                                         val prompt = input.trim()
                                         if (prompt.isEmpty()) return@Composer
-                                        val currentRuntime = session.runtime ?: return@Composer
-                                        input = ""
+                                        if (session.isBusy || deletingSkill) return@Composer
                                         session.isBusy = true
                                         session.error = null
                                         session.status = "准备发送..."
-                                        session.messages.add(
-                                            DisplayMessage(
-                                                "user",
-                                                prompt,
-                                                timestampMillis = Instant.now().toEpochMilli(),
-                                            ),
-                                        )
-                                        val sessionId = session.id
-                                        val titleRevision = session.titleRevision
-                                        // Auto-title on first user message: fire immediately, don't wait for the answer
-                                        val isFirstUserMessage = session.conversationHistory.none { it is AgentMessage.User }
-                                        if (isFirstUserMessage) {
-                                            scope.launch {
-                                                try {
-                                                    val title = currentRuntime.agent.generateTitle(prompt)
-                                                    sessionManager.renameSessionIfRevisionMatches(sessionId, titleRevision, title)
-                                                } catch (error: CancellationException) {
-                                                    throw error
-                                                } catch (_: Exception) {
-                                                    // Title generation is best-effort.
-                                                }
-                                            }
-                                        }
                                         val job = scope.launch {
                                             try {
+                                                sessionManager.ensureRuntime(session,
+                                                    createAgentObserver(session, settingsState.savedConfig?.approvalMode), refreshSkills = true)
+                                                val currentRuntime = requireNotNull(session.runtime)
+                                                if (input == submittedInput) input = ""
+                                                session.messages.add(DisplayMessage("user", prompt, timestampMillis = Instant.now().toEpochMilli()))
+                                                val sessionId = session.id
+                                                val titleRevision = session.titleRevision
+                                                if (session.conversationHistory.none { it is AgentMessage.User }) {
+                                                    session.titleJob = scope.launch {
+                                                        try {
+                                                            val title = currentRuntime.agent.generateTitle(prompt)
+                                                            sessionManager.renameSessionIfRevisionMatches(sessionId, titleRevision, title)
+                                                        } catch (e: CancellationException) { throw e }
+                                                        catch (_: Exception) { /* Title generation must not fail the conversation. */ }
+                                                    }
+                                                }
                                                 // Disk includes completed tools from a previous failed turn;
                                                 // the in-memory history is only updated after a successful run.
                                                 session.reloadSavedHistory()

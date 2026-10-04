@@ -32,8 +32,8 @@ When the user asks to install a skill:
 5. If the source was a git clone, clean up the temporary directory afterward.
 6. Verify that `<skills-root>/<name>/SKILL.md` exists and has a valid frontmatter.
 7. Tell the user the skill is installed. Note that newly installed skills only
-   appear in the installed skills list after a new session starts — the list is
-   a startup snapshot, so the current session will not see it yet.
+   appear after refreshing the desktop Skills page (effective on the next turn),
+   or after restarting the CLI session.
 
 ## Listing installed skills
 

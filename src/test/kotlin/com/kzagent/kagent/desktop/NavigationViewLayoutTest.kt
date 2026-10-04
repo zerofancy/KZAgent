@@ -30,6 +30,7 @@ class NavigationViewLayoutTest {
 
     @Test
     fun settingsSelectionSuppressesSessionSelection() {
+        assertFalse(isSessionNavigationSelected(false, 2, 2, skillsSelected = true))
         assertTrue(isSessionNavigationSelected(settingsSelected = false, activeIndex = 2, sessionIndex = 2))
         assertFalse(isSessionNavigationSelected(settingsSelected = true, activeIndex = 2, sessionIndex = 2))
         assertFalse(isSessionNavigationSelected(settingsSelected = false, activeIndex = 2, sessionIndex = 1))

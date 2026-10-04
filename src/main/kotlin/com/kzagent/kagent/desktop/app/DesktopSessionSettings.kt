@@ -24,8 +24,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import com.kzagent.kagent.config.SkillsConfig
 
 /**
  * Encapsulates settings-related state and callbacks extracted from [KZAgentDesktopApp].
@@ -40,6 +44,7 @@ internal class DesktopSessionSettingsState(
     private val scope: CoroutineScope,
     private val onDismiss: () -> Unit,
     private val onSessionError: (String) -> Unit,
+    private val writeConfig: (AppConfig) -> Unit = ConfigWriter::save,
 ) {
     var savedConfig by mutableStateOf<AppConfig?>(null)
     var configLoaded by mutableStateOf(false)
@@ -55,6 +60,18 @@ internal class DesktopSessionSettingsState(
     var commandInstallFailed by mutableStateOf(false)
 
     private val userCommandInstaller = UserCommandInstaller()
+    private val saveMutex = Mutex()
+
+    suspend fun saveSkills(transform: (SkillsConfig) -> SkillsConfig) = saveMutex.withLock {
+        val current = savedConfig ?: error("请先完成模型设置")
+        val updated = current.copy(skills = transform(current.skills))
+        // Navigating away must not leave the on-disk config newer than the published app state.
+        withContext(NonCancellable) {
+            withContext(Dispatchers.IO) { writeConfig(updated) }
+            savedConfig = updated
+            sessionManager.markSkillsChanged()
+        }
+    }
     private val modelCatalogService = ModelCatalogService()
 
     internal suspend fun loadInitialConfig(
@@ -115,8 +132,11 @@ internal class DesktopSessionSettingsState(
         settingsSaveError = null
         scope.launch {
             try {
-                withContext(Dispatchers.IO) { ConfigWriter.save(config) }
-                savedConfig = withContext(Dispatchers.IO) { AppConfigLoader.load() }
+                saveMutex.withLock {
+                    val merged = config.copy(skills = savedConfig?.skills ?: config.skills)
+                    withContext(Dispatchers.IO) { writeConfig(merged) }
+                    savedConfig = merged
+                }
                 sessionManager.updateDefaultModel(savedConfig!!.defaultModel)
                 sessionManager.invalidateRuntimes()
                 sessionManager.sessions
@@ -147,9 +167,11 @@ internal class DesktopSessionSettingsState(
         scope.launch {
             try {
                 sessionManager.updateModel(session, selection)
-                val updatedConfig = currentConfig.copy(defaultModel = selection)
-                withContext(Dispatchers.IO) { ConfigWriter.save(updatedConfig) }
-                savedConfig = updatedConfig
+                saveMutex.withLock {
+                    val updatedConfig = (savedConfig ?: currentConfig).copy(defaultModel = selection)
+                    withContext(Dispatchers.IO) { writeConfig(updatedConfig) }
+                    savedConfig = updatedConfig
+                }
                 sessionManager.updateDefaultModel(selection)
             } catch (error: CancellationException) {
                 throw error

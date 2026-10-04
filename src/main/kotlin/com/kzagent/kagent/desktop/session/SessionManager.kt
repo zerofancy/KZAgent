@@ -24,6 +24,9 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 class SessionData(
     val id: String,
@@ -49,6 +52,9 @@ class SessionData(
     var titleRevision: Int = 0
         private set
     var runtime by mutableStateOf(runtime)
+    internal val runtimeMutex = Mutex()
+    internal var skillsVersion = -1L
+    internal var titleJob: Job? = null
     var conversationHistory by mutableStateOf(conversationHistory)
     var usedTokens by mutableStateOf(usedTokens)
     var isBusy by mutableStateOf(isBusy)
@@ -88,6 +94,7 @@ class SessionManager internal constructor(
     private val userQuestionPrompter: UserQuestionPrompter = UserQuestionPrompter { questions ->
         questions.map { com.kzagent.kagent.tools.UserQuestionAnswer(null) }
     },
+    private val createRuntime: ((SessionData, AgentObserver) -> AgentRuntime)? = null,
 ) : AutoCloseable {
     val sessions: SnapshotStateList<SessionData> = mutableStateListOf()
     var activeSessionIndex by mutableStateOf(0)
@@ -96,6 +103,10 @@ class SessionManager internal constructor(
         private set
     private val renameMutex = Mutex()
     private var defaultModel: ModelSelection = initialDefaultModel
+    private var skillsVersion = 0L
+    private var closed = false
+
+    fun markSkillsChanged() { skillsVersion++ }
 
     fun updateDefaultModel(selection: ModelSelection) {
         defaultModel = selection
@@ -194,6 +205,7 @@ class SessionManager internal constructor(
     fun invalidateRuntimes() {
         sessions.forEach { session ->
             session.currentJob?.cancel()
+            session.titleJob?.cancel()
             session.currentJob = null
             session.isBusy = false
             session.runtime?.close()
@@ -206,6 +218,7 @@ class SessionManager internal constructor(
     suspend fun updateModel(session: SessionData, selection: ModelSelection) {
         check(!session.isBusy) { "Cannot switch models while the session is busy." }
         repository.updateModel(session.sessionFile, selection)
+        session.titleJob?.cancelAndJoin()
         session.runtime?.close()
         session.runtime = null
         session.modelSelection = selection
@@ -217,6 +230,7 @@ class SessionManager internal constructor(
         if (sessions.size <= 1 || index !in sessions.indices) return false
         val session = sessions[index]
         session.currentJob?.cancelAndJoin()
+        session.titleJob?.cancelAndJoin()
         repository.delete(session.sessionFile)
         session.runtime?.close()
         sessions.removeAt(index)
@@ -231,27 +245,45 @@ class SessionManager internal constructor(
     fun activeSession(): SessionData = sessions[activeSessionIndex]
 
     override fun close() {
+        closed = true
         sessions.forEach { session ->
             session.currentJob?.cancel()
+            session.titleJob?.cancel()
             session.runtime?.close()
             session.runtime = null
         }
     }
 
-    suspend fun ensureRuntime(session: SessionData, observer: AgentObserver) {
-        if (session.runtime != null) return
-        val runtime = withContext(ioDispatcher) {
-            AgentRuntimeFactory.create(
-                workspace = session.workspace,
-                approvalPolicy = approvalPolicy,
-                userQuestionPrompter = userQuestionPrompter,
-                observer = observer,
-                sessionFile = session.sessionFile,
-                modelSelection = session.modelSelection,
-            )
+    suspend fun ensureRuntime(session: SessionData, observer: AgentObserver, refreshSkills: Boolean = false) = session.runtimeMutex.withLock {
+        check(!closed) { "会话管理器已关闭" }
+        if (session.runtime != null && (!refreshSkills || session.skillsVersion == skillsVersion)) return@withLock
+        session.titleJob?.cancelAndJoin()
+        session.runtime?.close()
+        session.runtime = null
+        val version = skillsVersion
+        // Retain ownership across dispatcher cancellation so a newly created client is always closed.
+        var created: AgentRuntime? = null
+        try {
+            withContext(ioDispatcher + NonCancellable) {
+                created = createRuntime?.invoke(session, observer) ?: AgentRuntimeFactory.create(
+                    workspace = session.workspace,
+                    approvalPolicy = approvalPolicy,
+                    userQuestionPrompter = userQuestionPrompter,
+                    observer = observer,
+                    sessionFile = session.sessionFile,
+                    modelSelection = session.modelSelection,
+                )
+            }
+            coroutineContext.ensureActive()
+            check(!closed && session in sessions) { "会话已关闭" }
+            val runtime = requireNotNull(created)
+            session.runtime = runtime
+            session.skillsVersion = version
+            session.todoSnapshot = runtime.todoState.value
+        } catch (error: Throwable) {
+            created?.close()
+            throw error
         }
-        session.runtime = runtime
-        session.todoSnapshot = runtime.todoState.value
     }
 
     private fun toSessionData(stored: StoredSession, modelSelection: ModelSelection): SessionData = SessionData(

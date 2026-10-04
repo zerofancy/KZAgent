@@ -48,7 +48,8 @@ internal fun isSessionNavigationSelected(
     settingsSelected: Boolean,
     activeIndex: Int,
     sessionIndex: Int,
-): Boolean = !settingsSelected && activeIndex == sessionIndex
+    skillsSelected: Boolean = false,
+): Boolean = !settingsSelected && !skillsSelected && activeIndex == sessionIndex
 
 internal fun shouldCollapseNavigationAfterDestination(displayMode: NavigationDisplayMode): Boolean =
     displayMode == NavigationDisplayMode.LeftCompact
@@ -97,6 +98,8 @@ internal fun KZAgentNavigationView(
     onChooseWorkspace: () -> Unit,
     onWorkspaceExpandedChanged: (String, Boolean) -> Unit,
     onSettings: () -> Unit,
+    skillsSelected: Boolean = false,
+    onSkills: () -> Unit = {},
     modifier: Modifier = Modifier,
     pane: @Composable () -> Unit,
 ) {
@@ -210,7 +213,7 @@ internal fun KZAgentNavigationView(
                         is SessionEntryRow -> {
                             val session = row.entry.session
                             MenuItem(
-                                selected = activeSessionId == session.id && !settingsSelected,
+                                selected = isSessionNavigationSelected(settingsSelected, activeIndex, row.entry.index, skillsSelected),
                                 onClick = { runDestinationAction { onSelectSession(row.entry.index) } },
                                 text = { FluentText(session.name, maxLines = 1) },
                                 icon = { FluentIcon(Icons.Default.Document, contentDescription = null) },
@@ -228,6 +231,11 @@ internal fun KZAgentNavigationView(
                 }
             },
             footerItems = {
+                item(key = "skills") {
+                    MenuItem(selected = skillsSelected, onClick = { runDestinationAction(onSkills) },
+                        text = { FluentText("Skills", maxLines = 1) },
+                        icon = { FluentIcon(Icons.Default.Document, contentDescription = null) })
+                }
                 item(key = "settings") {
                     MenuItem(
                         selected = settingsSelected,
