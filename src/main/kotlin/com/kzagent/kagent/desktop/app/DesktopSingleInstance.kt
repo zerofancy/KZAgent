@@ -27,8 +27,8 @@ internal sealed interface DesktopLaunchRequest {
 
 internal fun desktopLaunchRequest(
     initialWorkspace: Path,
-    createStartupSession: Boolean,
-): DesktopLaunchRequest = if (createStartupSession) {
+    openStartupWorkspace: Boolean,
+): DesktopLaunchRequest = if (openStartupWorkspace) {
     DesktopLaunchRequest.OpenWorkspace(initialWorkspace.toAbsolutePath().normalize())
 } else {
     DesktopLaunchRequest.Activate

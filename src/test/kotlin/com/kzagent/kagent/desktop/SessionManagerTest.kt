@@ -28,7 +28,8 @@ class SessionManagerTest {
     fun reloadAfterFailureKeepsCompletedToolsWithoutDuplicatingTheUserTurn() = runBlocking {
         val root = Files.createTempDirectory("kagent-recovery-test")
         SessionManager(denyAll, root).use { manager ->
-            manager.loadOrCreate(testWorkspace())
+            manager.loadSessions(testWorkspace())
+            manager.startNewSessionInWorkspace(testWorkspace())
             val session = manager.activeSession()
             val writer = SessionWriter(session.sessionFile)
             val user = AgentMessage.User("review this project")
@@ -56,7 +57,8 @@ class SessionManagerTest {
         val sessionsRoot = Files.createTempDirectory("kagent-model-session-test")
         val openRouter = ModelSelection("openrouter", "vendor/agent", 128_000, false)
         val manager = SessionManager(denyAll, sessionsRoot, initialDefaultModel = openRouter)
-        manager.loadOrCreate(workspace)
+        manager.loadSessions(workspace)
+        manager.startNewSessionInWorkspace(workspace)
 
         val session = manager.activeSession()
         assertEquals(openRouter, session.modelSelection)
@@ -65,7 +67,7 @@ class SessionManagerTest {
         val replacement = openRouter.copy(modelId = "vendor/agent-2", contextWindowSize = 256_000)
         manager.updateModel(session, replacement)
         val reloaded = SessionManager(denyAll, sessionsRoot)
-        reloaded.loadOrCreate(workspace)
+        reloaded.loadSessions(workspace)
 
         assertEquals(replacement, reloaded.activeSession().modelSelection)
     }
@@ -78,14 +80,15 @@ class SessionManagerTest {
         val workspace = testWorkspace()
         val sessionsRoot = Files.createTempDirectory("kagent-sessions-test")
         val manager = SessionManager(denyAll, sessionsRoot)
-        manager.loadOrCreate(workspace)
+        manager.loadSessions(workspace)
+        manager.startNewSessionInWorkspace(workspace)
 
         val session = manager.activeSession()
         assertTrue(Files.isRegularFile(session.sessionFile))
         assertTrue(manager.renameSession(0, "持久化名称"))
 
         val reloaded = SessionManager(denyAll, sessionsRoot)
-        reloaded.loadOrCreate(workspace)
+        reloaded.loadSessions(workspace)
         assertEquals("持久化名称", reloaded.activeSession().name)
     }
 
@@ -94,7 +97,8 @@ class SessionManagerTest {
         val workspace = testWorkspace()
         val sessionsRoot = Files.createTempDirectory("kagent-sessions-test")
         val manager = SessionManager(denyAll, sessionsRoot)
-        manager.loadOrCreate(workspace)
+        manager.loadSessions(workspace)
+        manager.startNewSessionInWorkspace(workspace)
         val older = manager.activeSession()
         manager.addNewSession()
         val newer = manager.activeSession()
@@ -103,12 +107,12 @@ class SessionManagerTest {
         Files.setLastModifiedTime(newer.sessionFile, FileTime.fromMillis(2_000))
 
         val reloaded = SessionManager(denyAll, sessionsRoot)
-        reloaded.loadOrCreate(workspace)
+        reloaded.loadSessions(workspace)
         assertEquals(newer.id, reloaded.activeSession().id)
     }
 
     @Test
-    fun commandLineDesktopStartupCreatesFreshSessionInRequestedWorkspace() = runBlocking {
+    fun startupLoadsHistoryWithoutCreatingSession() = runBlocking {
         val previousWorkspace = testWorkspace()
         val startupWorkspace = testWorkspace()
         val existing = StoredSession(
@@ -126,15 +130,10 @@ class SessionManagerTest {
             repository = repository,
         )
 
-        manager.loadOrCreate(startupWorkspace, createStartupSession = true)
+        manager.loadSessions(startupWorkspace)
 
-        assertEquals(2, manager.sessions.size)
-        val created = manager.activeSession()
-        assertEquals(startupWorkspace, created.workspace)
-        assertTrue(created.conversationHistory.isEmpty())
-        assertTrue(created.messages.isEmpty())
-        assertEquals(0, created.usedTokens)
-        assertEquals(1, repository.createCalls)
+        assertEquals(1, manager.sessions.size)
+        assertEquals(0, repository.createCalls)
         val preserved = manager.sessions.single { it.id == "existing" }
         assertEquals(previousWorkspace, preserved.workspace)
         assertEquals(listOf(AgentMessage.User("preserve me")), preserved.conversationHistory)
@@ -145,7 +144,8 @@ class SessionManagerTest {
     fun conditionalRenameUsesStableIdAndPreservesNewerManualName() = runBlocking {
         val workspace = testWorkspace()
         val manager = SessionManager(denyAll, Files.createTempDirectory("kagent-sessions-test"))
-        manager.loadOrCreate(workspace)
+        manager.loadSessions(workspace)
+        manager.startNewSessionInWorkspace(workspace)
         val target = manager.activeSession()
         val initialRevision = target.titleRevision
 
@@ -171,7 +171,8 @@ class SessionManagerTest {
         val secondWorkspace = testWorkspace()
         val sessionsRoot = Files.createTempDirectory("kagent-sessions-test")
         val manager = SessionManager(denyAll, sessionsRoot)
-        manager.loadOrCreate(firstWorkspace)
+        manager.loadSessions(firstWorkspace)
+        manager.startNewSessionInWorkspace(firstWorkspace)
         val original = manager.activeSession()
         val originalMessage = AgentMessage.User("first workspace context")
         SessionWriter(original.sessionFile).append(originalMessage)
@@ -205,7 +206,7 @@ class SessionManagerTest {
         assertEquals(sessionsRoot, inherited.sessionFile.parent)
 
         val reloaded = SessionManager(denyAll, sessionsRoot)
-        reloaded.loadOrCreate(firstWorkspace)
+        reloaded.loadSessions(firstWorkspace)
         assertEquals(firstWorkspace, reloaded.sessions.single { it.id == original.id }.workspace)
         assertEquals(listOf(originalMessage), reloaded.sessions.single { it.id == original.id }.conversationHistory)
         assertEquals(secondWorkspace, reloaded.sessions.single { it.id == switched.id }.workspace)
@@ -231,7 +232,7 @@ class SessionManagerTest {
             sessionsRoot = workspace,
             repository = repository,
         )
-        manager.loadOrCreate(workspace)
+        manager.loadSessions(workspace)
         val original = manager.activeSession()
 
         val selected = manager.startSessionInWorkspace(original, workspace)
@@ -261,7 +262,7 @@ class SessionManagerTest {
             sessionsRoot = workspace,
             repository = repository,
         )
-        manager.loadOrCreate(workspace)
+        manager.loadSessions(workspace)
         val original = manager.activeSession()
 
         val created = manager.startNewSessionInWorkspace(workspace)
@@ -295,7 +296,7 @@ class SessionManagerTest {
             sessionsRoot = firstWorkspace,
             repository = repository,
         )
-        manager.loadOrCreate(firstWorkspace)
+        manager.loadSessions(firstWorkspace)
         val original = manager.activeSession()
         original.conversationHistory = listOf(AgentMessage.User("keep me"))
         original.usedTokens = 42
@@ -333,10 +334,10 @@ class SessionManagerTest {
             repository = repository,
         )
 
-        manager.loadOrCreate(workspace)
+        manager.loadSessions(workspace)
         manager.switchTo(1)
         val sessionObjects = manager.sessions.toList()
-        manager.loadOrCreate(workspace)
+        manager.loadSessions(workspace)
         manager.invalidateRuntimes()
 
         assertEquals(1, repository.loadCalls)
@@ -349,7 +350,8 @@ class SessionManagerTest {
         val workspace = testWorkspace()
         val sessionsRoot = Files.createTempDirectory("kagent-session-todo-delete")
         val manager = SessionManager(denyAll, sessionsRoot)
-        manager.loadOrCreate(workspace)
+        manager.loadSessions(workspace)
+        manager.startNewSessionInWorkspace(workspace)
         val original = manager.activeSession()
         val todoPath = TodoFiles.forSession(original.sessionFile)
         TodoStore(todoPath).applyOperations(
@@ -366,6 +368,65 @@ class SessionManagerTest {
         assertTrue(Files.exists(todoPath))
         assertTrue(manager.deleteSession(manager.sessions.indexOf(original)))
         assertFalse(Files.exists(todoPath))
+    }
+
+    @Test
+    fun emptyHistoryDoesNotCreateFilesAndLastSessionCanBeDeleted() = runBlocking {
+        val root = Files.createTempDirectory("kagent-empty-session-test")
+        val workspace = testWorkspace()
+        SessionManager(denyAll, root).use { manager ->
+            manager.loadSessions(workspace)
+            assertTrue(manager.initialized)
+            assertTrue(manager.sessions.isEmpty())
+            assertEquals(-1, manager.activeSessionIndex)
+            assertEquals(null, manager.activeSessionOrNull())
+            Files.list(root).use { assertEquals(0L, it.count()) }
+            val selected = ModelSelection("openrouter", "explicit-model", 123_456, false)
+            val session = manager.startNewSessionInWorkspace(workspace, selected)
+            assertEquals(selected, session.modelSelection)
+            assertTrue(manager.deleteSession(0))
+            assertTrue(manager.sessions.isEmpty())
+            assertEquals(null, manager.activeSessionOrNull())
+            Files.list(root).use { assertEquals(0L, it.count()) }
+        }
+    }
+
+    @Test
+    fun firstCreationFailureLeavesAnInitializedEmptyManager() = runBlocking {
+        val workspace = testWorkspace()
+        val repository = InMemorySessionRepository(emptyList(), IllegalStateException("create failed"))
+        SessionManager(denyAll, workspace, repository).use { manager ->
+            manager.loadSessions(workspace)
+            assertFailsWith<IllegalStateException> { manager.startNewSessionInWorkspace(workspace) }
+            assertTrue(manager.initialized)
+            assertTrue(manager.sessions.isEmpty())
+            assertEquals(null, manager.activeSessionOrNull())
+        }
+    }
+
+    @Test
+    fun cancellationWhileReturningCreatedFilesRollsBackTheUnpublishedSession() = runBlocking {
+        val root = Files.createTempDirectory("kagent-cancel-create")
+        val submission = Job()
+        var writtenBeforeCancellation = 0L
+        val dispatcher = object : kotlinx.coroutines.CoroutineDispatcher() {
+            override fun dispatch(context: kotlin.coroutines.CoroutineContext, block: Runnable) {
+                val count = Files.list(root).use { it.count() }
+                if (count > 0 && !submission.isCancelled) {
+                    writtenBeforeCancellation = count
+                    submission.cancel()
+                }
+                block.run()
+            }
+        }
+        val repository = FileSessionRepository(root)
+        assertFailsWith<kotlinx.coroutines.CancellationException> {
+            kotlinx.coroutines.withContext(submission + dispatcher) {
+                repository.create(root, "draft", ModelSelection("deepseek", "selected"))
+            }
+        }
+        assertTrue(writtenBeforeCancellation > 0)
+        Files.list(root).use { assertEquals(0L, it.count()) }
     }
 
     private fun testWorkspace(): Path {

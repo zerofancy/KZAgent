@@ -163,9 +163,9 @@ internal fun KZAgentNavigationView(
             menuItems = {
                 item(key = "new-session") {
                     MenuItem(
-                        selected = false,
+                        selected = activeIndex == -1 && !settingsSelected && !skillsSelected,
                         onClick = { runDestinationAction(onAddSession) },
-                        text = { FluentText("新建会话", maxLines = 1) },
+                        text = { FluentText("创建新会话", maxLines = 1) },
                         icon = { FluentIcon(Icons.Default.Add, contentDescription = null) },
                     )
                 }

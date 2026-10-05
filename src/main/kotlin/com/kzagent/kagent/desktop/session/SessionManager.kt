@@ -97,7 +97,7 @@ class SessionManager internal constructor(
     private val createRuntime: ((SessionData, AgentObserver) -> AgentRuntime)? = null,
 ) : AutoCloseable {
     val sessions: SnapshotStateList<SessionData> = mutableStateListOf()
-    var activeSessionIndex by mutableStateOf(0)
+    var activeSessionIndex by mutableStateOf(-1)
         private set
     var initialized by mutableStateOf(false)
         private set
@@ -112,20 +112,10 @@ class SessionManager internal constructor(
         defaultModel = selection
     }
 
-    /** Loads sessions once. Recomposition and configuration refreshes reuse this manager instance. */
-    suspend fun loadOrCreate(
-        defaultWorkspace: Path,
-        createStartupSession: Boolean = false,
-    ) {
+    /** Loads history without creating an empty session. */
+    suspend fun loadSessions(defaultWorkspace: Path) {
         if (initialized) return
-        val existing = repository.loadAll(defaultWorkspace)
-        val stored = if (createStartupSession) {
-            listOf(repository.create(defaultWorkspace, "新会话 ${existing.size + 1}", defaultModel)) + existing
-        } else {
-            existing.ifEmpty {
-                listOf(repository.create(defaultWorkspace, "新会话 1", defaultModel))
-            }
-        }
+        val stored = repository.loadAll(defaultWorkspace)
         sessions.clear()
         sessions.addAll(stored.map { storedSession ->
             if (storedSession.modelSelection == null) {
@@ -133,7 +123,7 @@ class SessionManager internal constructor(
             }
             toSessionData(storedSession, storedSession.modelSelection ?: defaultModel)
         })
-        activeSessionIndex = 0
+        activeSessionIndex = if (sessions.isEmpty()) -1 else 0
         initialized = true
     }
 
@@ -145,10 +135,10 @@ class SessionManager internal constructor(
     }
 
     /** Creates and activates a fresh session even when [workspace] is already active. */
-    suspend fun startNewSessionInWorkspace(workspace: Path): SessionData {
+    suspend fun startNewSessionInWorkspace(workspace: Path, selection: ModelSelection = defaultModel): SessionData {
         val normalized = workspace.toAbsolutePath().normalize()
-        val stored = repository.create(normalized, "新会话 ${sessions.size + 1}", defaultModel)
-        val created = toSessionData(stored, defaultModel)
+        val stored = repository.create(normalized, "新会话 ${sessions.size + 1}", selection)
+        val created = toSessionData(stored, selection)
         sessions.add(0, created)
         activeSessionIndex = 0
         return created
@@ -227,7 +217,7 @@ class SessionManager internal constructor(
     }
 
     suspend fun deleteSession(index: Int): Boolean {
-        if (sessions.size <= 1 || index !in sessions.indices) return false
+        if (index !in sessions.indices) return false
         val session = sessions[index]
         session.currentJob?.cancelAndJoin()
         session.titleJob?.cancelAndJoin()
@@ -242,7 +232,9 @@ class SessionManager internal constructor(
         return true
     }
 
-    fun activeSession(): SessionData = sessions[activeSessionIndex]
+    fun activeSessionOrNull(): SessionData? = sessions.getOrNull(activeSessionIndex)
+
+    fun activeSession(): SessionData = requireNotNull(activeSessionOrNull()) { "没有活动会话" }
 
     override fun close() {
         closed = true

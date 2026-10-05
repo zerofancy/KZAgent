@@ -17,6 +17,7 @@ import java.util.UUID
 import java.util.stream.Collectors
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 internal data class StoredSession(
@@ -57,24 +58,40 @@ internal class FileSessionRepository(
             }
         }
 
-    override suspend fun create(workspace: Path, name: String, modelSelection: ModelSelection?): StoredSession =
-        withContext(ioDispatcher) {
-            Files.createDirectories(sessionsRoot)
-            val id = "session-${UUID.randomUUID()}"
-            val file = sessionsRoot.resolve("$id.jsonl")
-            Files.createFile(file)
-            val stored = StoredSession(
-                id = id,
-                name = name,
-                workspace = workspace.toAbsolutePath().normalize(),
-                sessionFile = file,
-                modelSelection = modelSelection,
-            )
-            writeMetadata(nameFile(file), stored.name)
-            writeMetadata(workspaceFile(file), stored.workspace.toString())
-            modelSelection?.let { writeModel(modelFile(file), it) }
-            stored
+    override suspend fun create(workspace: Path, name: String, modelSelection: ModelSelection?): StoredSession {
+        var createdFile: Path? = null
+        try {
+            return withContext(ioDispatcher) {
+                Files.createDirectories(sessionsRoot)
+                val id = "session-${UUID.randomUUID()}"
+                val file = sessionsRoot.resolve("$id.jsonl")
+                val stored = StoredSession(
+                    id = id,
+                    name = name,
+                    workspace = workspace.toAbsolutePath().normalize(),
+                    sessionFile = file,
+                    modelSelection = modelSelection,
+                )
+                Files.createFile(file)
+                createdFile = file
+                writeMetadata(nameFile(file), stored.name)
+                writeMetadata(workspaceFile(file), stored.workspace.toString())
+                modelSelection?.let { writeModel(modelFile(file), it) }
+                stored
+            }
+        } catch (failure: Throwable) {
+            // Cancellation can arrive when IO returns to the caller, after all files
+            // were written. Keep rollback outside withContext to cover that boundary.
+            withContext(NonCancellable + ioDispatcher) {
+                createdFile?.let { file ->
+                    listOf(file, nameFile(file), workspaceFile(file), modelFile(file)).forEach { path ->
+                        runCatching { Files.deleteIfExists(path) }.exceptionOrNull()?.let(failure::addSuppressed)
+                    }
+                }
+            }
+            throw failure
         }
+    }
 
     override suspend fun updateName(sessionFile: Path, name: String) {
         withContext(ioDispatcher) {

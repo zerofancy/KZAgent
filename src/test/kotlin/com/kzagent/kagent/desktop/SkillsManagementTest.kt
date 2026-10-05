@@ -20,7 +20,8 @@ class SkillsManagementTest {
     @Test fun savesMergeAndFailurePreservesPublishedState() = runBlocking {
         val root = Files.createTempDirectory("skills-settings")
         SessionManager(AlwaysApprovePolicy, root).use { manager ->
-            manager.loadOrCreate(root)
+            manager.loadSessions(root)
+            manager.startNewSessionInWorkspace(root)
             val session = manager.activeSession()
             val running = Job()
             session.currentJob = running

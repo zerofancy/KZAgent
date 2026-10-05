@@ -78,4 +78,56 @@ class DesktopSessionCallbacksTest {
             Files.deleteIfExists(sessionsRoot)
         }
     }
+    @Test
+    fun draftPreferencesPersistWithoutCreatingSessionsOrDismissingPage() = runBlocking {
+        val root = Files.createTempDirectory("kagent-draft-config-test")
+        val policy = ApprovalPolicy { ApprovalResult(ApprovalDecision.DENY, ApprovalSource.HUMAN, "test") }
+        SessionManager(policy, root).use { manager ->
+            manager.loadSessions(root)
+            var writes = 0
+            var dismissals = 0
+            val state = DesktopSessionSettingsState(manager, this, { dismissals++ }, {}, { writes++ })
+            try {
+                val config = AppConfig(apiKey = "test-placeholder")
+                state.savedConfig = config
+                val selected = config.defaultModel.copy(modelId = "draft-model")
+                state.commitNewSessionPreferences(selected, com.kzagent.kagent.tools.ApprovalMode.MANUAL)
+                assertEquals(selected, state.savedConfig?.defaultModel)
+                assertEquals(com.kzagent.kagent.tools.ApprovalMode.MANUAL, state.savedConfig?.approvalMode)
+                assertEquals(1, writes)
+                assertEquals(0, dismissals)
+                assertTrue(manager.sessions.isEmpty())
+                val session = manager.startNewSessionInWorkspace(root, selected)
+                session.isBusy = true
+                assertFailsWith<IllegalStateException> {
+                    state.commitNewSessionPreferences(selected, com.kzagent.kagent.tools.ApprovalMode.AUTO)
+                }
+                assertEquals(1, writes)
+                state.commitNewSessionPreferences(selected, com.kzagent.kagent.tools.ApprovalMode.MANUAL)
+                assertTrue(session.isBusy)
+            } finally { state.close() }
+        }
+    }
+
+    @Test
+    fun draftConfigurationWriteFailureAndMissingProviderLeaveStateUntouched() = runBlocking {
+        val root = Files.createTempDirectory("kagent-draft-config-failure")
+        val policy = ApprovalPolicy { ApprovalResult(ApprovalDecision.DENY, ApprovalSource.HUMAN, "test") }
+        SessionManager(policy, root).use { manager ->
+            val config = AppConfig(apiKey = "test-placeholder")
+            val state = DesktopSessionSettingsState(manager, this, {}, {}, { error("write failed") })
+            try {
+                state.savedConfig = config
+                assertFailsWith<IllegalArgumentException> {
+                    state.commitNewSessionPreferences(config.defaultModel.copy(provider = "removed"), config.approvalMode)
+                }
+                assertFailsWith<IllegalStateException> {
+                    state.commitNewSessionPreferences(config.defaultModel.copy(modelId = "draft"), config.approvalMode)
+                }
+                assertSame(config, state.savedConfig)
+                assertTrue(manager.sessions.isEmpty())
+            } finally { state.close() }
+        }
+    }
+
 }

@@ -11,7 +11,7 @@ fun main(args: Array<String>) {
     when (val request = LaunchModeResolver.resolve(args)) {
         is LaunchRequest.Desktop -> runDesktopApp(
             initialWorkspace = request.initialWorkspace,
-            createStartupSession = request.createStartupSession,
+            openStartupWorkspace = request.openStartupWorkspace,
         )
         is LaunchRequest.Cli -> {
             WindowsParentConsole.attachIfNeeded()
@@ -23,7 +23,7 @@ fun main(args: Array<String>) {
 sealed interface LaunchRequest {
     data class Desktop(
         val initialWorkspace: Path,
-        val createStartupSession: Boolean,
+        val openStartupWorkspace: Boolean,
     ) : LaunchRequest
 
     data class Cli(val args: Array<String>) : LaunchRequest {
@@ -54,11 +54,11 @@ object LaunchModeResolver {
         return when {
             args.firstOrNull() == "app" -> LaunchRequest.Desktop(
                 initialWorkspace = workspace,
-                createStartupSession = true,
+                openStartupWorkspace = true,
             )
             args.isEmpty() && !packagedAppPath.isNullOrBlank() -> LaunchRequest.Desktop(
                 initialWorkspace = workspace,
-                createStartupSession = false,
+                openStartupWorkspace = false,
             )
             args.isEmpty() -> LaunchRequest.Cli(arrayOf("chat"))
             else -> LaunchRequest.Cli(args.copyOf())

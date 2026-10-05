@@ -32,7 +32,8 @@ class SkillsRuntimeTest {
             created++
             runtime(session) { closed++ }
         }).use { manager ->
-            manager.loadOrCreate(root)
+            manager.loadSessions(root)
+            manager.startNewSessionInWorkspace(root)
             val session = manager.activeSession()
             SessionWriter(session.sessionFile).append(AgentMessage.Summary("compressed history"))
             session.reloadSavedHistory()
@@ -74,7 +75,8 @@ class SkillsRuntimeTest {
             created++
             runtime(session) { closed++ }
         }).use { manager ->
-            manager.loadOrCreate(root)
+            manager.loadSessions(root)
+            manager.startNewSessionInWorkspace(root)
             coroutineScope { repeat(5) { launch { manager.ensureRuntime(manager.activeSession(), NoOpAgentObserver, true) } } }
             assertEquals(1, created)
         }
@@ -91,7 +93,8 @@ class SkillsRuntimeTest {
             check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
             runtime(session) { closed++ }
         }).use { manager ->
-            manager.loadOrCreate(root)
+            manager.loadSessions(root)
+            manager.startNewSessionInWorkspace(root)
             val init = launch { manager.ensureRuntime(manager.activeSession(), NoOpAgentObserver) }
             started.await()
             init.cancel()

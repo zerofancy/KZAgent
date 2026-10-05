@@ -108,7 +108,7 @@ CLI 首次运行 `chat`（含无参数运行）或 `ask` 时，若缺少 Provide
 # 交互式多轮对话（等同于 chat）
 ./gradlew run
 
-# 启动桌面应用，在当前目录创建新会话
+# 启动桌面应用，预选当前工作区并进入开始新会话界面
 ./gradlew run --args="app"
 
 # 单次提问
@@ -143,12 +143,12 @@ Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本�
 ./gradlew run --args="app"
 ```
 
-命令行启动 GUI 时会创建一个空白新会话，并把命令的启动目录设为该会话的工作区。从操作系统桌面图标启动已安装应用时则保持原有行为，加载历史并激活最近会话。桌面 GUI 在同一用户下只运行一个实例；已有窗口时再次执行 `kza app`，新进程会把当前目录转发给原窗口并退出，原窗口恢复到前台并创建对应的新会话。通过桌面图标或 Dock 无参数重复启动时只恢复原窗口，不创建会话。
+桌面应用启动后显示“开始新会话”页面，加载历史会话但不自动创建空会话。命令行启动 GUI 时预选启动目录作为工作区。桌面 GUI 在同一用户下只运行一个实例；已有窗口时再次执行 `kza app`，原窗口恢复到前台并进入开始页，预选转发的目录，保留未发送草稿。通过桌面图标或 Dock 重复启动只恢复原窗口。
 
 桌面端支持：
 
 - 使用 Compose Fluent + Material 3 双主题桥接的 Fluent UI 桌面界面；弹出确认、会话重命名/删除、Todo 和人工审批统一使用 Fluent ContentDialog，完整 NavigationView 会在宽屏显示固定左栏、窄屏切换为紧凑浮层，并支持亮/暗主题
-- 命令行启动 GUI 时使用启动目录作为新会话工作区；已有 GUI 时会把目录转发给原窗口并始终创建新会话，即使该目录与当前工作区相同；手动切换到其他目录时也会创建独立的新会话，原工作区会话及历史保持不变
+- “创建新会话”和“切换工作区”进入开始页；可选择已有工作区或打开文件夹、模型、审批方式并输入任务，首次有效发送才创建会话。草稿在本次应用运行期间保留，关闭应用后不保存。审批方式为全局设置，提交后对所有会话生效；其他任务运行时不能通过开始页更改全局审批方式。创建失败保留草稿，创建后的模型请求失败留在已创建会话，可在该会话重试。
 - 加载最新 `.kagent/sessions/` 历史用于续聊，支持多会话管理
 - 会话列表、消息历史、设置和审批详情等滚动区域均提供可拖拽的桌面滚动条；切换会话时消息历史自动定位到底部，聊天区还提供顶部/底部快捷跳转按钮
 - Markdown 超宽表格提供独立、可拖拽的横向滚动条，单元格内容会换行完整展示
@@ -175,7 +175,7 @@ Windows 上的 CLI 子命令使用安装包内的控制台 Java 启动器，以�
 kza                         # 等同于 kza chat
 kza ask "分析当前项目"       # 单次提问
 kza chat                    # 交互式对话并恢复最近会话
-kza app                     # 在当前目录创建新会话并启动 GUI
+kza app                     # 在当前目录打开开始新会话界面并启动 GUI
 ```
 
 应用可以幂等更新自己安装的命令。若 PATH 中已经存在其他来源的 `kza`，为避免覆盖用户文件，安装会停止并显示冲突路径。
@@ -275,8 +275,8 @@ workspace/
 | **ModelCatalogService** | `llm/ModelCatalogService.kt` | 在线加载并规范化 DeepSeek/OpenRouter 模型目录与能力元数据 |
 | **SessionWriter** | `agent/SessionWriter.kt` | 以 JSONL 格式将消息流写入会话文件 |
 | **SessionReader** | `agent/SessionReader.kt` | 从会话文件读取历史消息，恢复对话上下文 |
-| **DesktopApp** | `desktop/DesktopApp.kt` | Compose Desktop 桌面聊天界面 |
-| **SessionManager** | `desktop/SessionManager.kt` | 桌面端多会话管理：新建、切换、重命名、删除 |
+| **DesktopSessionHost** | `desktop/app/DesktopSessionHost.kt` | 桌面入口与模块组装；页面状态、副作用、页面内容、会话执行、导航与弹窗绑定分别位于 `DesktopSessionUiState`、`DesktopSessionEffects`、`DesktopSessionPane`、`DesktopConversation` 和 `DesktopSessionBindings` |
+| **SessionManager** | `desktop/session/SessionManager.kt` | 桌面端多会话管理：新建、切换、重命名、删除 |
 | **AppConfigLoader** | `config/AppConfig.kt` | 从用户配置文件 / 环境变量加载配置 |
 | **LocalTools** | `tools/LocalTools.kt` | 本地及网页工具的统一注册 |
 | **WebPageService** | `tools/WebPageService.kt` | 公网静态页面请求、SSRF 防护、解析与正文提取子代理 |
@@ -392,7 +392,7 @@ Agent 可以通过以下工具与工作区和公开网页交互：
 
 | 模式 | 行为 |
 |------|------|
-| 桌面图标启动 | 自动加载所有历史会话，按最近修改排序，默认激活最新会话；支持侧边栏**多会话管理**（新建、切换、重命名、删除） |
+| 桌面图标启动 | 自动加载所有历史会话，按最近修改排序，默认显示开始新会话页面；支持侧边栏**多会话管理**（新建、切换、重命名、删除） |
 | CLI `app` | 自动创建一个空白会话，以启动目录作为工作区，并保留全部历史会话 |
 | CLI `chat` | 无初始问题时加载**最近一次会话历史**，实现断点续聊；带初始问题时从空白上下文开始 |
 | CLI `ask` | **不加载历史**，每次独立执行 |

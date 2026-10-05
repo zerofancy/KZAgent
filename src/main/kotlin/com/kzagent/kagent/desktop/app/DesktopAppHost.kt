@@ -63,7 +63,7 @@ private fun applyLinuxDpiScale() {
 
 fun runDesktopApp(
     initialWorkspace: Path,
-    createStartupSession: Boolean,
+    openStartupWorkspace: Boolean,
 ) {
     applyLinuxDpiScale()
     System.setProperty("apple.awt.application.name", "KZAgent")
@@ -77,7 +77,7 @@ fun runDesktopApp(
     }
     val initialRequest = desktopLaunchRequest(
         initialWorkspace,
-        createStartupSession
+        openStartupWorkspace
     )
     val instanceStart = DesktopSingleInstanceCoordinator.startOrForward(
         lockFile = AppDataDir.appDir().resolve("desktop-instance.lock"),
@@ -136,7 +136,7 @@ fun runDesktopApp(
                 setContent {
                     KZAgentDesktopApp(
                         initialWorkspace = initialWorkspace,
-                        createStartupSession = createStartupSession,
+                        openStartupWorkspace = openStartupWorkspace,
                         instanceCoordinator = instanceCoordinator,
                         activateWindow = {
                             SwingUtilities.invokeLater {

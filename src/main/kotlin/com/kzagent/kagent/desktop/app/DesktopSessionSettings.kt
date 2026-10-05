@@ -154,6 +154,23 @@ internal class DesktopSessionSettingsState(
         }
     }
 
+    /** Commit draft preferences before creating a session, without navigating away. */
+    suspend fun commitNewSessionPreferences(selection: ModelSelection, mode: ApprovalMode) = saveMutex.withLock {
+        val current = savedConfig ?: error("请先完成模型设置")
+        require(current.provider(selection.provider) != null && selection.modelId.isNotBlank()) { "模型配置不可用，请重新选择模型" }
+        val approvalChanged = current.approvalMode != mode
+        check(!approvalChanged || sessionManager.sessions.none { it.isBusy }) {
+            "其他会话正在运行，请等待任务结束或选回当前审批方式"
+        }
+        val updated = current.copy(defaultModel = selection, approvalMode = mode)
+        withContext(NonCancellable) {
+            withContext(Dispatchers.IO) { writeConfig(updated) }
+            savedConfig = updated
+            sessionManager.updateDefaultModel(selection)
+            if (approvalChanged) sessionManager.invalidateRuntimes()
+        }
+    }
+
     /** Update the app-wide approval mode and persist the change. */
     fun onApprovalModeChanged(mode: ApprovalMode) {
         val current = savedConfig ?: return

@@ -29,11 +29,11 @@ class LaunchModeResolverTest {
             ),
         )
         assertEquals(workspace.toAbsolutePath().normalize(), request.initialWorkspace)
-        assertFalse(request.createStartupSession)
+        assertFalse(request.openStartupWorkspace)
     }
 
     @Test
-    fun appArgStartsDesktopWithFreshSessionInCurrentDirectory() {
+    fun appArgStartsDesktopWithWorkspaceIntentInCurrentDirectory() {
         val workspace = Path.of("build", "cli-app-workspace")
         val request = assertIs<LaunchRequest.Desktop>(
             LaunchModeResolver.resolve(
@@ -43,7 +43,7 @@ class LaunchModeResolverTest {
             ),
         )
         assertEquals(workspace.toAbsolutePath().normalize(), request.initialWorkspace)
-        assertTrue(request.createStartupSession)
+        assertTrue(request.openStartupWorkspace)
     }
 
     @Test
@@ -64,11 +64,11 @@ class LaunchModeResolverTest {
 
         assertEquals(
             DesktopLaunchRequest.OpenWorkspace(workspace),
-            desktopLaunchRequest(workspace, createStartupSession = true),
+            desktopLaunchRequest(workspace, openStartupWorkspace = true),
         )
         assertEquals(
             DesktopLaunchRequest.Activate,
-            desktopLaunchRequest(workspace, createStartupSession = false),
+            desktopLaunchRequest(workspace, openStartupWorkspace = false),
         )
     }
 }
