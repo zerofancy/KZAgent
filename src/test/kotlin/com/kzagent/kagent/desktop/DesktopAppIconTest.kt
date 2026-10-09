@@ -2,14 +2,36 @@ package com.kzagent.kagent.desktop
 
 import com.kzagent.kagent.desktop.app.loadAppIcons
 import com.kzagent.kagent.desktop.app.selectTaskbarIcon
+import com.kzagent.kagent.desktop.app.shouldOverrideTaskbarIcon
 import java.awt.image.BufferedImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class DesktopAppIconTest {
+    @Test
+    fun packagedMacAppPreservesNativeDockIcon() {
+        assertFalse(shouldOverrideTaskbarIcon("Mac OS X", "/Applications/KZAgent.app/Contents/MacOS/KZAgent"))
+    }
+
+    @Test
+    fun developmentMacLaunchStillSetsApplicationIcon() {
+        assertTrue(shouldOverrideTaskbarIcon("Mac OS X", null))
+        assertTrue(shouldOverrideTaskbarIcon("Mac OS X", ""))
+        assertTrue(shouldOverrideTaskbarIcon("Mac OS X", "  "))
+    }
+
+    @Test
+    fun otherPlatformsKeepTaskbarIconOverride() {
+        for (osName in listOf("Windows 11", "Linux")) {
+            assertTrue(shouldOverrideTaskbarIcon(osName, "/packaged/KZAgent"))
+            assertTrue(shouldOverrideTaskbarIcon(osName, null))
+        }
+    }
+
     @Test
     fun bundledDockIconRetainsFullResolutionAlongsideWindowIcons() {
         val icons = loadAppIcons()

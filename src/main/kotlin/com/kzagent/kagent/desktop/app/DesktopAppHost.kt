@@ -119,7 +119,9 @@ fun runDesktopApp(
                 })
                 pack()
             }
-            setTaskbarIconIfSupported(selectTaskbarIcon(frame.iconImages))
+            if (shouldOverrideTaskbarIcon(System.getProperty("os.name"), System.getProperty("jpackage.app-path"))) {
+                setTaskbarIconIfSupported(selectTaskbarIcon(frame.iconImages))
+            }
             desktopLog("JFrame created")
             installMacAppReopenHandler(frame, windowLifecycle)
             showWindowInForeground(frame)
@@ -248,9 +250,14 @@ internal fun selectTaskbarIcon(icons: List<Image>): Image? =
     icons.maxByOrNull { it.getWidth(null).toLong() * it.getHeight(null) }
 
 /**
- * On macOS the Dock icon must be set explicitly via [java.awt.Taskbar]; the
- * JFrame icon alone is not enough.
+ * A packaged macOS app already has a native ICNS icon. Replacing it with the
+ * full-bleed window PNG bypasses the system's icon presentation and makes the
+ * running icon larger than the inactive one. Development launches still need
+ * an explicit icon because they have no application bundle icon.
  */
+internal fun shouldOverrideTaskbarIcon(osName: String, packagedLauncherPath: String?): Boolean =
+    !osName.lowercase().contains("mac") || packagedLauncherPath.isNullOrBlank()
+
 private fun setTaskbarIconIfSupported(icon: Image?) {
     if (icon == null) return
     runCatching {
