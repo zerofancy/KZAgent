@@ -82,15 +82,27 @@ object SkillCatalog {
     fun uninstall(root: Path, entry: SkillEntry) {
         require(canUninstall(root, entry)) { "仅允许卸载默认目录的用户 skill" }
         val base = root.toAbsolutePath().normalize()
-        val target = requireNotNull(entry.directory).toAbsolutePath().normalize()
-        // Real-path equality also rejects Windows junctions and aliases, not just symbolic links.
-        require(base.toRealPath() == base && target.toRealPath() == target && !Files.isSymbolicLink(target)) { "不能删除链接目录" }
+        val realBase = base.toRealPath()
+        // Resolve aliases in ancestors (e.g. macOS /var -> /private/var), but
+        // still reject a symlink or junction at the skill root itself.
+        val expectedBase = base.parent?.toRealPath()?.resolve(base.fileName) ?: realBase
+        require(!Files.isSymbolicLink(base) && realBase == expectedBase) { "不能删除链接目录" }
+        val entryPath = requireNotNull(entry.directory).toAbsolutePath().normalize()
+        val target = realBase.resolve(entryPath.fileName)
+        // Resolve only the trusted root: resolving the target first would hide
+        // a link to another skill or an external directory.
+        require(!Files.isSymbolicLink(target) && target.toRealPath() == target) { "不能删除链接目录" }
         Files.walkFileTree(target, object : SimpleFileVisitor<Path>() {
             override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
                 require(dir.toRealPath() == dir && dir.startsWith(target)) { "拒绝越界或链接目录" }
                 return FileVisitResult.CONTINUE
             }
             override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                // walkFileTree does not follow symbolic links; reject them here
+                // as well, since directory links are delivered as visitFile.
+                require(!attrs.isSymbolicLink && file.toRealPath() == file && file.startsWith(target)) {
+                    "拒绝越界或链接文件"
+                }
                 Files.delete(file)
                 return FileVisitResult.CONTINUE
             }

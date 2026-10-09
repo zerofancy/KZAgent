@@ -77,4 +77,63 @@ class SkillCatalogTest {
         assertFailsWith<IllegalArgumentException> { SkillCatalog.uninstall(root, entry) }
         assertTrue(Files.exists(outside.resolve("external/SKILL.md")))
     }
+
+    @Test fun uninstallAllowsAncestorAliasAndNormalizesEntryPath() {
+        val workspace = Files.createTempDirectory("skills-ancestor-alias").toRealPath()
+        val realParent = Files.createDirectory(workspace.resolve("real"))
+        val alias = workspace.resolve("alias")
+        if (runCatching { Files.createSymbolicLink(alias, realParent) }.isFailure) return
+        val root = Files.createDirectory(alias.resolve("skills"))
+        val target = skill(root, "owned")
+        Files.createDirectories(target.resolve("nested"))
+        Files.writeString(target.resolve("nested/file.txt"), "data")
+        val sibling = skill(root, "sibling")
+        val owned = SkillCatalog.scan(root, SkillsConfig()).single { it.manifest?.name == "owned" }
+
+        SkillCatalog.uninstall(root, owned.copy(directory = target.resolve(".")))
+
+        assertFalse(Files.exists(target))
+        assertTrue(Files.exists(root))
+        assertTrue(Files.exists(sibling.resolve("SKILL.md")))
+    }
+
+    @Test fun linkedSkillRootCannotBeUninstalled() {
+        val workspace = Files.createTempDirectory("skills-root-link").toRealPath()
+        val realRoot = Files.createDirectory(workspace.resolve("real"))
+        val target = skill(realRoot, "owned")
+        val alias = workspace.resolve("alias")
+        if (runCatching { Files.createSymbolicLink(alias, realRoot) }.isFailure) return
+        val owned = SkillCatalog.scan(alias, SkillsConfig()).single { it.origin == SkillOrigin.USER }
+
+        assertFailsWith<IllegalArgumentException> { SkillCatalog.uninstall(alias, owned) }
+        assertTrue(Files.exists(target.resolve("SKILL.md")))
+    }
+
+    @Test fun linkToSiblingSkillCannotBeUninstalled() {
+        val root = Files.createTempDirectory("skills-sibling-link").toRealPath()
+        val target = skill(root, "owned")
+        val link = root.resolve("link")
+        if (runCatching { Files.createSymbolicLink(link, target) }.isFailure) return
+        val entry = SkillCatalog.scan(root, SkillsConfig()).single { it.directory == link }
+
+        assertFailsWith<IllegalArgumentException> { SkillCatalog.uninstall(root, entry) }
+        assertTrue(Files.exists(target.resolve("SKILL.md")))
+    }
+
+    @Test fun nestedLinksCannotDeleteExternalContent() {
+        for (directoryLink in listOf(true, false)) {
+            val root = Files.createTempDirectory("skills-nested-link").toRealPath()
+            val outside = Files.createTempDirectory("skills-nested-external").toRealPath()
+            val externalFile = Files.writeString(outside.resolve("keep.txt"), "keep")
+            val target = skill(root, "owned")
+            val link = target.resolve("link")
+            val destination = if (directoryLink) outside else externalFile
+            if (runCatching { Files.createSymbolicLink(link, destination) }.isFailure) return
+            val owned = SkillCatalog.scan(root, SkillsConfig()).single { it.origin == SkillOrigin.USER }
+
+            assertFailsWith<IllegalArgumentException> { SkillCatalog.uninstall(root, owned) }
+            assertEquals("keep", Files.readString(externalFile))
+            assertTrue(Files.isSymbolicLink(link))
+        }
+    }
 }
