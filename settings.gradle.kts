@@ -1,5 +1,8 @@
 pluginManagement {
     repositories {
+        maven("https://jitpack.io") {
+            content { includeGroup("com.github.zerofancy") }
+        }
         google {
             mavenContent {
                 includeGroupAndSubgroups("androidx")
@@ -9,6 +12,13 @@ pluginManagement {
         }
         mavenCentral()
         gradlePluginPortal()
+    }
+    resolutionStrategy {
+        eachPlugin {
+            if (requested.id.id == "io.github.zerofancy.compose-desktop-keep-kit") {
+                useModule("com.github.zerofancy:ComposeDesktopKeepKit:${requested.version}")
+            }
+        }
     }
 }
 

@@ -123,6 +123,10 @@ CLI 首次运行 `chat`（含无参数运行）或 `ask` 时，若缺少 Provide
 
 ### 3. 打包桌面应用
 
+Release 的依赖 keep 规则由 [ComposeDesktopKeepKit](https://github.com/zerofancy/ComposeDesktopKeepKit) `v0.2.3` 按最终解析的依赖版本自动生成，通过 JitPack 加载插件，无需维护本地依赖 `.pro` 文件。仅保留 `compose-fluent.pro` 中针对当前 Compose Fluent / Haze 二进制兼容性的警告抑制。插件不改变 Compose 原有的优化和混淆开关。
+
+可运行 `.\gradlew.bat keepKitReport` 查看依赖匹配报告；插件生成的规则和报告存放在 Gradle 用户缓存中。
+
 Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本覆盖已安装版本：
 
 ```powershell

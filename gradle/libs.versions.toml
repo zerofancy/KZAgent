@@ -16,6 +16,7 @@ jsoup = "1.22.2"
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.9.0"
 jvm-target = "17"
+compose-desktop-keep-kit = "v0.2.3"
 
 [libraries]
 # NOTE: Compose Desktop's platform-aware dependency (compose.desktop.currentOs) is intentionally
@@ -73,6 +74,7 @@ jna = ["jna", "jna-platform"]
 coroutines = ["kotlinx-coroutines-core", "kotlinx-coroutines-swing"]
 
 [plugins]
+compose-desktop-keep-kit = { id = "io.github.zerofancy.compose-desktop-keep-kit", version.ref = "compose-desktop-keep-kit" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
