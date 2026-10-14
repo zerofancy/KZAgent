@@ -5,6 +5,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import com.kzagent.kagent.desktop.KZAgentFluentTheme
 import com.kzagent.kagent.desktop.SessionManager
+import com.kzagent.kagent.desktop.terminal.SessionTerminalManager
 import java.nio.file.Path
 
 @Composable
@@ -16,6 +17,7 @@ internal fun KZAgentDesktopApp(
 ) {
     val state = remember { DesktopSessionUiState(initialWorkspace) }
     val scope = rememberCoroutineScope()
+    val terminalManager = remember { SessionTerminalManager(factory = ::createDesktopTerminal) }
     val sessionManager = remember {
         SessionManager(state.approvalPolicy, userQuestionPrompter = state.userQuestionPrompter)
     }
@@ -29,15 +31,15 @@ internal fun KZAgentDesktopApp(
 
     DesktopSessionEffects(
         state, sessionManager, settingsState, initialWorkspace,
-        openStartupWorkspace, instanceCoordinator, activateWindow,
+        openStartupWorkspace, instanceCoordinator, activateWindow, terminalManager,
     )
 
     KZAgentFluentTheme {
         DesktopSessionNavigation(state, sessionManager, scope, initialWorkspace) {
-            DesktopSessionPane(state, sessionManager, settingsState, scope) { session, text ->
+            DesktopSessionPane(state, sessionManager, settingsState, scope, terminalManager) { session, text ->
                 sendDesktopSessionMessage(state, sessionManager, settingsState, scope, session, text)
             }
         }
     }
-    DesktopSessionDialogs(state, sessionManager, scope)
+    DesktopSessionDialogs(state, sessionManager, scope, terminalManager)
 }

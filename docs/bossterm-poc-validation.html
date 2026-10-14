@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BossTerm 接入 · PoC 验证记录</title><style>
+:root{color-scheme:light dark;--bg:#f5f6f8;--card:#fff;--text:#202735;--muted:#606b7a;--line:#dce1e8;--accent:#1763ba}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.8 system-ui,sans-serif}main{max-width:1100px;margin:auto;padding:36px 24px 70px}h1{font-size:32px;line-height:1.3}h2{margin-top:32px;font-size:22px}.meta{color:var(--muted)}.box{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:20px;margin:20px 0}a{color:var(--accent)}table{width:100%;border-collapse:collapse;font-size:14px}th,td{border:1px solid var(--line);padding:11px;text-align:left;vertical-align:top}th{background:var(--card)}.table{overflow:auto}code{font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}pre{white-space:pre-wrap;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px}li{margin:6px 0}@media(max-width:650px){main{padding:22px 16px}h1{font-size:27px}table{min-width:640px}}@media(prefers-color-scheme:dark){:root{--bg:#171b22;--card:#222832;--text:#edf1f6;--muted:#a7b2c1;--line:#3c4655;--accent:#83b9ff}}
+</style></head><body><main>
+<p class="meta">KZAgent · 2026-10-14 · 本地实施记录 · macOS ARM64 · 未提交</p><h1>BossTerm PoC 与会话面板接入</h1>
+<div class="box"><strong>结论：通过本机适配层 PoC，已接入底部终端。</strong><p>选用 BossTerm 1.2.183 的公开 ProperTerminal、TerminalSessionStack 和 TerminalSessionEngine，KZAgent 自行拥有会话、进程与生命周期。没有修改或 fork 上游源码，没有把终端交给 Agent 控制。</p><p>原高层 EmbeddableTerminal 没有通过菜单与清理门槛：它追加安装菜单，默认关闭还会留下忽略 HUP 的后台子进程。PoC 保留这两个负例；日志中的基线 FAIL 是预期观察结果，不能解释成原组件通过了验收。</p></div>
+<h2>1 · 版本与路线</h2><div class="table"><table><tr><th>项目</th><th>最终选择与证据</th></tr>
+<tr><td>Kotlin / JVM</td><td>编译插件保持 Kotlin 2.4.0，目标 JVM 17，实际解析 kotlin-stdlib 2.4.20；无需跳过 metadata 校验。原 Compose 1.11.1 插件的独立 PoC 能编译和渲染，但运行时会被提升到 1.12.1。</td></tr>
+<tr><td>Compose / serialization</td><td>主工程显式对齐 Compose 1.12.1、serialization 1.11.0；既有会话、配置、API 和压缩测试通过。</td></tr>
+<tr><td>BossTerm / native</td><td>固定 compose-desktop / core-jvm 1.2.183。显式引入 core 以支持对外类型的编译；排除 BossTerm 固定的 macOS ARM artifact，宿主 currentOs 负责 native 选择。当前仅解析 macOS ARM64 Skiko 0.150.1。</td></tr>
+<tr><td>菜单与配置</td><td>不构造 AI/VCS/shell 安装 provider；验证公开菜单构建函数仅产生复制、粘贴、全选、查找、清屏、清滚屏和打开文件夹。渲染器设置目录在首次初始化前重定向到应用数据目录 terminal/。实际原生菜单为 AWT/Swing，不能通过 Compose 语义树做像素级验收。</td></tr>
+</table></div>
+<h2>2 · 进程清理</h2><p>TerminalProcessPlatform 包装原生 handle，记录后代身份，关闭时先结束后代与 shell，宽限后强制清理。Unix 补充按 PTY 所属 session 查询成员，覆盖父 shell 立即退出后子进程被重新托管的情况；明确排除宿主应用自身的 session。<a href="https://man7.org/linux/man-pages/man2/getsid.2.html">getsid 接口</a>按 PID 返回 session ID；本机原生测试确认该策略与排除条件实际生效。</p><p>Engine、显示层、监听器和 scope 显式关闭，重复关闭等待同一次清理。根 Dispose 与 JVM shutdown hook 共用完成屏障。shell 自然退出后保留最后屏幕，拒绝新输入，只有显式重启才创建下一代进程。</p>
+<h2>3 · 已接入行为</h2><ul>
+<li>会话顶部按钮或 Ctrl + 反引号打开；每个 session id 一个终端，从 workspace 启动，首次打开才创建，最多同时运行 8 个。</li>
+<li>终端在聊天和右侧信息下方；拖拽分隔线调整比例，小窗口暂时隐藏并保留进程；使用 BossTerm 自己的可见滚动条与滚屏模型。</li>
+<li>折叠、切换会话/设置/模型保留进程。关闭、重启、删除会话和完全退出应用清理资源；删除等待期间按稳定 id 定位会话。</li>
+<li>工具栏、错误提示和确认弹窗使用 Fluent；恢复会话不抢 Composer 焦点，用户点击后激活。退出后保留输出。</li>
+<li>Agent run_command、审批、路径边界、JSONL、token 和压缩逻辑保持原样。终端不注册为 Agent 工具，不自动上传输出，不启用安装向导、MCP、分享、daemon、OSC 52 或 Kitty 文件传输。</li>
+<li>不注入 Provider 配置凭据，过滤已支持 Provider 的 API Key 环境变量及 OPENAI_API_KEY。错误不直接展示原生环境；链接仅允许用户主动打开 http/https。</li></ul>
+<h2>4 · 本机验证</h2><div class="table"><table><tr><th>验证</th><th>结果与边界</th></tr>
+<tr><td>主工程测试</td><td>248 项通过，0 失败/错误。含 10 项终端状态、布局、快捷键与生命周期测试，以及已有恢复、序列化、审批、压缩和 CLI 回归。</td></tr>
+<tr><td>PoC 测试</td><td>9 项通过，含真实 PTY cwd、resize、exit 7、重复关闭、启动中关闭、启动失败、顽固后台子进程、父 shell 立即退出、环境过滤与菜单模型；负例作为观察型测试保留。</td></tr>
+<tr><td>Compose 组件测试</td><td>1 项通过：恢复不抢焦点、鼠标激活、数字键/Enter 到 PTY、退出后缓冲保留及只读。命令前缀由受控 API 输入；不宣称覆盖真实字母输入法和多行粘贴。</td></tr>
+<tr><td>UI smoke / 原生查看</td><td>同一 SessionTerminalPanel 和 KZAgentFluentTheme 渲染成功，折叠恢复 PID 不变，正常 exit 7。另生成并查看独立 macOS PoC .app 的实际面板，确认按钮折叠/恢复与退出。</td></tr>
+<tr><td>最终打包</td><td>./gradlew test createDistributable createReleaseDistributable 成功；Debug、ProGuard Release app image 均生成。未把生成产物加入版本控制。</td></tr>
+<tr><td>混淆</td><td>PTY4J 和本地 LibC 接口显式 keep；只针对未使用的 Logback、GraalVM 注解、Ktor JWT 可选集成添加精确 dontwarn，没有全局忽略告警。</td></tr>
+</table></div>
+<h2>5 · 复现与落点</h2><p>在项目根目录运行：</p><pre><code># 项目回归与 app image
+./gradlew test createDistributable createReleaseDistributable
+
+# 原生 PoC、组件测试和自动退出 smoke
+./gradlew -p poc/bossterm test uiTest runPoc -PpocSmoke
+
+# 手动独立宿主，不读取 KZAgent Provider 配置
+./gradlew -p poc/bossterm runPoc</code></pre><p>实现位于 desktop/terminal/ 的 Manager、Handle、ProcessPlatform、UnixSession、SettingsProfile，以及 desktop/ui/SessionTerminalPanel.kt。根生命周期和会话编排位于 DesktopSessionHost / Effects / Conversation / Bindings；poc/bossterm/ 通过 source set 使用同一实现，不维护副本。</p>
+<h2>6 · 验证边界</h2><ul>
+<li>实际执行平台为 macOS ARM64。Windows/Linux 的原生启动、键盘、进程清理和安装器仍需对应平台验证；Unix 特定的 HUP/session/UI fixture 在 Windows 上明确跳过，不能算通过。</li>
+<li>真实中文输入法、多行粘贴、Ctrl+C 与复制组合键、TUI 备用屏幕、触控板、长时间高输出、长路径悬浮预览及原生菜单定位，尚未完成完整人工矩阵。</li>
+<li>本地终端按用户 OS 权限运行；通过自建 session/系统服务刻意脱离终端的进程不构成可靠收容对象，此集成不是进程沙箱。清理失败会报告。</li>
+<li>未签名、公证或对外发布。README 的双许可证与 POM LGPL 声明差异保留在 third-party/bossterm/NOTICE.txt，附两份原许可证；正式分发前核对适用范围。</li></ul>
+<p class="meta">未 commit、push 或创建 MR；原有 coding-agent-gap-analysis.html 保持不动。<a href="bossterm-session-terminal-spec.html">返回 Spec</a></p>
+</main></body></html>

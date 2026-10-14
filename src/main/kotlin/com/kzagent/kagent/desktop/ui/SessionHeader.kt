@@ -38,6 +38,7 @@ import com.kzagent.kagent.config.ModelSelection
 import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
 import io.github.composefluent.component.Text as FluentText
+import io.github.composefluent.component.Button as FluentButton
 import java.nio.file.Path
 
 @Composable
@@ -53,6 +54,8 @@ internal fun Header(
     onToggleSidePanel: () -> Unit,
     onModelChanged: (ModelSelection) -> Unit,
     onRefreshModels: () -> Unit,
+    terminalVisible: Boolean = false,
+    onToggleTerminal: () -> Unit = {},
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val useSingleRow = maxWidth >= 720.dp
@@ -74,6 +77,8 @@ internal fun Header(
                     onToggleSidePanel = onToggleSidePanel,
                     onModelChanged = onModelChanged,
                     onRefreshModels = onRefreshModels,
+                    terminalVisible = terminalVisible,
+                    onToggleTerminal = onToggleTerminal,
                 )
             }
         } else {
@@ -110,6 +115,8 @@ internal fun Header(
                     onRefreshModels = onRefreshModels,
                     modifier = Modifier.align(Alignment.End),
                     showModelSelector = false,
+                    terminalVisible = terminalVisible,
+                    onToggleTerminal = onToggleTerminal,
                 )
             }
         }
@@ -148,6 +155,8 @@ internal fun HeaderActions(
     onRefreshModels: () -> Unit,
     modifier: Modifier = Modifier,
     showModelSelector: Boolean = true,
+    terminalVisible: Boolean = false,
+    onToggleTerminal: () -> Unit = {},
 ) {
     Row(
         modifier = modifier,
@@ -171,6 +180,9 @@ internal fun HeaderActions(
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
         ) {
             Text(if (sidePanelVisible) "收起侧栏" else "展开侧栏", maxLines = 1)
+        }
+        FluentButton(onClick = onToggleTerminal, modifier = Modifier.height(32.dp)) {
+            FluentText(if (terminalVisible) "收起终端" else "展开终端", maxLines = 1)
         }
     }
 }

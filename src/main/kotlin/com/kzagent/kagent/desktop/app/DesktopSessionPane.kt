@@ -14,6 +14,7 @@ import com.kzagent.kagent.desktop.NewSessionDraft
 import com.kzagent.kagent.desktop.NewSessionScreen
 import com.kzagent.kagent.desktop.SessionData
 import com.kzagent.kagent.desktop.SessionManager
+import com.kzagent.kagent.desktop.terminal.SessionTerminalManager
 import com.kzagent.kagent.desktop.SettingsPanel
 import com.kzagent.kagent.desktop.SkillsPanel
 import com.kzagent.kagent.desktop.chooseWorkspace
@@ -29,6 +30,7 @@ internal fun DesktopSessionPane(
     sessionManager: SessionManager,
     settingsState: DesktopSessionSettingsState,
     scope: CoroutineScope,
+    terminalManager: SessionTerminalManager,
     onSend: (SessionData, String) -> Unit,
 ) {
     if (state.showSkills) {
@@ -132,6 +134,6 @@ internal fun DesktopSessionPane(
             },
         )
     } else {
-        DesktopConversation(state, sessionManager, settingsState, onSend)
+        DesktopConversation(state, sessionManager, settingsState, terminalManager, onSend)
     }
 }

@@ -93,7 +93,7 @@ internal fun SessionDialogs(
             title = "删除会话",
             visible = true,
             content = {
-                FluentText("确定要删除会话「$sessionName」吗？此操作不可撤销。")
+                FluentText("确定要删除会话「$sessionName」吗？会话终端及其中运行的进程也将结束。此操作不可撤销。")
             },
             primaryButtonText = "删除",
             closeButtonText = "取消",
@@ -200,11 +200,16 @@ internal fun handleDeleteSession(
     index: Int,
     sessionManager: SessionManager,
     scope: CoroutineScope,
+    beforeDelete: suspend (String) -> Unit = {},
     onError: (String) -> Unit,
 ) {
+    // Capture identity before the coroutine suspends; list indices may change during teardown.
+    val sessionId = sessionManager.sessions.getOrNull(index)?.id ?: return
     scope.launch {
         try {
-            sessionManager.deleteSession(index)
+            beforeDelete(sessionId)
+            val currentIndex = sessionManager.sessions.indexOfFirst { it.id == sessionId }
+            if (currentIndex >= 0) sessionManager.deleteSession(currentIndex)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {

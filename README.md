@@ -159,6 +159,9 @@ Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本�
 - NavigationView 底部提供**设置面板**入口；展开侧栏时，每个会话右侧直接提供重命名和删除按钮
 - 设置面板可将 `kza` 安装为当前用户的全局命令；应用只维护用户级命令目录和 PATH，不修改系统级 PATH
 - 主聊天页右侧提供可折叠的**会话侧边栏**，收纳审批模式下拉菜单、上下文进度与 Todo 面板，并由顶部按钮切换显隐
+- 会话顶部「展开终端」或「Ctrl + 反引号」打开 BossTerm 底部终端；首次展开从当前会话工作区启动 Shell，每个会话独立，最多同时运行 8 个。拖拽分隔线调整高度；窗口高度不足时暂时隐藏面板，进程继续运行。
+- 终端折叠、切换会话或修改模型时保留进程；「关闭」「重启」、删除会话和完全退出应用会清理终端及捕获到的子进程。macOS 仅关闭窗口仍保持驻留，`Command + Q` 才完全退出。终端状态和输出不跨应用启动恢复。
+- 本地终端按当前用户权限执行，初始目录不构成沙箱；Agent 的 `run_command` 仍使用原审批和执行链路，Agent 不控制此终端，终端输出不自动写入聊天历史或发给模型。终端不启用 BossTerm 的安装向导、MCP、分享、daemon、OSC 52 或文件传输；独立设置存于应用数据目录的 `terminal/`。
 - 启动时自动检测配置：如未设置 API Key 或配置加载失败，将**默认跳转到设置界面**，保存有效配置后再加载会话
 - 配置、历史会话和本地文件工具均在后台 IO 调度器中读写，加载或搜索大型工作区时不会阻塞桌面 UI
 - 在状态栏显示模型请求、工具执行和审批状态
@@ -515,10 +518,11 @@ MIMOCODE_API_KEY=sk-mimo-xxxxxxxxxxxx   # JSON 中未配置 MiMo Code 时生效
 | 技术 | 用途 |
 |------|------|
 | **Kotlin 2.4.0** + **JVM 17+** | 开发语言与运行时 |
-| **Compose Desktop 1.11.1** | 桌面应用 UI 与原生打包 |
+| **Compose Desktop 1.12.1** | 桌面应用 UI 与原生打包 |
+| **BossTerm 1.2.183 / PTY4J 0.13.13** | 会话底部交互终端、VT 解析和原生 PTY |
 | **Gradle** | 构建工具 |
 | **kotlinx-coroutines** | 异步编程（协程） |
-| **kotlinx-serialization** | JSON 序列化/反序列化 |
+| **kotlinx-serialization 1.11.0** | JSON 序列化/反序列化 |
 | **OkHttp 4.12.0** | Provider API 与静态网页的可取消网络请求、受控重定向和压缩传输 |
 | **Jsoup 1.22.2** | HTML/XML 解析、清理和链接解析 |
 | **DeepSeek / OpenRouter API** (OpenAI 兼容) | 可切换的 LLM 推理后端与模型目录 |
@@ -534,11 +538,16 @@ MIMOCODE_API_KEY=sk-mimo-xxxxxxxxxxxx   # JSON 中未配置 MiMo Code 时生效
 # 运行测试
 ./gradlew test
 
+# 独立终端 PoC（原生 PTY / Compose 组件 / 自动退出 smoke）
+./gradlew -p poc/bossterm test uiTest runPoc -PpocSmoke
+
 # 运行（需先配置 API Key）
 ./gradlew run --args="ask \"你好\""
 ```
 
 ---
+
+BossTerm 的结果与平台边界见 [PoC 验证记录](docs/bossterm-poc-validation.html)。
 
 ## License
 

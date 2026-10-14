@@ -1,0 +1,12 @@
+BossTerm 1.2.183
+https://github.com/kshivang/BossTerm
+Published modules: com.risaboss:bossterm-compose-desktop, com.risaboss:bossterm-core-jvm
+
+The upstream repository declares LGPLv3 / Apache 2.0 dual licensing and contains
+both license texts, reproduced here without modification. The Maven 1.2.183 POM
+declares LGPL 3.0. This notice preserves that distinction and does not relicense
+BossTerm or its transitive dependencies. Check the exact release's applicable
+license obligations before distributing KZAgent externally.
+
+Upstream source baseline inspected: 722965cc39e8492e06c08bde2116f5ea84a33418
+KZAgent uses the published libraries without modifying their source or binaries.

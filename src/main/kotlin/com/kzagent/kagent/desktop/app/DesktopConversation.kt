@@ -2,6 +2,7 @@ package com.kzagent.kagent.desktop.app
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,7 +12,23 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.SecretRedactor
@@ -23,6 +40,10 @@ import com.kzagent.kagent.desktop.MessageList
 import com.kzagent.kagent.desktop.SessionData
 import com.kzagent.kagent.desktop.SessionManager
 import com.kzagent.kagent.desktop.ui.SessionSidePanel
+import com.kzagent.kagent.desktop.ui.SessionTerminalPanel
+import com.kzagent.kagent.desktop.ui.TerminalResizeHandle
+import com.kzagent.kagent.desktop.terminal.SessionTerminalManager
+import com.kzagent.kagent.desktop.terminal.terminalPanelHeight
 import com.kzagent.kagent.llm.AgentMessage
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
@@ -94,12 +115,31 @@ internal fun DesktopConversation(
     state: DesktopSessionUiState,
     sessionManager: SessionManager,
     settingsState: DesktopSessionSettingsState,
+    terminalManager: SessionTerminalManager,
     onSend: (SessionData, String) -> Unit,
 ) {
     val session = sessionManager.activeSession()
+    val terminal = terminalManager.stateFor(session.id)
+    val composerFocus = remember { FocusRequester() }
+    var focusComposerRequest by remember { mutableIntStateOf(0) }
+    var focusTerminal by remember(session.id) { mutableStateOf(false) }
+    val toggleTerminal = {
+        terminalManager.toggle(session.id, session.workspace)
+        focusTerminal = terminal.visible
+        if (!terminal.visible) focusComposerRequest++
+    }
+    LaunchedEffect(focusComposerRequest) {
+        if (focusComposerRequest > 0) composerFocus.requestFocus()
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                val matches = isTerminalToggleKey(event.key == Key.Grave, event.isCtrlPressed,
+                    event.isAltPressed, event.isMetaPressed, event.isShiftPressed)
+                if (matches && event.type == KeyEventType.KeyDown) toggleTerminal()
+                matches
+            }
             .padding(horizontal = 20.dp, vertical = 14.dp),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -115,49 +155,73 @@ internal fun DesktopConversation(
                 onToggleSidePanel = { state.showSessionSidePanel = !state.showSessionSidePanel },
                 onModelChanged = { settingsState.onModelChanged(session, it) },
                 onRefreshModels = { settingsState.refreshModels() },
+                terminalVisible = terminal.visible,
+                onToggleTerminal = toggleTerminal,
             )
             Spacer(Modifier.height(10.dp))
             session.error?.let {
                 ErrorBanner(it)
                 Spacer(Modifier.height(12.dp))
             }
-            Row(
-                modifier = Modifier.fillMaxSize(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    MessageList(
-                        sessionId = session.id,
-                        messages = session.messages,
-                        workspace = session.workspace,
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                val availableHeight = maxHeight.value
+                val terminalHeight = if (terminal.visible) terminalPanelHeight(availableHeight, terminal.heightRatio) else 0f
+                Column(Modifier.fillMaxSize()) {
+                    Row(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Composer(
-                        input = state.input,
-                        isBusy = session.isBusy,
-                        enabled = !state.deletingSkill,
-                        onInputChange = { state.input = it },
-                        onSend = { onSend(session, state.input) },
-                        onTerminate = {
-                            session.currentJob?.cancel()
-                            session.status = "正在终止..."
-                        },
-                    )
-                }
-                if (state.showSessionSidePanel) {
-                    SessionSidePanel(
-                        approvalMode = settingsState.savedConfig?.approvalMode
-                            ?: AppConfig.DEFAULT_APPROVAL_MODE,
-                        onApprovalModeChanged = { settingsState.onApprovalModeChanged(it) },
-                        todoSnapshot = session.todoSnapshot,
-                        contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize
-                            ?: 1_000_000),
-                        isBusy = session.isBusy,
-                        onCompressContext = { state.showCompressConfirm = true },
-                    )
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                            MessageList(
+                                sessionId = session.id,
+                                messages = session.messages,
+                                workspace = session.workspace,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Composer(
+                                input = state.input,
+                                isBusy = session.isBusy,
+                                enabled = !state.deletingSkill,
+                                onInputChange = { state.input = it },
+                                onSend = { onSend(session, state.input) },
+                                onTerminate = {
+                                    session.currentJob?.cancel()
+                                    session.status = "正在终止..."
+                                },
+                                focusRequester = composerFocus,
+                            )
+                        }
+                        if (state.showSessionSidePanel) {
+                            SessionSidePanel(
+                                approvalMode = settingsState.savedConfig?.approvalMode
+                                    ?: AppConfig.DEFAULT_APPROVAL_MODE,
+                                onApprovalModeChanged = { settingsState.onApprovalModeChanged(it) },
+                                todoSnapshot = session.todoSnapshot,
+                                contextPercent = (session.usedTokens * 100) / (session.runtime?.contextWindowSize
+                                    ?: 1_000_000),
+                                isBusy = session.isBusy,
+                                onCompressContext = { state.showCompressConfirm = true },
+                            )
+                        }
+                    }
+                    if (terminalHeight > 0f) {
+                        TerminalResizeHandle { delta ->
+                            terminal.heightRatio = (terminalPanelHeight(availableHeight, terminal.heightRatio) - delta)
+                                .coerceIn(160f, availableHeight - 226f) / availableHeight
+                        }
+                        SessionTerminalPanel(
+                            terminal, session.workspace, terminalManager, focusTerminal,
+                            onCollapse = { terminal.visible = false; focusComposerRequest++ },
+                            modifier = Modifier.fillMaxWidth().height(terminalHeight.dp),
+                            onFocusHandled = { focusTerminal = false },
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+internal fun isTerminalToggleKey(isGrave: Boolean, ctrl: Boolean, alt: Boolean, meta: Boolean, shift: Boolean): Boolean =
+    isGrave && ctrl && !alt && !meta && !shift

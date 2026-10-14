@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BossTerm 会话底部终端 · KZAgent Spec</title>
+<style>
+:root{color-scheme:light dark;--bg:#f4f6fa;--surface:#fff;--text:#202735;--muted:#606b7a;--line:#dce2eb;--accent:#1865b9;--soft:#eaf3ff;--warn:#8b5308;--terminal:#161c26;--terminal-text:#dee7f3}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;color:var(--text);background:var(--bg);font:15px/1.8 system-ui,-apple-system,"Segoe UI",sans-serif}a{color:var(--accent);text-underline-offset:3px}main{max-width:1180px;margin:auto;padding:38px 28px 80px}.meta,.note{color:var(--muted)}h1{font-size:36px;line-height:1.3;margin:12px 0 20px}h2{font-size:23px;margin:36px 0 14px}h3{font-size:17px;margin:20px 0 8px}p{margin:10px 0}section{border-top:1px solid var(--line);margin-top:30px}.card{padding:22px;border:1px solid var(--line);background:var(--surface);border-radius:12px;margin:18px 0}.decision{border-left:4px solid var(--accent);background:var(--soft)}.badge{display:inline-block;border:1px solid var(--line);border-radius:5px;padding:1px 8px;font-size:12px;margin-right:8px}.warn{color:var(--warn)}nav{display:flex;flex-wrap:wrap;gap:6px 18px;margin:22px 0}nav a{font-size:14px}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;vertical-align:top;border:1px solid var(--line);padding:11px 13px}th{background:var(--soft)}.table{overflow:auto}code{font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);padding:16px;border-radius:8px;border:1px solid var(--line)}li{margin:6px 0}.flow{display:flex;flex-wrap:wrap;align-items:center;gap:10px}.flow span{padding:10px 15px;border:1px solid var(--line);border-radius:7px;background:var(--surface)}.flow b{color:var(--muted)}.mock{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface)}.mock-header{padding:12px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:16px}.mock-body{display:flex;height:270px}.chat{padding:20px;flex:1;display:flex;flex-direction:column;gap:12px;min-width:0}.bubble{border:1px solid var(--line);padding:12px;border-radius:7px;font-size:14px}.composer{border:1px solid var(--line);border-radius:7px;padding:12px;margin-top:auto;color:var(--muted)}.side{width:190px;border-left:1px solid var(--line);padding:18px}.split{height:6px;background:var(--line);cursor:ns-resize}.mock-terminal{background:var(--terminal);color:var(--terminal-text)}.toolbar{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:1px solid #374251;gap:12px}.terminal-output{padding:15px 18px;font:13px/1.8 ui-monospace,Consolas,monospace;min-height:170px;white-space:pre-wrap}.mock button{font:inherit;border:1px solid var(--line);padding:4px 12px;border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer}.terminal-output span{color:#86d8b0}.mock .toolbar button{background:#293443;border-color:#536071;color:#eee}.legend{font-size:13px;color:var(--muted)}.source-list li{overflow-wrap:anywhere}@media(max-width:720px){main{padding:24px 16px 60px}h1{font-size:28px}.card{padding:16px}.side{display:none}.mock-header{flex-wrap:wrap}.table{margin-right:-8px}table{min-width:640px}}@media(prefers-color-scheme:dark){:root{--bg:#151b24;--surface:#202936;--text:#e8edf5;--muted:#a6b3c6;--line:#3a4658;--accent:#83b9ff;--soft:#25394f;--warn:#e5ba79}}@media print{body{background:#fff;color:#111}main{max-width:none;padding:0}nav,.mock button{display:none}section{break-before:auto}tr,.card{break-inside:avoid}a{color:#134b85}*{color-scheme:light}}
+</style>
+</head>
+<body><main>
+<p class="meta">KZAgent · 桌面端接入调研与实现规格 · 2026-10-14 · v0.2 / 已开始实施</p>
+<h1>BossTerm 会话底部终端面板</h1>
+<p>在会话页面提供可折叠、可调整高度的本地交互终端。用户可在对话同时运行测试、查看 Git 状态和使用交互式命令；终端归属于当前会话，并以该会话工作区作为初始目录。</p>
+<div class="card decision"><strong>推荐方案：BossTerm 嵌入组件 + KZAgent 自有会话终端管理层。</strong><p>首版每个会话一个终端，首次展开才启动；折叠和切换会话保留进程及屏幕缓冲；关闭终端、删除会话和退出应用负责清理。Agent 的 <code>run_command</code> 继续采用共享运行时的现有审批与执行流程。正式接入前必须通过版本兼容、内置菜单裁剪、生命周期和三平台打包四道验证门槛。</p><p class="note">实施更新：本机 PoC 后选择公开 ProperTerminal + TerminalSessionEngine 路线，已接入会话面板；原高层组件未通过菜单和清理门槛。详见 <a href="bossterm-poc-validation.html">PoC 验证记录</a>。以下矩阵仍是完整要求，未执行项不能视为通过。</p></div>
+<nav aria-label="章节导航"><a href="#evidence">01 调研证据</a><a href="#scope">02 范围</a><a href="#ux">03 界面</a><a href="#behavior">04 行为</a><a href="#architecture">05 架构</a><a href="#lifecycle">06 生命周期</a><a href="#shell">07 Shell</a><a href="#security">08 安全边界</a><a href="#dependency">09 依赖与发布</a><a href="#changes">10 实现落点</a><a href="#acceptance">11 验收</a><a href="#delivery">12 推进顺序</a><a href="#sources">13 来源</a></nav>
+
+<section id="evidence"><h2>01 · 已核对的实现与上游能力</h2>
+<p><span class="badge">已查证</span>本地仓库基线 <code>c6a2b9bb163b6bdfb8ef08f43893655796028ff5</code>；BossTerm 上游基线 <code>722965cc39e8492e06c08bde2116f5ea84a33418</code>。本次只读源码、发布元数据和官方文档，未采信性能宣传作为验收指标。</p>
+<div class="table"><table><thead><tr><th>项目现状</th><th>接入意义</th></tr></thead><tbody>
+<tr><td><code>gradle/libs.versions.toml</code>：Kotlin 2.4.0、Compose 1.11.1、JVM 17、Fluent v0.1.0、JNA 5.19.1、serialization 1.9.0。</td><td>JVM 和 JNA 与当前 BossTerm 发布一致；Kotlin、Compose、serialization 需要单独验证。</td></tr>
+<tr><td><code>DesktopConversation.kt</code> 当前为 Header 下方的 Row：左侧消息列表与 Composer，右侧 SessionSidePanel。</td><td>底部终端应加在会话内容区域，不侵入全局导航或新建会话页面；消息和输入框始终可达。</td></tr>
+<tr><td><code>SessionManager</code> 以 session id 管理会话；切模型和 invalidate 会关闭并重建 AgentRuntime；删除和 close 负责关闭 runtime。</td><td>终端不能附着在 AgentRuntime 上，否则切模型或审批会误杀 shell。终端生命周期需要自己的 owner。</td></tr>
+<tr><td><code>LocalTools.run_command</code> 经 ApprovalPolicy 后使用 ProcessBuilder；Unix 为 <code>/bin/sh -lc</code>，Windows 为 <code>cmd.exe /c</code>，有超时和取消清理。</td><td>现有工具是一次性命令执行，不是交互式 PTY；首版与用户终端并存，不能假装输出来自同一进程。</td></tr>
+</tbody></table></div>
+<h3>BossTerm 可用 API 与真实限制</h3>
+<p>官方入口是 <code>EmbeddableTerminal</code> 与 <code>EmbeddableTerminalState</code>，支持工作目录、环境覆盖、输出/退出/就绪回调和链接处理；状态对象保存终端会话，<code>dispose()</code> 释放资源。<code>rememberEmbeddableTerminalState</code> 默认自动释放，跨折叠保留需要外部所有权。初始化由 composable 驱动，不能把创建 state 等同于已经启动 shell。<a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/compose-ui/src/desktopMain/kotlin/ai/rever/bossterm/compose/EmbeddableTerminal.kt">[B1 源码]</a></p>
+<p>Maven Central 当前最新 desktop 版本为 <strong>1.2.183</strong>，元数据更新时间为 2026-10-10；本次下载其 sources JAR，确认 <code>EmbeddableTerminal.kt</code> 与上述上游基线 SHA-256 一致。此核对仅覆盖该文件，不代表整个源码树与发布包完全一致。<a href="https://repo.maven.apache.org/maven2/com/risaboss/bossterm-compose-desktop/maven-metadata.xml">[B2 版本元数据]</a> <a href="https://repo.maven.apache.org/maven2/com/risaboss/bossterm-compose-desktop/1.2.183/bossterm-compose-desktop-1.2.183-sources.jar">[B3 发布源码]</a></p>
+<div class="card"><strong class="warn">不能直接照搬默认配置</strong><ul>
+<li>1.2.183 POM 声明 Kotlin 2.4.20、Compose 1.12.1、serialization 1.11.0，并包含 MCP/Ktor/分享相关依赖；需要评估解析冲突和安装包体积。<a href="https://repo.maven.apache.org/maven2/com/risaboss/bossterm-compose-desktop/1.2.183/bossterm-compose-desktop-1.2.183.pom">[B4 POM]</a></li>
+<li><code>aiAssistantsEnabled=false</code> 可隐藏 AI 菜单，但源码仍追加 VCS 和 shell 定制菜单；添加 <code>contextMenuItems</code> 不会替换这些内置项。自带安装弹窗使用 Material 组件。必须验证可裁剪性，不能假定配置一个开关就能获得干净的 Fluent 面板。<a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/compose-ui/src/desktopMain/kotlin/ai/rever/bossterm/compose/EmbeddableTerminal.kt#L395">[B1 菜单实现]</a></li>
+<li>显式传入 settings 可绕开默认 settings 的解析来源，但组件仍引用 <code>SettingsManager.instance</code>，需检查单例初始化及 shell integration 是否读写 BossTerm 的全局目录。<a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/compose-ui/src/desktopMain/kotlin/ai/rever/bossterm/compose/settings/SettingsLoader.kt">[B5 SettingsLoader]</a></li>
+<li>上游 engine 的关闭包含独立 kill 线程；普通 <code>dispose()</code> 不能直接被当作“整个进程树已清理完成”的证明。<code>disposeForUnload()</code> 有等待语义和调用线程约束，需要实测正常退出与启动中退出。<a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/compose-ui/src/desktopMain/kotlin/ai/rever/bossterm/compose/session/TerminalSessionEngine.kt">[B6 Engine]</a></li>
+</ul></div></section>
+
+<section id="scope"><h2>02 · 首版范围与默认决策</h2>
+<div class="table"><table><thead><tr><th>首版必须具备</th><th>后续独立定义</th></tr></thead><tbody><tr><td>每个会话一个本地终端；工作区初始目录；展开/折叠；拖拽调高；输入、选中、复制粘贴、可拖拽滚动条；退出状态与重启；会话切换保持进程；删除/应用退出清理；亮暗主题。</td><td>多标签或 split panes；SSH 配置；跨应用重启复活 shell；Agent 读写 PTY；一键转发输出到模型；运行 Agent 工具的统一终端；MCP、分享、远程控制、后台 daemon。</td></tr></tbody></table></div>
+<p>同一工作区内的不同会话拥有不同 shell、cwd 和环境，不按 workspace 共用终端。新建会话准备页、设置页、Skills 页没有终端入口；历史会话首次展开时启动一个全新的 shell。默认只保留本进程内状态，应用重启后全部终端回到未启动状态。</p>
+<p>建议资源上限为同时存活 8 个终端，达到上限时阻止新启动并提示关闭已有终端；不自动淘汰运行中的后台 shell。滚屏缓冲建议上限 10,000 行，使用锁定版本实际支持的 buffer 字段；压力测试需同时覆盖极长行和控制序列，不能把行数上限当作内存字节上限。</p></section>
+
+<section id="ux"><h2>03 · 面板位置与交互示意</h2>
+<p>Header 增加 Fluent 终端切换按钮。Header 下方改为纵向区域：上部仍为聊天 + 右侧信息面板，下面为拖拽分隔线 + 终端。终端横跨会话内容宽度，不覆盖左侧全局导航。聊天输入框保持在上部聊天区底部。</p>
+<div class="mock" aria-label="会话底部终端示意">
+<div class="mock-header"><strong>KZAgent · 当前会话</strong><button id="terminal-toggle" type="button" aria-expanded="true" aria-controls="mock-terminal">折叠终端</button></div>
+<div class="mock-body"><div class="chat"><div class="bubble">用户：修改后我想在终端里手动运行测试。</div><div class="bubble">Agent：对话、工具记录和审批继续在此展示。</div><div class="composer">输入消息…　　发送</div></div><aside class="side">会话信息<br>审批方式<br>待办清单<br>上下文用量</aside></div>
+<div id="mock-terminal"><div class="split" title="实现时可拖拽；此处仅为示意"></div><div class="mock-terminal"><div class="toolbar"><span>终端 · zsh　<span class="legend">KZAgent 工作区</span></span><span>运行中　<button type="button" id="mock-close">关闭</button></span></div><div class="terminal-output"><span>~/PrivateProject/KZAgent $</span> ./gradlew test
+BUILD SUCCESSFUL
+<span>~/PrivateProject/KZAgent $</span> ▌</div></div></div>
+</div><p class="legend">示意中的输出为静态占位，不是真实执行结果。折叠按钮仅演示显示状态；终端输入与分隔线未连接 PTY。</p>
+<ul><li>默认展开高度占可用内容区 35%；拖拽范围按实际窗口高度计算。优先保证聊天最小可用高度约 220dp、终端含标题栏约 160dp；空间不足时自动临时折叠终端，不覆盖 Composer，也不销毁进程。</li><li>高度优先保存比例而非像素；每个会话记忆展开状态和最近比例。窗口缩小时 clamp，放大后仍允许用户展开。长标题/cwd 截断并提供 tooltip。</li><li>终端外壳、工具栏和关闭确认统一 Fluent，取色自 FluentTheme。ANSI 颜色保留语义；终端默认前景、背景、选区映射亮暗主题，运行中的主题刷新能力作为验证项。</li><li>终端优先使用 BossTerm 自带滚动条及其滚屏模型，不额外套 Compose verticalScroll。若裁剪 UI，滚动条必须绑定终端缓冲的同一 offset/extent 模型，并在鼠标报告模式、备用屏幕和正常 scrollback 中分别核验。</li></ul>
+</section>
+
+<section id="behavior"><h2>04 · 用户行为合同</h2>
+<div class="table"><table><thead><tr><th>动作 / 情况</th><th>规定行为</th></tr></thead><tbody>
+<tr><td>首次展开</td><td>捕获 session id、workspace、shell 配置快照；校验工作区存在且可访问；进入 Starting；只启动一个 PTY。失败保留会话，终端区域展示错误与重试入口。</td></tr>
+<tr><td>重复点击展开 / 重组</td><td>同一 id + generation 只初始化一次；不重复启动 shell，不重复注册监听器。</td></tr>
+<tr><td>折叠 / 打开设置 / 新建准备页</td><td>只移除显示；shell、解析和有限缓冲继续工作。重新展开不重新启动，不重复运行初始化命令。</td></tr>
+<tr><td>切换 A → B → A</td><td>恢复 A 的终端、cwd、屏幕缓冲和滚动位置；B 按自己的状态显示。后台输出和迟到事件始终写入各自 owner。</td></tr>
+<tr><td>shell 自然退出</td><td>保留最后屏幕，展示 Exited + 可用退出码，停止输入；提供“重启终端”。不自动复活、不循环重试。退出码未知时明确显示未知。</td></tr>
+<tr><td>关闭 / 重启运行中的终端</td><td>Fluent ContentDialog 提示会结束其中进程；确认后停止接收输入、清理后回到 NotCreated，或为显式重启建立下一代 handle。任何 Connected shell 都需提示，不能依靠“看起来空闲”判断无进程。</td></tr>
+<tr><td>删除会话</td><td>已有删除确认说明终端进程会一并结束；确认后清理终端和 Agent 资源。不再加第二个确认。删除失败时保留会话并报告终端是否已关闭。</td></tr>
+<tr><td>切模型、改审批 / runtime invalidate</td><td>shell 保持运行；只有 AgentRuntime 重建。聊天停止按钮只取消 Agent 回合；终端 Ctrl+C 只发给终端前台程序。</td></tr>
+<tr><td>退出应用</td><td>统一停止接入新操作，逐一关闭 PTY，等待有限清理，必要时强制结束其进程树。上游 daemon 关闭，不跨应用退出保留进程。</td></tr>
+</tbody></table></div>
+<h3>键盘、焦点与粘贴</h3>
+<ul><li>建议 <code>Ctrl+`</code> 切换终端（平台可达性需实测），按钮始终保留为替代入口；命中切换动作后消费事件，避免反引号进入 shell。首版不抢占 shell 常用的 Ctrl+L、Ctrl+D、Ctrl+C 或聊天发送快捷键。</li><li>用户主动展开后才聚焦终端；会话切换、背景回调、主题切换不能自动抢走 Composer 焦点。折叠时焦点返回 Composer；终端父容器不得通过 focusable/clickable 竞争输入焦点。<a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/docs/embedding.md#focus-management">[B7 焦点说明]</a></li><li>终端有焦点时 Enter、Tab、方向键和控制键交给终端；macOS Cmd+C/V 为复制粘贴，Windows/Linux Ctrl+Shift+C/V 为复制粘贴，Ctrl+C 保持中断语义。具体映射以锁定版本可配置 API 与实测为准。</li><li>中文输入法组合过程中 Enter 只确认候选词；不同时触发聊天发送或全局动作。多行粘贴保留 bracketed paste 语义，宿主不追加换行、不给输入补上隐式执行。</li></ul>
+</section>
+
+<section id="architecture"><h2>05 · 架构与状态模型</h2>
+<div class="flow" aria-label="终端依赖关系"><span>DesktopSessionHost / 根生命周期</span><b>→</b><span>SessionTerminalManager</span><b>→</b><span>BossTermTerminalHandle</span><b>→</b><span>BossTerm State / PTY</span></div>
+<p><code>SessionTerminalPanel</code> 只依赖终端状态和用户动作。新增类型名为设计建议，尚未实现。Manager 是桌面能力，持有 <code>Map&lt;SessionId, TerminalHandle&gt;</code> 和独立于可见面板的 scope，实现 AutoCloseable；适配器封装 BossTerm 类型，避免把第三方 state 塞入 SessionData、AgentRuntime 或 AgentMessage。</p>
+<pre><code>TerminalUiState: sessionId, visible, heightRatio,
+                 phase, shellLabel, title, exitCode?, redactedError?
+TerminalPhase: NotCreated → Starting → Running → Exited / Failed
+                                       ↓
+                                    Closing → NotCreated
+
+TerminalHandle: sessionId, generation, immutable LaunchSpec,
+                thirdPartyState, ownedScope, idempotent close()
+LaunchSpec: initialWorkspace: Path, shellExecutable, environment policy
+Manager actions: ensureHandle(sessionId, spec), setVisible(), restart(),
+                 closeSession(sessionId), closeAll()</code></pre>
+<p>首次挂载由 EmbeddableTerminal 驱动初始化，Manager 的 ensureHandle 只保证 owner 和去重；不要宣称可直接调用内部 <code>initializeSession</code>。Manager 不能使用会随面板消失而取消的 rememberCoroutineScope。所有跨线程事件在 UI owner 线程更新 Compose 状态；事件包含 session id + generation，过期代次和已删除会话的事件丢弃。</p>
+<p>适配器只需向宿主提供显示状态、终端重启和关闭；首版不对 Agent 暴露 <code>write</code>/<code>sendInput</code>。上游 onExit/输出回调应捕获稳定 handle，不能闭包读取 <code>activeSession()</code>。onTitleChange 当前由 composable 中的 Flow 收集，隐藏时不能承诺持续刷新标题；首版允许恢复显示后补齐标题。</p>
+<p>公开组件没有独立的 <code>onError</code> 参数，内部 connectionState 也不能直接当公开 API 读取。PoC 必须确认 PTY 启动失败如何映射到宿主 Failed 状态；必要时补小型公开适配接口，不能通过反射访问 internal，也不能仅凭“等了一段时间”报告失败。</p>
+<h3>接入路线选择</h3><p>优先用高层 EmbeddableTerminal，复用解析、渲染、输入、滚屏和 resize。若无法关闭多余安装菜单、避免全局设置副作用或取得必要错误/关闭信号，优先向上游添加少量宿主配置与生命周期接口；期间可用锁定基线的最小补丁构建验证。只有这个路线无法满足约束时才评估 ProperTerminal + 自有 session 层；低层方案需显式承担字体、IME、菜单、连接和关闭编排，不进入首版默认范围。</p></section>
+
+<section id="lifecycle"><h2>06 · 生命周期与恢复规则</h2>
+<div class="table"><table><thead><tr><th>边界</th><th>资源责任</th></tr></thead><tbody><tr><td>UI 重组、隐藏、切页</td><td>state 保留在根 Manager 的 handle 中。传入外部 state，不启用面板级 autoDispose；保持后台解析，避免未读取 PTY 输出阻塞子进程。</td></tr><tr><td>关闭 / 重启</td><td>进入 Closing 后拒绝新输入；取消 UI 收集，关闭 PTY 和 I/O，再取消 owner scope。重启必须等待上一代停止，防止两个 shell 同时持有同一终端。</td></tr><tr><td>删除会话</td><td>在会话列表移除前按稳定 session id 关闭 handle；不使用可能因删除而变化的 activeSessionIndex。资源关闭与 repository 删除不是事务，失败文案需反映实际结果。</td></tr><tr><td>根 composable Dispose / 应用关闭</td><td>DesktopSessionEffects 串联 Manager 关闭。每个 handle 独立兜底，一个失败不能阻止其他资源关闭。终止等待与 JVM 退出顺序需协调 DesktopAppHost，避免提前 System.exit。</td></tr><tr><td>应用重启 / JSONL 恢复</td><td>恢复聊天照旧；终端不恢复 PID、cwd、输出和旧命令。首次展开从 session.workspace 新开 shell。不写终端 I/O 到 JSONL，不新增消息类型。</td></tr></tbody></table></div>
+<p>关闭目标：每个进程先请求结束，超过建议 2 秒宽限后强制清理；全局退出建议总预算 5 秒，具体值由三平台实测确定。等待不应长期阻塞 UI owner 线程。上游 disposeForUnload 需在 UI owner 线程且不在终端回调内调用；若其等待方式不满足退出 UX，需要适配层暴露异步关闭/等待能力。不能把“cancel coroutine”或“移除 state 引用”当作 PTY/进程树已经终止。</p>
+<p>首版不落盘终端状态；不修改会话 JSONL/schema，不改变历史恢复、上下文压缩和 token 估算。若以后需跨启动恢复面板布局，只存独立 UI 偏好，仍不得保存并自动重放命令。</p></section>
+
+<section id="shell"><h2>07 · Shell、目录与平台行为</h2>
+<div class="table"><table><thead><tr><th>平台</th><th>推荐启动策略与验证</th></tr></thead><tbody><tr><td>macOS / Linux</td><td>使用有效且可执行的 SHELL，失败回退可用 /bin/bash 或 /bin/sh。交互 / login 参数按锁定上游 resolveSessionCommand 验证，避免自行把可执行文件路径和用户参数拼成字符串。特别验证 macOS Finder 启动时 PATH 与命令行启动差异。</td></tr><tr><td>Windows</td><td>首版跟随 BossTerm 的 PowerShell 默认和 cmd 回退；其现有设置值为 powershell/cmd，不能假定 pwsh 已可用。验证 ConPTY、中文输出、路径空格、驱动器根目录和窗口 resize；PTY 不可用时明确报错，不降级成伪交互 ProcessBuilder 面板。</td></tr><tr><td>所有平台</td><td>通过 workingDirectory 传入 session.workspace.toString()，目录处理使用 Path；不先注入 cd 字符串。shell 内自行 cd 不修改 Agent 的工作区，也不切换应用会话；关闭后重开回到初始工作区。</td></tr></tbody></table></div>
+<p>环境继承系统运行环境，保留常规 PATH/locale/TERM 需求；不从 AppConfig 向 shell 注入 Provider 凭据，不打印整个 environment。若宿主进程环境含已配置的 Provider 凭据变量，应建立不泄密的过滤策略；不能声称本地 shell 是沙箱或无法访问用户自己的环境/文件。</p>
+<p>首版不配置 initialCommand。需验证上游 shell integration 注入是否写入 shell 配置、自动安装工具或修改长期用户设置；KZAgent 应只允许进程内或其自有受控目录中的临时集成。shell 路径含空格、权限不足、workspace 被删除和原生库加载失败均进入 Failed，可修正后显式重试。</p></section>
+
+<section id="security"><h2>08 · 用户终端与 Agent 的权限边界</h2>
+<p>用户在终端直接输入的命令按本地用户 OS 权限运行。终端初始目录并不构成工作区沙箱，用户可以 cd 到其他位置。面板不展示权限与初始目录说明；不能用 Agent 审批模式标签暗示手动终端已受同样限制。</p>
+<ul><li>Agent 的 run_command、路径保护、敏感路径策略、审批、超时、脱敏和 CLI 共享逻辑完整保留。聊天工具输出留在原消息展示，终端不显示伪造的“同进程执行”。</li><li>不启动 BossTerm MCP manager、session sharing、relay 或 daemon；明确设置 mcpEnabled、mcpAutoAttachInstalled、daemonEnabled、sessionSharingEnabled 为 false，并检查嵌入路径确实不监听端口、不自动附着外部工具。</li><li>关闭 aiAssistantsEnabled、fileLoggingEnabled 和默认命令完成通知；默认禁用 OSC 52 clipboard 访问，普通用户快捷键复制粘贴仍可用。VCS/shell 安装菜单需裁剪，不能通过内置 Material 安装向导执行额外流程。</li><li>终端原始屏幕用于用户查看；应用错误、诊断和持久化日志仍经 SecretRedactor。终端输出不自动上传模型、写入 JSONL、参与 token 计算或上下文压缩。未来“发送选区给 Agent”必须有明确动作、预览与脱敏规格。</li><li>链接点击通过 onLinkClick 白名单处理 http/https；文件路径复用工作区边界和敏感路径判断。拒绝未知 scheme 时应返回已处理，避免落回默认系统打开；后台 OSC 发起的打开请求也遵守相同策略。</li></ul>
+<p>未来若让 Agent 控制 PTY，需新 spec 定义独立批准、输入仲裁、cwd 与 env、取消/超时、输出截断和审计；不能将 state.write 直接注册为新工具绕过现有机制。</p>
+</section>
+
+<section id="dependency"><h2>09 · 依赖、兼容性与安装包</h2>
+<p>首轮 PoC 候选固定 <code>com.risaboss:bossterm-compose-desktop:1.2.183</code>，仓库使用 Maven Central。官方文档也提供多平台入口 <code>com.risaboss:bossterm-compose</code>；当前 KZAgent 是 Kotlin JVM 工程，必须实测 Gradle variant 解析后再确定最终坐标。core 通常随 compose 传递引入，不先重复添加。</p>
+<div class="table"><table><thead><tr><th>对比项</th><th>KZAgent</th><th>1.2.183 发布包</th><th>要求</th></tr></thead><tbody>
+<tr><td>Kotlin / Compose</td><td>2.4.0 / 1.11.1</td><td>2.4.20 / 1.12.1</td><td>先尝试原工程解析、编译和运行；若需升级，作为显式兼容改动单独评审并验证 Fluent/Markdown/Skiko。禁止 skip metadata version check 或强行降级二进制依赖。</td></tr>
+<tr><td>JVM / JNA / coroutines</td><td>17 / 5.19.1 / 1.11.0</td><td>17 / 5.19.1 / 1.11.0</td><td>静态版本匹配不等于运行已兼容。</td></tr>
+<tr><td>serialization</td><td>1.9.0</td><td>1.11.0</td><td>检查 Gradle 最终选择版本；测试 JSONL、配置读取和 API 序列化。</td></tr>
+<tr><td>PTY / 原生平台</td><td>无 PTY 依赖</td><td>pty4j 0.13.13；POM 出现 desktop-jvm-macos-arm64</td><td>核对 .module 元数据与解析结果；显式排除错误 OS artifact 或取得上游修复，确保宿主 compose.desktop.currentOs 唯一决定平台 runtime。</td></tr>
+<tr><td>包体和网络依赖</td><td>现有网络栈</td><td>MCP SDK、Ktor、Supabase realtime 等</td><td>记录包体增量、依赖树和许可证；功能关闭不意味着这些依赖可以安全 exclude，需验证类链接和初始化。</td></tr>
+</tbody></table></div>
+<p>先记录 <code>./gradlew dependencies --configuration runtimeClasspath</code>，对 Compose、Skiko、Kotlin、serialization、JNA 和 pty4j 做 dependencyInsight。Mac ARM64/X64、Windows X64、Linux X64 必须分别检查最终原生资源；额外架构只在项目计划支持时纳入承诺。</p>
+<p>验证 createDistributable 与 createReleaseDistributable 的实际包，检查 ProGuard/KeepKit 保留 JNI/JNA/pty4j 类和原生库提取；macOS 签名/公证对提取出的 PTY dylib、Linux 权限与 Windows DLL 载入均要实测。开发环境 ./gradlew run 成功不是发布通过。</p>
+<div class="card"><strong>许可证有元数据差异</strong><p>上游 README 声明 LGPLv3 / Apache 2.0 双许可证，仓库包含两份许可证文件；1.2.183 POM 只标注 LGPL 3.0。发布前对锁定 tag/source 与 artifact 的授权范围做核对，保存适用 LICENSE/NOTICE，核对 pty4j 和其他传递依赖。当前证据不足以仅凭 README 宣称整个依赖包可按 Apache 2.0 分发。<a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/README.md#license">[B8 上游说明]</a> <a href="https://repo.maven.apache.org/maven2/com/risaboss/bossterm-compose-desktop/1.2.183/bossterm-compose-desktop-1.2.183.pom">[B4 发布声明]</a></p></div>
+<p>若最新包要求全面升级或菜单接口无法满足范围，回查兼容发布版本并对相同 API、生命周期和授权重新验证；不凭版本号猜测兼容性。无合适版本时记录阻塞项与最小上游补丁，先保留功能未接入的主分支状态，不放入半工作的终端面板。</p>
+</section>
+
+<section id="changes"><h2>10 · 建议实现落点</h2>
+<div class="table"><table><thead><tr><th>文件 / 模块</th><th>修改内容</th></tr></thead><tbody>
+<tr><td><code>desktop/terminal/SessionTerminalManager.kt</code>（新增）</td><td>id → handle，代次、状态、去重、资源上限和关闭协议；支持假终端工厂做测试。</td></tr>
+<tr><td><code>desktop/terminal/BossTermTerminalHandle.kt</code>（新增）</td><td>第三方 state、稳定回调、settings 构造、原生错误转换和 teardown；第三方差异集中在此。</td></tr>
+<tr><td><code>desktop/ui/SessionTerminalPanel.kt</code>（新增）</td><td>Fluent 工具栏、终端 body、错误/退出/重试 UI、可拖拽分隔线；纯布局 clamp 与快捷键判定可测试。</td></tr>
+<tr><td><code>desktop/app/DesktopSessionHost.kt</code> / <code>DesktopSessionEffects.kt</code></td><td>根部创建 Manager 与其独立 scope，在根 Dispose/退出中关闭，传给 Conversation；不随活动会话变化重建。</td></tr>
+<tr><td><code>desktop/app/DesktopConversation.kt</code> / <code>desktop/ui/SessionHeader.kt</code></td><td>嵌入上下布局和切换入口；聊天区保持 weight 和 Composer 可达；不改 Agent 发送逻辑。</td></tr>
+<tr><td><code>desktop/app/DesktopSessionUiState.kt</code> / 删除回调编排</td><td>每会话面板显示/比例状态；删除以稳定 id 通知 Manager，确认文案与失败状态联动。</td></tr>
+<tr><td><code>DesktopAppHost.kt</code></td><td>如现有窗口退出无法等待 PTY，补应用级异步关停；与根 Dispose 去重。</td></tr>
+<tr><td><code>gradle/libs.versions.toml</code>、<code>build.gradle.kts</code>、混淆/打包配置</td><td>固定最终验证版本；平台 artifact、native 资源和必要 keep rules。</td></tr>
+<tr><td><code>README.md</code> / <code>src/test</code></td><td>说明入口、快捷键、手动终端权限、会话归属、进程不跨启动恢复；增加行为与生命周期测试。</td></tr>
+</tbody></table></div><p>首版原则上无需修改 AgentRuntimeFactory、CodingAgent、LocalTools、AgentMessage、SessionReader/Writer 或上下文压缩。只有确实新增共享终端工具时才将共同能力放入共享运行时；不能为桌面复制一套 Agent 执行或审批代码。</p>
+</section>
+
+<section id="acceptance"><h2>11 · 验收与测试矩阵</h2>
+<div class="table"><table><thead><tr><th>ID</th><th>场景</th><th>验收证据</th></tr></thead><tbody>
+<tr><td>A01</td><td>首次展开、连点和重组</td><td>相同代次只建立一个 PTY，cwd 为 workspace；默认隐藏时零 PTY。</td></tr>
+<tr><td>A02</td><td>折叠、设置页、会话往返</td><td>进程 id 不变；后台任务继续；恢复屏幕和滚动位置，无输出串会话。</td></tr>
+<tr><td>A03</td><td>同 workspace 不同 session</td><td>两个独立 shell；一方 cd、export、Ctrl+C 不影响另一方。</td></tr>
+<tr><td>A04</td><td>exit、重启、关闭、删除、启动中删除</td><td>正确退出码或未知标记；无隐式重启；旧 generation 事件失效；进程、子进程和线程无残留。</td></tr>
+<tr><td>A05</td><td>关闭应用，包括高输出与启动竞争</td><td>规定时间内退出 JVM；无 orphan shell、测试/server 子进程或监听端口；重复 close 幂等。</td></tr>
+<tr><td>A06</td><td>配置、模型与审批变更</td><td>终端进程不变；Agent 执行仍经现有审批，拒绝、超时、取消路径全部保持。</td></tr>
+<tr><td>A07</td><td>输入和 TUI</td><td>中文 IME、Enter、组合键、多行/bracketed paste 正常；vim/less 等备用屏幕、鼠标报告、resize 正常。</td></tr>
+<tr><td>A08</td><td>滚动与尺寸</td><td>滚轮/触控板/拖拽滚动条一致；用户上翻不被后台输出拉回底部；恢复底部后继续跟随；小窗口、长 cwd、亮暗主题清晰。</td></tr>
+<tr><td>A09</td><td>失败与资源上限</td><td>无效 shell、目录权限、工作区删除、native 加载失败有真实错误；可重试；第 9 个活跃终端有明确提示。</td></tr>
+<tr><td>A10</td><td>安全和持久化</td><td>无配置凭据注入、原始输出日志、JSONL 变化、自动安装、MCP/分享监听或 AI 上传；链接白名单和 OSC 52 设置生效。</td></tr>
+<tr><td>A11</td><td>10,000 行以上与长行高输出</td><td>缓冲有界、后台仍排空输出；UI 可输入/切换/折叠；记录 CPU/内存基线与增量，无持续增长。阈值在 PoC 根据机器固定后写入实施记录。</td></tr>
+<tr><td>A12</td><td>会话恢复与正式安装包</td><td>旧聊天可读、压缩和 token 逻辑不变；新进程首展开为新 shell；每个平台的实际发布包可输入、resize、关闭，原生加载无错误。</td></tr>
+</tbody></table></div>
+<p>纯单元测试覆盖 Manager 状态转换、重复初始化、资源上限、关闭幂等、旧事件过滤、delete/restart 竞争、布局 clamp 和焦点/快捷键判定；PTY 集成测试覆盖启动、退出、取消、失败及进程树清理。UI 人工核验覆盖三平台输入法、TUI、滚屏、主题与正式包。共享会话读取、压缩和工具审批保留现有回归测试。</p><p>实施完成后 macOS/Linux 运行 <code>./gradlew test</code>，Windows 运行 <code>.\gradlew.bat test</code>；运行与正式打包检查另附结果。实施阶段已运行本机测试和打包，结果见 PoC 验证记录；三平台完整矩阵仍需补齐。</p>
+</section>
+
+<section id="delivery"><h2>12 · 实施顺序与进入条件</h2>
+<ol><li><strong>可行性 PoC。</strong>独立小 Compose 宿主验证 1.2.183 依赖/variant、公开 API、启动失败信号、隐藏继续运行、resize、内置菜单裁剪、配置副作用和 await shutdown；三平台打包抽样验证。产出最终坐标、依赖树、所需升级/补丁和许可证记录。</li><li><strong>管理层与生命周期。</strong>先完成假终端测试和终止协议，再加入真实适配器；确认切 runtime 不影响终端。</li><li><strong>Fluent 会话面板。</strong>接 Header、上下布局、焦点、分隔线、错误/重启/关闭及删除编排；保留原聊天链路。</li><li><strong>验收与说明。</strong>完成 A01–A12，更新 README 和平台验证记录。只有阻塞项解决才将功能作为可用入口交付。</li></ol>
+<div class="card decision"><strong>评审时重点确认</strong><p>当前建议是“每会话单终端 + 首次展开启动 + 进程内保留 + Agent 不控制 PTY”。实现前仍需落定：是否接受 Kotlin/Compose 升级、是否维护最小上游补丁，以及资源上限和退出预算是否需要调整。这些不影响本 spec 的调研结论，但影响最终依赖和发布安排。</p></div>
+</section>
+
+<section id="sources"><h2>13 · 可追溯来源</h2><p>外部来源优先为上游源码和 Maven Central。下面的源码链接锁定到本次查证提交，避免 master 后续变化造成规格漂移。</p>
+<ol class="source-list"><li>[B1] <a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/compose-ui/src/desktopMain/kotlin/ai/rever/bossterm/compose/EmbeddableTerminal.kt">EmbeddableTerminal / State / 菜单与初始化实现</a></li><li>[B2–B4] <a href="https://repo.maven.apache.org/maven2/com/risaboss/bossterm-compose-desktop/maven-metadata.xml">版本列表</a> · <a href="https://repo.maven.apache.org/maven2/com/risaboss/bossterm-compose-desktop/1.2.183/bossterm-compose-desktop-1.2.183.pom">1.2.183 POM</a> · <a href="https://repo.maven.apache.org/maven2/com/risaboss/bossterm-compose-desktop/1.2.183/bossterm-compose-desktop-1.2.183.module">Gradle Module 元数据（实施时核对）</a> · <a href="https://repo.maven.apache.org/maven2/com/risaboss/bossterm-compose-desktop/1.2.183/bossterm-compose-desktop-1.2.183-sources.jar">发布 sources JAR</a></li><li>[B5] <a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/compose-ui/src/desktopMain/kotlin/ai/rever/bossterm/compose/settings/SettingsLoader.kt">SettingsLoader</a> · <a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/compose-ui/src/desktopMain/kotlin/ai/rever/bossterm/compose/settings/TerminalSettings.kt">TerminalSettings 与默认开关</a></li><li>[B6] <a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/compose-ui/src/desktopMain/kotlin/ai/rever/bossterm/compose/session/TerminalSessionEngine.kt">PTY 会话引擎与关闭协议</a></li><li>[B7] <a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/docs/embedding.md">官方嵌入指南</a> · <a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/compose-ui/src/desktopMain/kotlin/ai/rever/bossterm/compose/shell/ShellCustomizationUtils.kt">Shell 选择与回退</a></li><li>[B8] <a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/README.md#license">README 授权说明</a> · <a href="https://github.com/kshivang/BossTerm/blob/722965cc39e8492e06c08bde2116f5ea84a33418/compose-ui/build.gradle.kts">上游构建与发布配置</a></li></ol>
+<p class="note">本地查证文件：AGENTS.md、build.gradle.kts、gradle/libs.versions.toml、desktop/app/DesktopConversation.kt、DesktopSessionHost.kt、DesktopSessionEffects.kt、DesktopSessionPane.kt、desktop/session/SessionManager.kt、desktop/ui/SessionComposer.kt、SessionHeader.kt、SessionSidePanel.kt、tools/LocalTools.kt。所有路径均相对于 KZAgent 项目根目录。</p>
+</section>
+</main><script>
+const toggle=document.getElementById('terminal-toggle');
+const panel=document.getElementById('mock-terminal');
+function setPanelVisible(visible){panel.hidden=!visible;toggle.textContent=visible?'折叠终端':'展开终端';toggle.setAttribute('aria-expanded',String(visible));}
+toggle.addEventListener('click',()=>setPanelVisible(panel.hidden));
+document.getElementById('mock-close').addEventListener('click',()=>setPanelVisible(false));
+</script></body></html>

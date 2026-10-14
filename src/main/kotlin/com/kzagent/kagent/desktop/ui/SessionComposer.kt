@@ -35,12 +35,14 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import io.github.composefluent.component.AccentButton as FluentAccentButton
 import io.github.composefluent.component.Text as FluentText
 
 @Composable
 internal fun Composer(input: String, isBusy: Boolean, enabled: Boolean, onInputChange: (String) -> Unit,
-    onSend: () -> Unit, onTerminate: () -> Unit) {
+    onSend: () -> Unit, onTerminate: () -> Unit, focusRequester: FocusRequester? = null) {
     val isMacOs = remember { System.getProperty("os.name").lowercase().contains("mac") }
     var fieldValue by remember { mutableStateOf(TextFieldValue(input, TextRange(input.length))) }
     LaunchedEffect(input) {
@@ -53,7 +55,9 @@ internal fun Composer(input: String, isBusy: Boolean, enabled: Boolean, onInputC
                 value = fieldValue,
                 onValueChange = { fieldValue = it; onInputChange(it.text) },
                 enabled = enabled,
-                modifier = Modifier.weight(1f).heightIn(min = 68.dp, max = 148.dp).onPreviewKeyEvent { event ->
+                modifier = Modifier.weight(1f).heightIn(min = 68.dp, max = 148.dp)
+                    .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                    .onPreviewKeyEvent { event ->
                     when (resolveComposerKeyAction(event.key == Key.Enter, event.isCtrlPressed, event.isMetaPressed,
                         isMacOs, event.type, isBusy)) {
                         ComposerKeyAction.InsertLineBreak -> {

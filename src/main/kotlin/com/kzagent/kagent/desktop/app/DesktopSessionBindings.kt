@@ -7,6 +7,7 @@ import com.kzagent.kagent.config.SecretRedactor
 import com.kzagent.kagent.desktop.KZAgentNavigationView
 import com.kzagent.kagent.desktop.NewSessionDraft
 import com.kzagent.kagent.desktop.SessionManager
+import com.kzagent.kagent.desktop.terminal.SessionTerminalManager
 import com.kzagent.kagent.desktop.chooseWorkspace
 import com.kzagent.kagent.desktop.saveSessionWorkspaceExpandState
 import java.nio.file.Path
@@ -92,6 +93,7 @@ internal fun DesktopSessionDialogs(
     state: DesktopSessionUiState,
     sessionManager: SessionManager,
     scope: CoroutineScope,
+    terminalManager: SessionTerminalManager,
 ) {
     val activeSessionForDialogs = sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)
     SessionDialogs(
@@ -111,7 +113,7 @@ internal fun DesktopSessionDialogs(
         onDismissDeleteConfirm = { state.showDeleteConfirmIndex = -1 },
         onDeleteSession = { index ->
             state.showDeleteConfirmIndex = -1
-            handleDeleteSession(index, sessionManager, scope) { error ->
+            handleDeleteSession(index, sessionManager, scope, beforeDelete = { id -> terminalManager.closeSession(id) }) { error ->
                 state.sessionLoadError = error
             }
         },

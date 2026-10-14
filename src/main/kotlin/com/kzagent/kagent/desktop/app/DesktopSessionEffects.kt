@@ -5,6 +5,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import com.kzagent.kagent.config.SecretRedactor
 import com.kzagent.kagent.desktop.SessionManager
+import com.kzagent.kagent.desktop.terminal.SessionTerminalManager
 import com.kzagent.kagent.desktop.loadSessionWorkspaceExpandState
 import java.nio.file.Path
 import kotlinx.coroutines.CancellationException
@@ -21,6 +22,7 @@ internal fun DesktopSessionEffects(
     openStartupWorkspace: Boolean,
     instanceCoordinator: DesktopSingleInstanceCoordinator,
     activateWindow: () -> Unit,
+    terminalManager: SessionTerminalManager,
 ) {
     LaunchedEffect(Unit) {
         val loaded = withContext(Dispatchers.IO) { loadSessionWorkspaceExpandState() }
@@ -34,8 +36,9 @@ internal fun DesktopSessionEffects(
         }
     }
 
-    DisposableEffect(sessionManager, settingsState) {
+    DisposableEffect(sessionManager, settingsState, terminalManager) {
         onDispose {
+            terminalManager.close()
             sessionManager.close()
             settingsState.close()
         }
