@@ -34,7 +34,7 @@ internal class DesktopSessionUiState(initialWorkspace: Path) {
     var showSkills by mutableStateOf(false)
     var deletingSkill by mutableStateOf(false)
     var showSettings by mutableStateOf(false)
-    var showSessionSidePanel by mutableStateOf(true)
+    var showSessionSidePanel by mutableStateOf(false)
     var sessionLoadError by mutableStateOf<String?>(null)
     val sessionWorkspaceExpandedState = mutableStateMapOf<String, Boolean>()
 

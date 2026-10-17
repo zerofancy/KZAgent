@@ -2,6 +2,7 @@ package com.kzagent.kagent.desktop
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -30,6 +31,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.tools.ApprovalMode
@@ -37,8 +41,16 @@ import com.kzagent.kagent.config.ModelDescriptor
 import com.kzagent.kagent.config.ModelSelection
 import io.github.composefluent.component.ContentDialog
 import io.github.composefluent.component.ContentDialogButton
+import io.github.composefluent.ExperimentalFluentApi
+import io.github.composefluent.component.Icon as FluentIcon
+import io.github.composefluent.component.SubtleButton
+import io.github.composefluent.component.TooltipBox
+import io.github.composefluent.icons.Icons
+import io.github.composefluent.icons.filled.PanelRight
+import io.github.composefluent.icons.filled.WindowDevTools
+import io.github.composefluent.icons.regular.PanelRight
+import io.github.composefluent.icons.regular.WindowDevTools
 import io.github.composefluent.component.Text as FluentText
-import io.github.composefluent.component.Button as FluentButton
 import java.nio.file.Path
 
 @Composable
@@ -174,15 +186,38 @@ internal fun HeaderActions(
                 onRefresh = onRefreshModels,
             )
         }
-        OutlinedButton(
+        HeaderPanelButton(
+            icon = if (sidePanelVisible) Icons.Filled.PanelRight else Icons.Regular.PanelRight,
+            label = if (sidePanelVisible) "收起侧栏" else "展开侧栏",
+            expanded = sidePanelVisible,
             onClick = onToggleSidePanel,
-            modifier = Modifier.height(32.dp),
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+        )
+        HeaderPanelButton(
+            icon = if (terminalVisible) Icons.Filled.WindowDevTools else Icons.Regular.WindowDevTools,
+            label = if (terminalVisible) "收起终端" else "展开终端",
+            expanded = terminalVisible,
+            onClick = onToggleTerminal,
+        )
+    }
+}
+
+@OptIn(ExperimentalFluentApi::class, ExperimentalFoundationApi::class)
+@Composable
+private fun HeaderPanelButton(
+    icon: ImageVector,
+    label: String,
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    TooltipBox(tooltip = { FluentText(label) }) {
+        SubtleButton(
+            onClick = onClick,
+            modifier = Modifier.size(28.dp).semantics {
+                stateDescription = if (expanded) "已展开" else "已收起"
+            },
+            iconOnly = true,
         ) {
-            Text(if (sidePanelVisible) "收起侧栏" else "展开侧栏", maxLines = 1)
-        }
-        FluentButton(onClick = onToggleTerminal, modifier = Modifier.height(32.dp)) {
-            FluentText(if (terminalVisible) "收起终端" else "展开终端", maxLines = 1)
+            FluentIcon(icon, contentDescription = label, modifier = Modifier.size(18.dp))
         }
     }
 }

@@ -211,7 +211,7 @@ internal fun DesktopConversation(
                                 .coerceIn(160f, availableHeight - 226f) / availableHeight
                         }
                         SessionTerminalPanel(
-                            terminal, session.workspace, terminalManager, focusTerminal,
+                            terminal, focusTerminal,
                             onCollapse = { terminal.visible = false; focusComposerRequest++ },
                             modifier = Modifier.fillMaxWidth().height(terminalHeight.dp),
                             onFocusHandled = { focusTerminal = false },

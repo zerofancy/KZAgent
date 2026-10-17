@@ -2,6 +2,7 @@ package com.kzagent.kagent.desktop.ui
 
 import ai.rever.bossterm.compose.ui.ProperTerminal
 import ai.rever.bossterm.compose.util.loadTerminalFont
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -36,19 +38,20 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.desktop.terminal.BossTermTerminalHandle
-import com.kzagent.kagent.desktop.terminal.SessionTerminalManager
 import com.kzagent.kagent.desktop.terminal.SessionTerminalState
 import com.kzagent.kagent.desktop.terminal.TerminalPhase
 import com.kzagent.kagent.desktop.terminal.TerminalSettingsProfile
 import io.github.composefluent.FluentTheme
-import io.github.composefluent.component.Button
-import io.github.composefluent.component.ContentDialog
-import io.github.composefluent.component.ContentDialogButton
+import io.github.composefluent.ExperimentalFluentApi
+import io.github.composefluent.component.Icon
+import io.github.composefluent.component.SubtleButton
+import io.github.composefluent.component.TooltipBox
+import io.github.composefluent.icons.Icons
+import io.github.composefluent.icons.regular.Dismiss
 import io.github.composefluent.component.Text
 import java.awt.Cursor
 import java.awt.Desktop
 import java.net.URI
-import java.nio.file.Path
 
 @Composable
 internal fun TerminalResizeHandle(onDrag: (Float) -> Unit) {
@@ -65,17 +68,14 @@ internal fun TerminalResizeHandle(onDrag: (Float) -> Unit) {
 }
 
 @Composable
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalFluentApi::class, ExperimentalFoundationApi::class)
 internal fun SessionTerminalPanel(
     state: SessionTerminalState,
-    workspace: Path,
-    manager: SessionTerminalManager,
     autoFocus: Boolean,
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier,
     onFocusHandled: () -> Unit = {},
 ) {
-    var confirmRestart by remember { mutableStateOf<Boolean?>(null) }
     val handle = state.handle as? BossTermTerminalHandle
     val foreground = FluentTheme.colors.text.text.primary
     val background = FluentTheme.colors.background.layer.default
@@ -88,15 +88,11 @@ internal fun SessionTerminalPanel(
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(handle?.view?.title?.value ?: "终端", modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(terminalStatusLabel(state), color = FluentTheme.colors.text.text.secondary)
-            Button(onClick = {
-                if (state.status.phase in setOf(TerminalPhase.STARTING, TerminalPhase.RUNNING)) confirmRestart = true
-                else manager.closeTerminal(state.sessionId, workspace, restart = true)
-            }, disabled = state.status.phase == TerminalPhase.CLOSING) { Text("重启") }
-            Button(onClick = onCollapse) { Text("折叠") }
-            Button(onClick = {
-                if (state.status.phase in setOf(TerminalPhase.STARTING, TerminalPhase.RUNNING)) confirmRestart = false
-                else manager.closeTerminal(state.sessionId, workspace)
-            }, disabled = state.status.phase == TerminalPhase.CLOSING) { Text("关闭") }
+            TooltipBox(tooltip = { Text("关闭（折叠终端面板）") }) {
+                SubtleButton(onClick = onCollapse, modifier = Modifier.size(28.dp), iconOnly = true) {
+                    Icon(Icons.Default.Dismiss, contentDescription = "关闭终端面板", modifier = Modifier.size(18.dp))
+                }
+            }
         }
         state.error?.let { Text(it, color = FluentTheme.colors.system.critical, modifier = Modifier.padding(horizontal = 10.dp)) }
         if (handle != null && state.status.phase in setOf(TerminalPhase.STARTING, TerminalPhase.RUNNING, TerminalPhase.EXITED)) {
@@ -136,18 +132,9 @@ internal fun SessionTerminalPanel(
             )
         } else {
             Box(Modifier.weight(1f).fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(if (state.status.phase == TerminalPhase.CLOSING) "正在清理终端进程…" else "点击重启以启动终端")
+                Text(if (state.status.phase == TerminalPhase.CLOSING) "正在清理终端进程…" else "终端未运行")
             }
         }
-    }
-    confirmRestart?.let { restart ->
-        ContentDialog(title = if (restart) "重启终端" else "关闭终端", visible = true,
-            content = { Text("此操作会结束终端及其中运行的进程，是否继续？") },
-            primaryButtonText = if (restart) "重启" else "关闭", closeButtonText = "取消",
-            onButtonClick = { button ->
-                confirmRestart = null
-                if (button == ContentDialogButton.Primary) manager.closeTerminal(state.sessionId, workspace, restart)
-            })
     }
 }
 

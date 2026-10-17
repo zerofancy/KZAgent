@@ -122,7 +122,10 @@ class SessionTerminalManagerTest {
             manager.toggle("a", workspace)
             val original = manager.stateFor("a").handle
             manager.closeTerminal("a", workspace, restart = true)
-            withTimeout(5_000) { while (manager.stateFor("a").handle === original) delay(10) }
+            withTimeout(5_000) {
+                // Teardown clears the old handle before the replacement is published.
+                while (manager.stateFor("a").handle.let { it == null || it === original }) delay(10)
+            }
             assertEquals(2, handles.size)
             assertEquals(1, handles.first().closes.get())
             handles.first().status.value = TerminalStatus(TerminalPhase.FAILED)

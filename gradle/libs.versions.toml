@@ -32,6 +32,7 @@ material3 = { module = "org.jetbrains.compose.material3:material3", version.ref 
 
 # Compose Fluent UI
 compose-fluent = { module = "io.github.compose-fluent:fluent", version.ref = "compose-fluent" }
+compose-fluent-icons-extended = { module = "io.github.compose-fluent:fluent-icons-extended", version.ref = "compose-fluent" }
 
 # Markdown renderer
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }

@@ -69,6 +69,7 @@ dependencies {
     // Material 3 remains available for the markdown renderer and controls that have not
     // migrated yet; application dialogs use Compose Fluent's ContentDialog.
     implementation(libs.compose.fluent)
+    implementation(libs.compose.fluent.icons.extended)
     implementation(libs.bossterm.compose) {
         // This release publishes a macOS ARM runtime dependency even for other hosts.
         // Keep native Skiko selection owned by compose.desktop.currentOs above.
