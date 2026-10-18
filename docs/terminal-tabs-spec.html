@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>底部终端多标签 · 产品与实现 Spec</title>
+<style>
+:root{color-scheme:light dark;--bg:#f5f6f8;--surface:#fff;--text:#202735;--muted:#606b7a;--line:#dce1e8;--accent:#1763ba}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.75 system-ui,sans-serif}main{max-width:1100px;margin:auto;padding:40px 24px 80px}h1{font-size:34px;line-height:1.3}h2{margin-top:36px;font-size:23px}h3{font-size:18px}.meta,.note{color:var(--muted)}.note{font-size:14px}.card,.mock{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:20px;margin:20px 0}.table{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{border:1px solid var(--line);padding:11px;text-align:left;vertical-align:top}th{background:var(--bg)}code,pre{font-size:13px}code{overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface);border:1px solid var(--line);padding:18px;border-radius:8px}.mock{padding:0;overflow:hidden}.chat{padding:20px;min-height:100px;color:var(--muted)}.split{height:6px;background:var(--line)}.bar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line)}.tabs{display:flex;gap:6px;overflow:auto;flex:1;min-width:0;padding-bottom:4px}.tab{flex-shrink:0;padding:5px 12px;border:1px solid var(--line);border-radius:6px}.tab.active{border-color:var(--accent);color:var(--accent)}.actions{flex-shrink:0}.screen{padding:18px;min-height:160px;font-family:monospace}.badge{color:var(--accent)}a{color:var(--accent)}@media(max-width:650px){main{padding:24px 16px}h1{font-size:28px}.bar{gap:5px}.tab{padding:4px 8px}}@media(prefers-color-scheme:dark){:root{--bg:#171b22;--surface:#222832;--text:#edf1f6;--muted:#a7b2c1;--line:#3c4655;--accent:#78b6fa}}
+</style>
+</head>
+<body><main>
+<p class="meta">KZAgent · 桌面端 · 已实现，Windows 已验证 · 2026-10-18</p>
+<h1>底部终端支持多标签</h1>
+<p>同一个聊天会话可以打开多个独立 Shell，在底部标签栏切换。例如一个终端运行开发服务，另一个终端执行测试，彼此保留各自的进程、当前目录、屏幕缓冲和输入状态。</p>
+<div class="card"><strong>实施方案</strong><p>终端继续归属聊天会话，每个标签对应一个独立 PTY。折叠面板保留所有标签；关闭标签结束对应终端；切换会话保留后台终端。应用不设置活跃终端或保留标签的数量上限；删除聊天会话时，必须关闭其关联的全部终端并清理进程，其他会话不受影响。</p><p class="note">本规格对应功能已实现，README 已同步更新；会话格式与 Agent 执行链路保持不变。Windows 验证记录见第 9 节，macOS / Linux 实机验收仍待完成。</p></div>
+
+<h2>1. 实施前已核实的基线</h2>
+<div class="table"><table><thead><tr><th>代码位置</th><th>实施前现状</th><th>本次调整</th></tr></thead><tbody>
+<tr><td><code>desktop/terminal/SessionTerminalManager.kt</code></td><td>按 sessionId 持有一个 SessionTerminalState；visible、heightRatio、status、error、handle、generation 都在会话层。旧版设有活跃终端数量限制。</td><td>会话层保留面板布局，新增有序标签集合及 activeTabId；状态、handle、generation 下移到标签层；移除终端与标签数量限制。</td></tr>
+<tr><td><code>desktop/ui/SessionTerminalPanel.kt</code></td><td>标题、状态和一个折叠按钮；仅渲染单个 ProperTerminal。挂载 / 卸载调用 onVisible / onHidden。</td><td>新增标签栏与动作入口，仅渲染当前标签；保留终端原有输入、滚屏与主题适配。</td></tr>
+<tr><td><code>desktop/app/DesktopConversation.kt</code></td><td>顶部按钮及 Ctrl+反引号切换面板；首次展开启动；高度默认 35%，聊天最小 220dp、终端最小 160dp，空间不足临时不渲染。</td><td>入口、高度模型沿用；自动聚焦请求绑定具体标签，切换会话不抢聊天焦点。</td></tr>
+<tr><td><code>desktop/terminal/BossTermTerminalHandle.kt</code></td><td>每个 handle 封装独立 engine、TerminalTab 和显示模型；根作用域持续收集标题 / cwd，退出后保留输出并阻止输入；shutdown 等待清理。</td><td>继续一标签一 handle，复用根作用域的标题更新；不启用 BossTerm 完整应用的标签管理。</td></tr>
+<tr><td><code>DesktopSessionHost / Effects / Bindings</code></td><td>根持有 Manager；删除会话前关闭其终端，根 Dispose 关闭全部终端。</td><td>清理范围扩展为会话全部标签及正在关闭的 handle。</td></tr>
+</tbody></table></div>
+<p>已有 <a href="bossterm-session-terminal-spec.html">BossTerm 单终端 spec</a> 是前期设计，其中多标签曾被列为后续范围。本文扩展多标签交互；当前行为以代码和 README 为准，不能把旧设计中提过的重启按钮当成已有 UI。依赖基线为仓库锁定的 BossTerm 1.2.183、Compose Fluent v0.1.0，本次不要求升级依赖。</p>
+
+<h2>2. 范围与默认决策</h2>
+<ul>
+<li>支持新建、切换、关闭单个标签、重启当前终端，以及空面板重新新建。重启是显式工具栏动作，清空该标签旧屏幕并重新启动 Shell。</li>
+<li>同工作区不同聊天会话不共享标签；切换模型、修改 Agent 配置、上下文压缩不改变任何终端。</li>
+<li>标签按创建顺序排列，默认显示“终端 1”“终端 2”等稳定编号，再附加 Shell 动态标题；本进程内同一会话编号只增不复用，重启保留编号。</li>
+<li>本次不做分屏、拖拽排序、跨会话移动、标签重命名、Shell 配置选择器、批量关闭、后台输出徽标，以及跨应用启动恢复。终端输出不接入 Agent。</li>
+<li>面板 visible、heightRatio 属于会话，所有标签共用；activeTabId 属于该会话，切换回来恢复选择。</li>
+</ul>
+
+<h2>3. 界面与入口</h2>
+<div class="mock" aria-label="多标签终端静态示意">
+<div class="chat">聊天记录与消息输入区（现有布局保留）</div><div class="split"></div>
+<div class="bar"><div class="tabs"><span class="tab">终端 1 · dev server　×</span><span class="tab active">终端 2 · pwsh　×</span><span class="tab">终端 3 · 已退出　×</span></div><span class="actions">＋　↻　⌄</span></div>
+<div class="screen"><span class="badge">PS …/KZAgent&gt;</span> .\gradlew.bat test<br>…<br>BUILD SUCCESSFUL<br><span class="badge">PS …/KZAgent&gt;</span> ▌</div>
+</div>
+<p class="note">静态信息结构示意，非运行结果。＋＝新建终端，↻＝重启当前终端，⌄＝折叠面板；每个标签的 ×＝关闭该终端。实现使用 FluentTheme 语义颜色，不能照搬 HTML 色值。</p>
+<ul>
+<li>标签栏直接从标签列表开始，左侧不显示独立的“终端”标题。</li>
+<li>首次展开且从未创建标签时，自动创建并选中“终端 1”；后续展开恢复原标签，不额外启动 Shell。全部标签被关闭后保留空面板，显示“暂无终端”和“新建终端”按钮；以后折叠再展开仍保持空面板，不隐式创建。</li>
+<li>＋始终位于标签列表外侧，点击后在尾部追加标签、选中新标签并聚焦终端。新 Shell 总是从聊天会话工作区启动，使用创建时最新终端设置，不继承前一标签的 cwd、运行命令或临时环境。</li>
+<li>点击标签切换并聚焦对应终端；退出 / 失败标签聚焦其重启 / 重试按钮。点击标签关闭按钮不先激活该标签，事件不能冒泡触发标签切换。</li>
+<li>标签展示稳定编号、截断的动态标题和状态标识；当前标签的状态区显示完整“启动中 / 运行中 / 已退出（退出码或未知）/ 失败 / 关闭中”。Tooltip 提供完整标题、cwd 和状态，不把长路径挤入常驻工具栏。</li>
+<li>标签过多时横向滚动，提供可见且可拖拽的横向滚动条，和标签列表共用同一个 ScrollState / LazyListState；＋、重启、折叠固定可见。主动选择 / 新建后将选中标签滚入可见区域，后台标题变化不自动滚动。</li>
+<li>标签宽度优先在 140–250dp 之间按可用空间均分，超出一屏时使用完整标签槽位，并把像素取整余量留在列表末尾，避免末端停在半个标签或孤立关闭按钮上。窗口宽度变化时重新计算并确保选中标签完整可见，长标题截断；极窄窗口允许单标签缩到视口宽度，不能挤掉必需操作。终端内容继续使用 BossTerm 同一滚屏模型和可拖拽滚动条，不外包一层 verticalScroll。</li>
+<li>终端总高度仍包含工具栏。窗口过小时临时隐藏面板，保留 visible 意图、比例和全部进程；恢复空间后显示原标签，不能因恢复尺寸抢焦点。</li>
+<li>工具栏、标签、提示与确认框遵循 Fluent 体系；先核对锁定版本可用组件。无适用标签控件时组合现有 Fluent 组件，不猜测 API、不引入独立 Material 标签样式。</li>
+</ul>
+
+<h2>4. 操作行为与焦点</h2>
+<div class="table"><table><thead><tr><th>操作 / 事件</th><th>规定行为</th></tr></thead><tbody>
+<tr><td>折叠面板 / Ctrl+反引号</td><td>保留全部标签、PTY 和缓冲；折叠时焦点回 Composer，显式展开时聚焦当前终端或空态新建按钮。</td></tr>
+<tr><td>关闭运行中 / 启动中的标签</td><td>Fluent ContentDialog：“关闭终端 N？这会结束该终端及其中的进程。”默认焦点放“取消”，确认键为“关闭终端”。不依据提示符或是否有输出判断 Shell 空闲。</td></tr>
+<tr><td>关闭已退出 / 失败标签</td><td>不再次确认，直接清理所持资源后移除。终端退出不代表已释放所有平台资源，仍须调用 shutdown。</td></tr>
+<tr><td>关闭当前标签成功</td><td>优先选右侧相邻标签，无右侧则选左侧；最后一个被关闭后 activeTabId=null，面板保持展开并显示空态。仅由前台用户操作产生的切换可以聚焦。</td></tr>
+<tr><td>关闭后台标签成功</td><td>保持当前标签与输入焦点；不滚动当前终端、不影响其他终端输入。</td></tr>
+<tr><td>关闭中</td><td>标签保留且显示“关闭中”，拒绝输入、重复关闭及重启；允许切到其他标签。实际完成清理后才移除，不能先丢弃 handle。</td></tr>
+<tr><td>清理失败</td><td>保留标签和资源所有权，显示通用错误与“重试清理”；该终端不可输入、不可重启，其他标签仍可正常创建与运行；根退出仍再次尝试清理。</td></tr>
+<tr><td>重启 / 失败重试</td><td>运行中或启动中重启同样确认；已退出 / 启动失败可直接操作。保持 tabId、编号和顺序，先清理旧 handle，再创建下一代；新目录仍为会话工作区。无法清理时禁止启动替代 Shell。</td></tr>
+<tr><td>自然退出</td><td>保留标签和最后输出，显示退出码，禁止输入，不自动重启。其他标签继续运行；后台退出不改变选择、面板显隐或焦点。</td></tr>
+<tr><td>切换聊天会话 / 去设置页 / runtime 重建</td><td>所有终端继续消费后台输出；返回恢复原选择、屏幕与滚动位置。导航恢复不自动聚焦终端。</td></tr>
+<tr><td>确认框打开后切换标签或聊天会话</td><td>确认目标固定为原 sessionId + tabId + generation；不得读取确认时的“当前标签”。目标已删除 / 代次已变化则关闭旧确认，不作用于新 handle。</td></tr>
+</tbody></table></div>
+<p>新建 / 重启的异步结果只能修改原归属状态。用户发起操作后已切走、折叠或主动改变焦点时，完成回调不得把焦点抢回来；使用可消费的 focus request（sessionId、tabId、requestId）而非单个全局布尔值。弹窗取消恢复原来仍有效的焦点。</p>
+<p>本次只沿用现有 Ctrl+反引号全局快捷键。标签栏支持 Tab / Shift+Tab 到达、左右方向键移动标签焦点、Enter / Space 选择，关闭 / 新建按钮具有可访问名称。方向键规则仅在标签栏获焦时生效，不截获 PTY 内按键；不新增会覆盖 Shell 的 Ctrl+Tab、Ctrl+W 或 Ctrl+T。复制粘贴、Ctrl+C、中英文 IME、Enter 与多行粘贴沿用并回归验证现有终端行为，切标签不能把未完成输入提交给另一个 Shell。</p>
+
+<h2>5. 状态模型与管理接口</h2>
+<pre><code>// 建议结构，非已存在 API
+SessionTerminalState:
+  sessionId, visible, heightRatio, hasCreatedTab
+  tabs: ordered list&lt;TerminalTabState&gt;
+  activeTabId: TerminalTabId?  // 非空时必须指向现存标签
+  nextOrdinal, panelError, deleting
+
+TerminalTabState:
+  tabId, ordinal, launchSpec(workspace, settings snapshot)
+  status, error, handle?, generation
+  operation: None | Closing | Restarting | CleanupFailed
+
+Manager actions:
+  togglePanel(sessionId, workspace)
+  createTab(sessionId, workspace)
+  selectTab(sessionId, tabId)
+  closeTab(sessionId, tabId, expectedGeneration)
+  restartTab(sessionId, tabId, expectedGeneration, workspace)
+  retryCleanup(sessionId, tabId)
+  closeSession(sessionId) / close()</code></pre>
+<ul>
+<li>tabId 使用不依赖索引、标题或 PID 的稳定标识。所有回调验证 sessionId + tabId + generation + handle 身份；关闭 / 重启开始时递增代次，丢弃旧状态回调。UI 用 tabId 和 handle 代次作为 key，避免把选区、输入法和局部 Compose 状态复用于另一标签。</li>
+<li>沿用根 Manager 的生命周期；不把 handle 放入 AgentRuntime、SessionData、AgentMessage 或 JSONL。共享运行时、CLI、上下文压缩和 token 估算均无需改动。</li>
+<li>所有 Compose 状态在 UI owner 线程发布；每个标签的创建、关闭、重启需串行化。快速连续新建是多个独立请求，不按标签总数或终端运行数量阻止创建；删除中的会话仍拒绝新建与重启，避免清理期间重新生成 Shell。</li>
+<li>Manager 每代持有并取消对应状态收集 Job，避免旧 handle 收集器跨重启残留。只挂载选中标签的 ProperTerminal；切出调用 onHidden，切入 onVisible，切换只影响视图，不关闭引擎或后台读流。</li>
+<li>root close、closeSession、closeTab 和 restart 共用每 handle 的幂等清理结果；并发调用不重复启动 / 清理，不漏掉“已脱离活动标签但仍清理中”的资源。不要依赖 Compose 卸载触发 PTY 关闭。</li>
+</ul>
+
+<h2>6. 数量策略、失败与资源生命周期</h2>
+<div class="table"><table><thead><tr><th>约束</th><th>定义</th></tr></thead><tbody>
+<tr><td>活跃终端与保留标签数量</td><td>每个会话与全应用都不设置数量上限。不添加计数阈值、名额占位或“最多运行 / 保留”提示，不自动终止或淘汰已有终端。</td></tr>
+<tr><td>新建与重启</td><td>按用户操作创建独立终端；实际启动失败时显示通用错误并允许重试。重启须等待旧 handle 确认清理成功后再启动新 Shell，不受其他会话或标签数量影响。</td></tr>
+<tr><td>启动失败</td><td>保留新标签显示 FAILED 与重试，原标签继续运行；构造 / start 抛错也要清理已分配资源。错误不展示原始环境、凭证或异常消息；关闭失败转 CleanupFailed 并保留资源所有权，不影响其他标签的新建。</td></tr>
+<tr><td>删除聊天会话</td><td>原有一次删除确认说明会结束该会话全部终端；确认后标记 deleting，拒绝该会话新建 / 重启，逐个尝试清理且单个失败不妨碍其他标签。全部成功后允许删除；失败保留聊天会话，说明部分终端已关闭，并保留失败资源供重试。</td></tr>
+<tr><td>完全退出应用</td><td>根 Dispose 与 shutdown hook 清理全部会话及关闭中的 handle；先对全部请求关闭，再并发等待，单个失败不阻止其他清理。沿用当前适配器的引擎等待与平台子进程清理，避免随标签数量增长而在主线程串行等待。macOS 仅关窗口仍驻留的现有语义保留。</td></tr>
+</tbody></table></div>
+<p>不承诺跨进程恢复标签、PID、输出、cwd 或输入。应用重启后首次展开重新生成“终端 1”，不会重放命令。终端数量不设上限；单终端继续沿用现有滚屏缓冲设置，并以长行和持续输出做内存 / 响应性验证。</p>
+<p>手动终端沿用本地用户权限和现有密钥环境过滤、链接协议白名单及终端安全设置。新标签不得启用安装向导、MCP、分享、daemon、OSC 52 或额外日志。不得把 Agent 审批模式显示为手动终端的权限保障，也不改变 Agent 的命令审批和路径边界。</p>
+
+<h2>7. 文件改动与实施顺序</h2>
+<div class="table"><table><thead><tr><th>文件（相对 src/main/kotlin/com/kzagent/kagent/）</th><th>计划改动</th></tr></thead><tbody>
+<tr><td><code>desktop/terminal/SessionTerminalManager.kt</code></td><td>拆分会话 / 标签状态，管理集合、选择、每标签代次与关闭协议；提取相邻标签选择等纯逻辑，不设置数量限制。</td></tr>
+<tr><td><code>desktop/terminal/BossTermTerminalHandle.kt</code></td><td>复用引擎隔离、标题和 cwd；按需要补充可观察的关闭失败 / 清理完成信号，验证未挂载仍持续读流。</td></tr>
+<tr><td><code>desktop/ui/SessionTerminalPanel.kt</code></td><td>标签栏、固定操作按钮、空态、单标签错误 / 状态、当前终端渲染及滚动适配。</td></tr>
+<tr><td><code>desktop/app/DesktopConversation.kt</code></td><td>动作接线、目标化焦点请求、面板高度及导航恢复逻辑。</td></tr>
+<tr><td><code>desktop/app/DesktopSessionBindings.kt</code> 及相关对话框 / Effects</td><td>稳定目标的 Fluent 确认，删除会话全部清理、根关闭与错误提示。</td></tr>
+<tr><td><code>src/test/.../SessionTerminalManagerTest.kt</code>、README.md</td><td>扩展假终端测试，增加大量标签、删除会话、并发 / 失败场景；同步更新入口、关闭含义、不设数量限制和不跨启动恢复说明。</td></tr>
+</tbody></table></div>
+<ol><li>先实现标签状态与 Manager，并用可延迟启动 / 关闭的假 handle 验证大量标签、串行操作、删除清理与回调归属。</li><li>接入 Fluent 标签栏、关闭 / 重启确认和焦点；复用现有 ProperTerminal，不同时重构终端底层。</li><li>回归三平台真实 PTY、后台输出、IME、resize、子进程清理与小窗口表现，最后更新 README。</li></ol>
+
+<h2>8. 验收标准</h2>
+<div class="table"><table><thead><tr><th>ID</th><th>场景</th><th>通过标准</th></tr></thead><tbody>
+<tr><td>T01</td><td>首次展开、连续新建、独立运行</td><td>首次只启动一个 Shell；连续两次＋创建两个不同 tabId / handle。一个运行服务，另一个改 cwd / 执行测试，不串进程、输入和目录；新标签从会话工作区启动。</td></tr>
+<tr><td>T02</td><td>切标签、折叠、导航、runtime 变更</td><td>handle / PID 不变，后台持续输出不阻塞；屏幕、滚动位置和已输入文字恢复。模型切换和上下文压缩无影响，输出不进聊天或 token 统计。</td></tr>
+<tr><td>T03</td><td>关闭当前 / 后台 / 最后一个标签</td><td>运行中确认可取消；清理完成后按右邻优先选择，后台关闭不抢焦点；最后一个关闭后保持空态，再展开不自动重建。</td></tr>
+<tr><td>T04</td><td>自然退出与失败</td><td>已退出保留输出 / 退出码且不能输入；启动失败可重试；关闭这两类标签不二次确认。原始异常不泄露环境数据。</td></tr>
+<tr><td>T05</td><td>重启与迟到回调</td><td>旧清理完成前不发布新 handle；tabId / 顺序不变，代次递增。旧退出、标题、错误回调不能覆盖新标签或其他会话。</td></tr>
+<tr><td>T06</td><td>大量标签及并发操作</td><td>同会话及跨会话均可创建超过旧阈值的活跃终端和保留标签，不出现数量限制提示、不淘汰已有终端；大量其他 Shell 运行时仍可新建和重启。删除会话关闭其全部关联终端，其他会话不受影响。</td></tr>
+<tr><td>T07</td><td>清理失败、重复动作与根关闭竞态</td><td>失败标签保留所有权和重试入口，其他标签仍可创建；重复关闭 / 重启不重复执行；closeTab 与 closeSession / close 并发不漏资源，无死锁或无限等待。</td></tr>
+<tr><td>T08</td><td>删除会话与确认目标变化</td><td>同工作区另一会话不受影响；删除期间禁止新增。确认期间切换目标、目标已删除或重启，不误关闭新目标。部分清理失败时保留会话并准确提示。</td></tr>
+<tr><td>T09</td><td>焦点与键盘输入</td><td>主动操作聚焦正确终端；后台完成、主题变化、导航和尺寸恢复不抢焦点。Ctrl+反引号只执行一次且不输入字符；Enter、Tab、Ctrl+C、复制粘贴、多行粘贴和中文 IME 不串标签、不误发聊天。</td></tr>
+<tr><td>T10</td><td>长标题、多标签、主题与缩放</td><td>亮暗主题可辨，选中标签可见；标签横向滚动条和终端滚动条均可拖拽；窄窗口仍可新建 / 折叠，缩放不覆盖 Composer、不重启进程。</td></tr>
+<tr><td>T11</td><td>Windows / macOS / Linux 退出</td><td>各平台真实 Shell 验证启动中退出、运行中退出、后台持续输出与子进程结束。完全退出无终端线程阻止 JVM 退出；不承诺清理 OS 已脱离且无法追踪的外部进程。</td></tr>
+<tr><td>T12</td><td>应用恢复与回归</td><td>重启不恢复旧 Shell、不重放命令；历史聊天 JSONL 恢复、Agent 审批、取消、上下文压缩保持原行为。新建会话准备页 / 设置页不自行创建终端。</td></tr>
+</tbody></table></div>
+<p>自动化覆盖 T01–T08 的可提取逻辑与快捷键判定，真实 UI / PTY 覆盖 T09–T11，并完成 T12 相关回归。Windows 运行 <code>.\gradlew.bat test</code>，macOS / Linux 运行 <code>./gradlew test</code>。平台手工验收记录实际验证环境与结果，不能以假终端测试替代三平台验证。</p>
+<h2>9. 实施与验证记录</h2>
+<p>验证环境：Windows 11、JVM 17、Compose Desktop、BossTerm 1.2.183；真实 PTY 验证使用隔离的 cmd.exe，不加载用户模型配置。</p>
+<ul><li>主工程单元测试覆盖标签独立性、跨会话创建超过 64 个活跃 / 保留标签、退出保留、相邻选择、清理失败重试、旧代次回调、重启 / 删除 / 根退出竞争；删除会话时关闭其 64 个关联终端且保留其他会话，删除记录前阻止新建、删除失败后解除锁定。焦点请求有独立的取消与过期消费测试。</li>
+<li>隔离 PoC 的 Compose UI 测试覆盖导航挂载不抢焦点、鼠标聚焦与数字 / Enter 输入、退出屏幕只读、后台输出、反复切换与重复点击同一标签、确认框默认聚焦取消、关闭后台标签保留选择、关闭最后一个标签聚焦新建按钮。</li>
+<li>真实窗口 smoke 验证两个独立 PID、折叠 / 恢复、后台标签输出、自然退出码和关闭后选择相邻标签。原生测试覆盖 PTY 启动 / resize / 退出、无效 Shell、启动中关闭及终端环境过滤。</li>
+<li>集成测试发现 ProperTerminal 在卸载时调用 processHandle.kill；适配层已向渲染器提供不拥有终止权限的借用 handle，实际终止由 Manager → engine → platform 执行，避免切标签或折叠杀死后台 Shell。</li>
+<li>标签溢出回归覆盖：短标签先收缩、超出一屏时两端标签完整、窗口变宽 / 变窄、固定操作按钮、跨视口方向键焦点及 175% 缩放下的像素取整对齐。</li>
+<li>连续创建回归覆盖：点击新建至 64 个标签，以及在父组合完成后、惰性列表测量前插入标签的时序。列表项与 FocusRequester 绑定使用同一份不可变快照，避免从旧映射查询新标签引发 NoSuchElementException；已过期或不再可见的方向键焦点请求会被丢弃。</li>
+<li>macOS / Linux 实机、三平台 IME / 触控板 / 多行粘贴、三平台缩放压力与内存压力尚未完成；Windows 不能执行的 Unix 专属进程测试明确跳过，不视为通过。</li></ul>
+<p>复现命令：<code>.\gradlew.bat test</code>；<code>.\gradlew.bat -p poc/bossterm test uiTest</code>；<code>.\gradlew.bat -p poc/bossterm runPoc -PpocSmoke</code>。macOS / Linux 使用对应的 <code>./gradlew</code> 命令。</p>
+<p class="meta">实施默认值：每会话独立标签、不设置活跃终端或保留标签的数量上限、删除会话关闭其全部终端、关闭最后一个保留空面板、运行中关闭需确认。</p>
+</main></body></html>

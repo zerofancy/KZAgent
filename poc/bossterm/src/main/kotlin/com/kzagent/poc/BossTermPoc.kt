@@ -12,6 +12,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import com.kzagent.kagent.desktop.KZAgentFluentTheme
 import com.kzagent.kagent.desktop.ui.SessionTerminalPanel
+import com.kzagent.kagent.desktop.ui.TerminalFocusState
 import io.github.composefluent.component.Button
 import io.github.composefluent.component.Text
 import com.kzagent.kagent.desktop.terminal.BossTermTerminalHandle
@@ -30,14 +31,16 @@ fun main(args: Array<String>) {
     TerminalSettingsProfile.initialize(sandbox.resolve("terminal-settings"))
     application {
         Window(onCloseRequest = ::exitApplication, title = "KZAgent · BossTerm PoC") {
-            val manager = remember { SessionTerminalManager(factory = { BossTermTerminalHandle(it, isolatedSettings()) }, installShutdownHook = false) }
+            val manager = remember { SessionTerminalManager(factory = { BossTermTerminalHandle(it, isolatedSettings(), command = isolatedShell()) }, installShutdownHook = false) }
             val state = manager.stateFor("poc")
+            val focus = remember { TerminalFocusState("poc") }
             DisposableEffect(manager) {
                 onDispose { manager.close() }
             }
             LaunchedEffect(manager) {
                 manager.toggle("poc", sandbox)
-                val terminal = state.handle as BossTermTerminalHandle
+                val firstTab = state.activeTab!!
+                val terminal = firstTab.handle as BossTermTerminalHandle
                 if ("--smoke" in args) {
                     try {
                         withTimeout(15_000) {
@@ -48,10 +51,20 @@ fun main(args: Array<String>) {
                             delay(300)
                             state.visible = true
                             check(pid == terminal.engine.processHandle?.getPid())
-                            terminal.view.writeUserInput("echo POC-renderer-ready; exit 7\r")
+                            val secondTab = manager.createTab("poc", sandbox)!!
+                            val second = secondTab.handle as BossTermTerminalHandle
+                            second.engine.state.first { it is TerminalSessionEngine.State.Connected }
+                            check(pid != second.engine.processHandle?.getPid())
+                            terminal.view.writeUserInput("echo POC-background-ready\r")
+                            delay(300)
+                            manager.selectTab("poc", firstTab.tabId)
+                            terminal.view.writeUserInput("exit 7\r")
                             terminal.engine.state.first { it is TerminalSessionEngine.State.Exited }
                             check(terminal.engine.exitCode == 7)
-                            println("GATE UI/Fluent-render-hide-restore: PASS")
+                            manager.closeTab("poc", firstTab.tabId, firstTab.generation)!!.join()
+                            check(state.activeTabId == secondTab.tabId)
+                            check(second.engine.processHandle?.isAlive() == true)
+                            println("GATE UI/Fluent-tabs-hide-restore-background: PASS")
                         }
                     } finally { exitApplication() }
                 }
@@ -62,8 +75,8 @@ fun main(args: Array<String>) {
                         Text(if (state.visible) "折叠终端（保留 shell）" else "恢复终端")
                     }
                     if (state.visible) {
-                        SessionTerminalPanel(state, sandbox, manager, autoFocus = false,
-                            onCollapse = { state.visible = false }, modifier = Modifier.weight(1f))
+                        SessionTerminalPanel(state = state, workspace = sandbox, manager = manager, focusState = focus,
+                            onCollapse = { state.visible = false; focus.cancel() }, modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -72,3 +85,4 @@ fun main(args: Array<String>) {
 }
 
 internal fun isolatedSettings(): TerminalSettings = com.kzagent.kagent.desktop.terminal.terminalSettingsProfile()
+internal fun isolatedShell(): String = if (System.getProperty("os.name").lowercase().contains("windows")) "cmd.exe" else "/bin/sh"

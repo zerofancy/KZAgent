@@ -19,7 +19,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -29,6 +31,9 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.unit.dp
 import com.kzagent.kagent.config.AppConfig
 import com.kzagent.kagent.config.SecretRedactor
@@ -42,6 +47,7 @@ import com.kzagent.kagent.desktop.SessionManager
 import com.kzagent.kagent.desktop.ui.SessionSidePanel
 import com.kzagent.kagent.desktop.ui.SessionTerminalPanel
 import com.kzagent.kagent.desktop.ui.TerminalResizeHandle
+import com.kzagent.kagent.desktop.ui.TerminalFocusState
 import com.kzagent.kagent.desktop.terminal.SessionTerminalManager
 import com.kzagent.kagent.desktop.terminal.terminalPanelHeight
 import com.kzagent.kagent.llm.AgentMessage
@@ -111,6 +117,7 @@ internal fun sendDesktopSessionMessage(
 }
 
 @Composable
+@OptIn(ExperimentalComposeUiApi::class)
 internal fun DesktopConversation(
     state: DesktopSessionUiState,
     sessionManager: SessionManager,
@@ -122,10 +129,10 @@ internal fun DesktopConversation(
     val terminal = terminalManager.stateFor(session.id)
     val composerFocus = remember { FocusRequester() }
     var focusComposerRequest by remember { mutableIntStateOf(0) }
-    var focusTerminal by remember(session.id) { mutableStateOf(false) }
+    val terminalFocus = remember(session.id) { TerminalFocusState(session.id) }
     val toggleTerminal = {
         terminalManager.toggle(session.id, session.workspace)
-        focusTerminal = terminal.visible
+        if (terminal.visible) terminalFocus.request(terminal.activeTabId) else terminalFocus.cancel()
         if (!terminal.visible) focusComposerRequest++
     }
     LaunchedEffect(focusComposerRequest) {
@@ -134,6 +141,7 @@ internal fun DesktopConversation(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onPointerEvent(PointerEventType.Press, pass = PointerEventPass.Initial) { terminalFocus.cancel() }
             .onPreviewKeyEvent { event ->
                 val matches = isTerminalToggleKey(event.key == Key.Grave, event.isCtrlPressed,
                     event.isAltPressed, event.isMetaPressed, event.isShiftPressed)
@@ -166,12 +174,17 @@ internal fun DesktopConversation(
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val availableHeight = maxHeight.value
                 val terminalHeight = if (terminal.visible) terminalPanelHeight(availableHeight, terminal.heightRatio) else 0f
+                LaunchedEffect(terminalHeight > 0f) {
+                    if (terminalHeight <= 0f) terminalFocus.cancel()
+                }
                 Column(Modifier.fillMaxSize()) {
                     Row(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        Column(modifier = Modifier.weight(1f).fillMaxHeight().onFocusChanged {
+                            if (it.hasFocus) terminalFocus.cancel()
+                        }) {
                             MessageList(
                                 sessionId = session.id,
                                 messages = session.messages,
@@ -211,10 +224,10 @@ internal fun DesktopConversation(
                                 .coerceIn(160f, availableHeight - 226f) / availableHeight
                         }
                         SessionTerminalPanel(
-                            terminal, focusTerminal,
-                            onCollapse = { terminal.visible = false; focusComposerRequest++ },
+                            state = terminal, manager = terminalManager, workspace = session.workspace,
+                            focusState = terminalFocus,
+                            onCollapse = { terminal.visible = false; terminalFocus.cancel(); focusComposerRequest++ },
                             modifier = Modifier.fillMaxWidth().height(terminalHeight.dp),
-                            onFocusHandled = { focusTerminal = false },
                         )
                     }
                 }

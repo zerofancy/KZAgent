@@ -113,7 +113,11 @@ internal fun DesktopSessionDialogs(
         onDismissDeleteConfirm = { state.showDeleteConfirmIndex = -1 },
         onDeleteSession = { index ->
             state.showDeleteConfirmIndex = -1
-            handleDeleteSession(index, sessionManager, scope, beforeDelete = { id -> terminalManager.closeSession(id) }) { error ->
+            handleDeleteSession(index, sessionManager, scope,
+                beforeDelete = { id -> terminalManager.closeSession(id) },
+                afterDelete = { id -> terminalManager.finishSessionDeletion(id, deleted = true) },
+                onDeleteFailed = { id -> terminalManager.finishSessionDeletion(id, deleted = false) },
+            ) { error ->
                 state.sessionLoadError = error
             }
         },

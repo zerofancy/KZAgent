@@ -2,6 +2,7 @@ package com.kzagent.kagent.desktop.terminal
 
 import ai.rever.bossterm.compose.ComposeTerminalDisplay
 import ai.rever.bossterm.compose.ConnectionState
+import ai.rever.bossterm.compose.PlatformServices
 import ai.rever.bossterm.compose.TerminalSession
 import ai.rever.bossterm.compose.features.ContextMenuController
 import ai.rever.bossterm.compose.ime.IMEState
@@ -12,7 +13,6 @@ import ai.rever.bossterm.compose.tabs.TerminalTab
 import ai.rever.bossterm.compose.util.normalizeSubmitNewlines
 import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
@@ -39,7 +41,9 @@ internal class BossTermTerminalHandle(
         }
     }
     private val closed = AtomicBoolean()
-    private val stopped = CompletableDeferred<Unit>()
+    private val shutdownMutex = Mutex()
+    private var engineTerminated = false
+    private var viewDisposed = false
     private val terminalStatus = MutableStateFlow(TerminalStatus(TerminalPhase.STARTING))
     override val status = terminalStatus.asStateFlow()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -91,7 +95,7 @@ internal class BossTermTerminalHandle(
                     TerminalSessionEngine.State.Initializing -> ConnectionState.Initializing
                     TerminalSessionEngine.State.Connected -> {
                         val handle = checkNotNull(engine.processHandle)
-                        val adapter = engine.processHandleAdapter(handle)
+                        val adapter = rendererHandle(handle)
                         tab.processHandle.value = adapter
                         ConnectionState.Connected(adapter)
                     }
@@ -101,7 +105,7 @@ internal class BossTermTerminalHandle(
                         // display connected to the drained model to retain final output; input
                         // is rejected above and the Fluent toolbar exposes explicit restart.
                         engine.processHandle?.let { raw ->
-                            val adapter = engine.processHandleAdapter(raw)
+                            val adapter = rendererHandle(raw)
                             tab.processHandle.value = adapter
                             ConnectionState.Connected(adapter)
                         } ?: ConnectionState.Error("终端已退出")
@@ -115,28 +119,34 @@ internal class BossTermTerminalHandle(
 
     override fun start() = engine.start()
 
-    override fun requestClose() { engine.close() }
+    private fun rendererHandle(raw: PlatformServices.ProcessService.ProcessHandle): PlatformServices.ProcessService.ProcessHandle =
+        object : PlatformServices.ProcessService.ProcessHandle by engine.processHandleAdapter(raw) {
+            // ProperTerminal kills its processHandle from onDispose. Switching tabs or
+            // folding the panel only unmounts a renderer; the manager owns termination
+            // through engine.close()/shutdown(), never through this borrowed view.
+            override suspend fun kill() = Unit
+        }
 
-    override suspend fun shutdown() {
-        if (!closed.compareAndSet(false, true)) { stopped.await(); return }
-        engine.close()
+    override fun requestClose() { closed.set(true); engine.close() }
+
+    override suspend fun shutdown() = shutdownMutex.withLock {
+        requestClose()
         try {
-            withTimeout(5_000) { engine.awaitTermination() }
-        } catch (error: Throwable) {
-            stopped.completeExceptionally(error)
-            throw error
+            if (!engineTerminated) {
+                withTimeout(5_000) { engine.awaitTermination() }
+                engineTerminated = true
+            }
         } finally {
-            // The engine is drained before the tab closes its stream and display.
+            // Failed teardown remains retryable: input stays disabled, but the manager
+            // retains this handle until engine and platform cleanup both succeed.
             try {
-                try { tab.dispose() }
-                finally {
-                    scope.cancel()
-                    platform.close()
+                if (!viewDisposed) {
+                    tab.dispose()
+                    viewDisposed = true
                 }
-                stopped.complete(Unit)
-            } catch (error: Throwable) {
-                stopped.completeExceptionally(error)
-                throw error
+            } finally {
+                scope.cancel()
+                platform.close()
             }
         }
     }

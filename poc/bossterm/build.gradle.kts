@@ -18,6 +18,7 @@ kotlin {
         kotlin.include("**/BossTermPoc.kt", "**/BossTermTerminalHandle.kt", "**/TerminalProcessPlatform.kt",
             "**/SessionTerminalManager.kt", "**/TerminalSettingsProfile.kt", "**/SessionTerminalPanel.kt", "**/KZAgentFluentTheme.kt")
         kotlin.include("**/TerminalUnixSession.kt")
+        kotlin.include("**/TerminalTabBar.kt")
     }
     compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
 }
@@ -25,6 +26,7 @@ kotlin {
 dependencies {
     implementation(compose.desktop.currentOs)
     implementation("io.github.compose-fluent:fluent:v0.1.0")
+    implementation("io.github.compose-fluent:fluent-icons-extended:v0.1.0")
     implementation("org.jetbrains.compose.material3:material3:1.9.0")
     implementation("com.risaboss:bossterm-compose-desktop:$bossTermVersion") {
         exclude(group = "org.jetbrains.compose.desktop", module = "desktop-jvm-macos-arm64")
