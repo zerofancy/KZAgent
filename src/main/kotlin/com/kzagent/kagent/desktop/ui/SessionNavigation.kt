@@ -1,25 +1,40 @@
 package com.kzagent.kagent.desktop
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.github.composefluent.FluentTheme
 import io.github.composefluent.component.MenuItem
 import io.github.composefluent.component.NavigationDisplayMode
-import io.github.composefluent.component.NavigationView
+import io.github.composefluent.ExperimentalFluentApi
+import io.github.composefluent.background.Layer
+import io.github.composefluent.background.Mica
+import io.github.composefluent.component.NavigationDefaults
+import io.github.composefluent.component.NavigationMenuItemScope
+import io.github.composefluent.component.NavigationState
+import io.github.composefluent.component.SideNav
+import io.github.composefluent.component.SideNavHeaderArea
 import io.github.composefluent.component.ProgressRing
 import io.github.composefluent.component.ProgressRingSize
 import io.github.composefluent.component.SideNavHeader
+import io.github.composefluent.component.SideNavItem
 import io.github.composefluent.component.SubtleButton
-import io.github.composefluent.component.menuItemSeparator
 import io.github.composefluent.component.rememberNavigationState
 import io.github.composefluent.component.Text as FluentText
 import io.github.composefluent.component.Icon as FluentIcon
@@ -29,7 +44,6 @@ import io.github.composefluent.icons.regular.ArrowDown
 import io.github.composefluent.icons.regular.ArrowUp
 import io.github.composefluent.icons.regular.Delete
 import io.github.composefluent.icons.regular.Document
-import io.github.composefluent.icons.regular.Folder
 import io.github.composefluent.icons.regular.Rename
 import io.github.composefluent.icons.regular.Settings
 import java.nio.file.Files
@@ -68,12 +82,10 @@ private data class SessionGroup(
 
 private sealed interface SessionNavigationRow {
     val key: String
-    val contentType: String
 }
 
 private data class SessionWorkspaceHeader(
     override val key: String,
-    override val contentType: String = "session-workspace-header",
     val workspace: Path,
     val expanded: Boolean,
     val workspaceKey: String,
@@ -81,7 +93,6 @@ private data class SessionWorkspaceHeader(
 
 private data class SessionEntryRow(
     override val key: String,
-    override val contentType: String = "session-entry",
     val entry: SessionSortEntry,
 ) : SessionNavigationRow
 
@@ -95,7 +106,6 @@ internal fun KZAgentNavigationView(
     onAddSession: () -> Unit,
     onDeleteSession: (Int) -> Unit,
     onRenameSession: (Int) -> Unit,
-    onChooseWorkspace: () -> Unit,
     onWorkspaceExpandedChanged: (String, Boolean) -> Unit,
     onSettings: () -> Unit,
     skillsSelected: Boolean = false,
@@ -108,7 +118,6 @@ internal fun KZAgentNavigationView(
         val navigationState = rememberNavigationState(
             initialExpanded = displayMode == NavigationDisplayMode.Left,
         )
-        val activeSessionId = sessions.getOrNull(activeIndex)?.id
         val sortedSessionGroups = sessions
             .mapIndexed { index, session ->
                 val updatedAt = runCatching {
@@ -155,98 +164,153 @@ internal fun KZAgentNavigationView(
             }
         }
 
-        NavigationView(
+        SessionNavigationLayout(
             modifier = Modifier.fillMaxSize(),
             displayMode = displayMode,
             state = navigationState,
             title = { FluentText("KZAgent", maxLines = 1) },
+            fixedHeader = {
+                SideNavItem(
+                    selected = activeIndex == -1 && !settingsSelected && !skillsSelected,
+                    onClick = { runDestinationAction(onAddSession) },
+                    icon = { FluentIcon(Icons.Default.Add, contentDescription = null) },
+                ) {
+                    FluentText("创建新会话", maxLines = 1)
+                }
+                SideNavHeader {
+                    FluentText("会话列表", maxLines = 1)
+                }
+            },
             menuItems = {
-                item(key = "new-session") {
-                    MenuItem(
-                        selected = activeIndex == -1 && !settingsSelected && !skillsSelected,
-                        onClick = { runDestinationAction(onAddSession) },
-                        text = { FluentText("创建新会话", maxLines = 1) },
-                        icon = { FluentIcon(Icons.Default.Add, contentDescription = null) },
-                    )
-                }
-                item(key = "choose-workspace") {
-                    MenuItem(
-                        selected = false,
-                        onClick = { runDestinationAction(onChooseWorkspace) },
-                        text = { FluentText("切换工作区", maxLines = 1) },
-                        icon = { FluentIcon(Icons.Default.Folder, contentDescription = null) },
-                    )
-                }
-                menuItemSeparator(key = "session-separator")
-                item(key = "session-list-header") {
-                    SideNavHeader {
-                        FluentText("会话列表", maxLines = 1)
-                    }
-                }
-                items(
-                    count = sortedRows.size,
-                    key = { sortedRows[it].key },
-                    contentType = { sortedRows[it].contentType },
-                ) { rowIndex ->
-                    when (val row = sortedRows[rowIndex]) {
-                        is SessionWorkspaceHeader -> {
-                            SideNavHeader(
-                                modifier = Modifier.clickable {
-                                    onWorkspaceExpandedChanged(row.workspaceKey, !row.expanded)
-                                },
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically,
+                sortedRows.forEach { row ->
+                    key(row.key) {
+                        when (row) {
+                            is SessionWorkspaceHeader -> {
+                                SideNavHeader(
+                                    modifier = Modifier.clickable {
+                                        onWorkspaceExpandedChanged(row.workspaceKey, !row.expanded)
+                                    },
                                 ) {
-                                    FluentText(workspaceProjectName(row.workspace), maxLines = 1)
-                                    FluentIcon(
-                                        imageVector = if (row.expanded) Icons.Default.ArrowUp else Icons.Default.ArrowDown,
-                                        contentDescription = if (row.expanded) "收起分组" else "展开分组",
-                                        modifier = Modifier.size(14.dp),
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        FluentText(workspaceProjectName(row.workspace), maxLines = 1)
+                                        FluentIcon(
+                                            imageVector = if (row.expanded) Icons.Default.ArrowUp else Icons.Default.ArrowDown,
+                                            contentDescription = if (row.expanded) "收起分组" else "展开分组",
+                                            modifier = Modifier.size(14.dp),
+                                        )
+                                    }
                                 }
                             }
-                        }
 
-                        is SessionEntryRow -> {
-                            val session = row.entry.session
-                            MenuItem(
-                                selected = isSessionNavigationSelected(settingsSelected, activeIndex, row.entry.index, skillsSelected),
-                                onClick = { runDestinationAction { onSelectSession(row.entry.index) } },
-                                text = { FluentText(session.name, maxLines = 1) },
-                                icon = { FluentIcon(Icons.Default.Document, contentDescription = null) },
-                                badge = {
-                                    SessionNavigationBadge(
-                                        busy = session.isBusy,
-                                        showActions = navigationState.expanded,
-                                        onRename = { onRenameSession(row.entry.index) },
-                                        onDelete = { onDeleteSession(row.entry.index) },
-                                    )
-                                },
-                            )
+                            is SessionEntryRow -> {
+                                val session = row.entry.session
+                                MenuItem(
+                                    selected = isSessionNavigationSelected(settingsSelected, activeIndex, row.entry.index, skillsSelected),
+                                    onClick = { runDestinationAction { onSelectSession(row.entry.index) } },
+                                    text = { FluentText(session.name, maxLines = 1) },
+                                    icon = { FluentIcon(Icons.Default.Document, contentDescription = null) },
+                                    badge = {
+                                        SessionNavigationBadge(
+                                            busy = session.isBusy,
+                                            showActions = navigationState.expanded,
+                                            onRename = { onRenameSession(row.entry.index) },
+                                            onDelete = { onDeleteSession(row.entry.index) },
+                                        )
+                                    },
+                                )
+                            }
                         }
                     }
                 }
             },
             footerItems = {
-                item(key = "skills") {
-                    MenuItem(selected = skillsSelected, onClick = { runDestinationAction(onSkills) },
-                        text = { FluentText("Skills", maxLines = 1) },
-                        icon = { FluentIcon(Icons.Default.Document, contentDescription = null) })
-                }
-                item(key = "settings") {
-                    MenuItem(
-                        selected = settingsSelected,
-                        onClick = { runDestinationAction(onSettings) },
-                        text = { FluentText("设置", maxLines = 1) },
-                        icon = { FluentIcon(Icons.Default.Settings, contentDescription = null) },
-                    )
-                }
+                MenuItem(
+                    selected = skillsSelected,
+                    onClick = { runDestinationAction(onSkills) },
+                    text = { FluentText("Skills", maxLines = 1) },
+                    icon = { FluentIcon(Icons.Default.Document, contentDescription = null) },
+                )
+                MenuItem(
+                    selected = settingsSelected,
+                    onClick = { runDestinationAction(onSettings) },
+                    text = { FluentText("设置", maxLines = 1) },
+                    icon = { FluentIcon(Icons.Default.Settings, contentDescription = null) },
+                )
             },
             pane = pane,
         )
+    }
+}
+
+@Composable
+@OptIn(ExperimentalFluentApi::class)
+private fun SessionNavigationLayout(
+    displayMode: NavigationDisplayMode,
+    state: NavigationState,
+    title: @Composable () -> Unit,
+    fixedHeader: @Composable () -> Unit,
+    menuItems: @Composable NavigationMenuItemScope.() -> Unit,
+    footerItems: @Composable NavigationMenuItemScope.() -> Unit,
+    modifier: Modifier = Modifier,
+    pane: @Composable () -> Unit,
+) {
+    val compact = displayMode == NavigationDisplayMode.LeftCompact
+    val itemScope = remember(displayMode) {
+        object : NavigationMenuItemScope {
+            override val displayMode = displayMode
+            override val isFooter = false
+        }
+    }
+    val footerScope = remember(displayMode) {
+        object : NavigationMenuItemScope {
+            override val displayMode = displayMode
+            override val isFooter = true
+        }
+    }
+    val navigation: @Composable () -> Unit = {
+        SideNav(
+            modifier = Modifier.fillMaxHeight(),
+            indicatorState = state.indicatorState,
+            expanded = state.expanded,
+            onExpandStateChange = { state.expanded = it },
+            header = {
+                SideNavHeaderArea(
+                    title = title,
+                    backButton = {},
+                    expandButton = {
+                        NavigationDefaults.ExpandedButton(onClick = { state.expanded = !state.expanded })
+                    },
+                )
+            },
+            // flex 位于标题下方、滚动容器之外，固定新建入口和列表标题。
+            flex = fixedHeader,
+            footer = { footerItems(footerScope) },
+        ) { menuItems(itemScope) }
+    }
+    Box(modifier) {
+        Row(Modifier.fillMaxSize()) {
+            if (compact) Spacer(Modifier.width(48.dp)) else navigation()
+            Layer(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                shape = RoundedCornerShape(topStart = FluentTheme.cornerRadius.overlay),
+                color = FluentTheme.colors.background.layer.default,
+                border = BorderStroke(1.dp, FluentTheme.colors.stroke.card.default),
+                content = pane,
+            )
+        }
+        if (compact) {
+            // 窄窗口展开时覆盖正文；点击正文收起，避免挤压会话内容。
+            Row(Modifier.fillMaxSize()) {
+                Mica(Modifier) { navigation() }
+                if (state.expanded) {
+                    Box(Modifier.weight(1f).fillMaxHeight().clickable { state.expanded = false })
+                }
+            }
+        }
     }
 }
 

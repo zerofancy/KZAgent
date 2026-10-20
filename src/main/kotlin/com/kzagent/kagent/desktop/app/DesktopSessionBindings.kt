@@ -8,7 +8,6 @@ import com.kzagent.kagent.desktop.KZAgentNavigationView
 import com.kzagent.kagent.desktop.NewSessionDraft
 import com.kzagent.kagent.desktop.SessionManager
 import com.kzagent.kagent.desktop.terminal.SessionTerminalManager
-import com.kzagent.kagent.desktop.chooseWorkspace
 import com.kzagent.kagent.desktop.saveSessionWorkspaceExpandState
 import java.nio.file.Path
 import kotlinx.coroutines.CancellationException
@@ -59,25 +58,6 @@ internal fun DesktopSessionNavigation(
             if (state.draft.submitting) return@KZAgentNavigationView
             state.renameText = sessionManager.sessions[index].name
             state.showRenameDialogIndex = index
-        },
-        onChooseWorkspace = {
-            if (!state.draft.submitting) scope.launch {
-                try {
-                    val currentWorkspace = if (state.hasDraft) state.draft.workspace
-                        else sessionManager.activeSessionOrNull()?.workspace ?: initialWorkspace
-                    chooseWorkspace(currentWorkspace)?.let { path ->
-                        state.draft.workspace = withContext(Dispatchers.IO) { requireReadableWorkspace(path) }
-                        state.hasDraft = true
-                        state.showNewSession = true
-                        state.showSettings = false; state.showSkills = false
-                    }
-                } catch (error: CancellationException) { throw error }
-                catch (error: Exception) {
-                    val message = SecretRedactor.redact(error.message ?: error.toString())
-                    state.draft.error = message
-                    sessionManager.activeSessionOrNull()?.error = message
-                }
-            }
         },
         onSettings = { if (!state.draft.submitting) { state.showSettings = true; state.showSkills = false } },
         skillsSelected = state.showSkills,
