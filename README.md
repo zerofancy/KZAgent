@@ -123,7 +123,9 @@ CLI 首次运行 `chat`（含无参数运行）或 `ask` 时，若缺少 Provide
 
 ### 3. 打包桌面应用
 
-Release 的依赖 keep 规则由 [ComposeDesktopKeepKit](https://github.com/zerofancy/ComposeDesktopKeepKit) `v0.2.3` 按最终解析的依赖版本自动生成，通过 JitPack 加载插件，无需维护本地依赖 `.pro` 文件。仅保留 `compose-fluent.pro` 中针对当前 Compose Fluent / Haze 二进制兼容性的警告抑制。插件不改变 Compose 原有的优化和混淆开关。
+Release 的通用依赖 keep 规则由 [ComposeDesktopKeepKit](https://github.com/zerofancy/ComposeDesktopKeepKit) `v0.2.3` 按最终解析的依赖版本自动生成，通过 JitPack 加载插件。项目额外保留 `compose-fluent.pro` 中针对当前 Compose Fluent / Haze 二进制兼容性的警告抑制，以及 `terminal-dependencies.pro` 中的终端原生调用边界和兼容规则。BossTerm 1.2.183 的 `ProperTerminalKt` 使用局部 `-keep,includecode` 规则保护方法体，避免 ProGuard 转换终端指针处理代码后生成不一致的栈帧，导致点击终端时发生 `VerifyError`、界面停止重绘。其他类继续按原配置裁剪和优化。插件不改变 Compose 原有的优化和混淆开关。
+
+运行 `./gradlew verifyReleaseTerminal`（Windows 使用 `.\gradlew.bat verifyReleaseTerminal`）可构建优化后的 Release JAR，并通过 JVM 验证终端渲染类的字节码；此检查不依赖图形环境或 API Key，不替代实际终端交互验证。
 
 可运行 `.\gradlew.bat keepKitReport` 查看依赖匹配报告；插件生成的规则和报告存放在 Gradle 用户缓存中。
 
@@ -163,6 +165,7 @@ Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本�
 - 标签栏直接从标签开始，右侧提供新建、重启当前终端和折叠按钮，支持连续创建、关闭和切换标签。折叠保留全部标签和进程；标签上的「×」结束对应终端，启动中或运行中关闭 / 重启需要确认。Shell 自然退出后保留输出和退出码，可显式重启。关闭最后一个标签后保留空面板，可点击「新建终端」重新创建；再次展开不会自动启动 Shell。清理失败保留标签及资源归属，并提供「重试清理」。
 - 应用不设置活跃终端或保留标签的数量上限，不会自动淘汰已有终端。切换标签、会话或修改模型保留进程与输出，后台终端继续运行。删除会话会关闭其关联的全部终端标签并清理进程，其他会话的终端不受影响；清理失败时保留会话并提示重试。完全退出应用会清理全部终端及捕获到的子进程。macOS 仅关闭窗口仍保持驻留，`Command + Q` 才完全退出。终端标签、状态和输出不跨应用启动恢复，不自动重放命令。
 - 本地终端按当前用户权限执行，初始目录不构成沙箱；Agent 的 `run_command` 仍使用原审批和执行链路，Agent 不控制此终端，终端输出不自动写入聊天历史或发给模型。终端不启用 BossTerm 的安装向导、MCP、分享、daemon、OSC 52 或文件传输；独立设置存于应用数据目录的 `terminal/`。
+- 桌面端发生未捕获异常（包括 Compose 渲染、事件和后台线程异常）时，会在独立窗口中显示脱敏错误详情，可选择「复制错误信息」「关闭应用」或「关闭提示」。同一时间只显示一个错误窗口；主界面的渲染异常不保证可恢复，建议复制信息后关闭应用并重新启动。若报错窗口的 Compose 渲染也不可用，则使用原生文本界面兜底。正常协程取消不弹窗，完整脱敏堆栈仍记录在 `desktop.log`。
 - 启动时自动检测配置：如未设置 API Key 或配置加载失败，将**默认跳转到设置界面**，保存有效配置后再加载会话
 - 配置、历史会话和本地文件工具均在后台 IO 调度器中读写，加载或搜索大型工作区时不会阻塞桌面 UI
 - 在状态栏显示模型请求、工具执行和审批状态
@@ -545,6 +548,8 @@ MIMOCODE_API_KEY=sk-mimo-xxxxxxxxxxxx   # JSON 中未配置 MiMo Code 时生效
 # 运行（需先配置 API Key）
 ./gradlew run --args="ask \"你好\""
 ```
+
+可在图形环境运行 `./gradlew verifyDesktopErrorWindow`（Windows 使用 `.\gradlew.bat verifyDesktopErrorWindow`），通过主动注入主界面和报错窗口的渲染异常，验证独立弹窗、窗口缩放、脱敏复制、关闭应用和原生兜底。
 
 ---
 

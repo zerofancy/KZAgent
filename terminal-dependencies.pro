@@ -13,3 +13,8 @@
 # Keep that boundary explicit even when dependency-rule generation changes.
 -keep class com.pty4j.** { *; }
 -keep interface com.kzagent.kagent.desktop.terminal.TerminalUnixSession$LibC { *; }
+
+# Plain -keep preserves entry points but still permits method-body adaptation.
+# Preserve this renderer's code too: rewriting its large Compose pointer handler
+# produces invalid stack-map frames and stops composition with VerifyError.
+-keep,includecode class ai.rever.bossterm.compose.ui.ProperTerminalKt { *; }

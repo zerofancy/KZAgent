@@ -1,6 +1,8 @@
 package com.kzagent.kagent.desktop.app
 
 import androidx.compose.ui.awt.ComposePanel
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.window.WindowExceptionHandler
 import com.kzagent.kagent.config.AppDataDir
 import com.kzagent.kagent.config.SecretRedactor
 import java.awt.BorderLayout
@@ -61,6 +63,7 @@ private fun applyLinuxDpiScale() {
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 fun runDesktopApp(
     initialWorkspace: Path,
     openStartupWorkspace: Boolean,
@@ -68,9 +71,22 @@ fun runDesktopApp(
     applyLinuxDpiScale()
     System.setProperty("apple.awt.application.name", "KZAgent")
     System.setProperty("apple.awt.UIElement", "false")
-    Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
-        desktopLog("uncaught exception: ${throwable.message ?: throwable}", throwable)
+    val closed = CountDownLatch(1)
+    var hostFrame: JFrame? = null
+    val errorWindow = DesktopErrorWindow {
+        hostFrame?.dispose()
+        closed.countDown()
     }
+    val errors = DesktopErrorReporter(
+        present = { report, onDismiss ->
+            errorWindow.show(report) {
+                onDismiss()
+                if (hostFrame == null) closed.countDown()
+            }
+        },
+        dismiss = errorWindow::close,
+    )
+    errors.install()
     desktopLog("starting Swing host")
     if (openPackagedAppBeforeAwt()) {
         exitProcess(0)
@@ -85,10 +101,10 @@ fun runDesktopApp(
     )
     if (instanceStart is DesktopInstanceStart.Forwarded) {
         desktopLog("forwarded launch request to the existing GUI")
+        errors.close()
         return
     }
     val instanceCoordinator = (instanceStart as DesktopInstanceStart.Primary).coordinator
-    val closed = CountDownLatch(1)
     val initialized = CountDownLatch(1)
     val windowShown = AtomicBoolean(false)
     val windowLifecycle = desktopWindowLifecycle(System.getProperty("os.name"))
@@ -119,6 +135,7 @@ fun runDesktopApp(
                 })
                 pack()
             }
+            hostFrame = frame
             if (shouldOverrideTaskbarIcon(System.getProperty("os.name"), System.getProperty("jpackage.app-path"))) {
                 setTaskbarIconIfSupported(selectTaskbarIcon(frame.iconImages))
             }
@@ -135,6 +152,7 @@ fun runDesktopApp(
             }
             desktopLog("creating ComposePanel")
             val panel = ComposePanel().apply {
+                exceptionHandler = WindowExceptionHandler { errors.report(it) }
                 setContent {
                     KZAgentDesktopApp(
                         initialWorkspace = initialWorkspace,
@@ -159,17 +177,20 @@ fun runDesktopApp(
             instanceCoordinator.close()
             if (!openPackagedAppFallback("direct window failed")) {
                 startupFailure = throwable
-                closed.countDown()
             }
         } finally {
             initialized.countDown()
         }
     }
-    instanceCoordinator.use { _ ->
-        initialized.await()
-        startupFailure?.let { throw it }
-        closed.await()
-        desktopLog("closed")
+    try {
+        instanceCoordinator.use { _ ->
+            initialized.await()
+            startupFailure?.let { errors.report(it) }
+            closed.await()
+            desktopLog("closed")
+        }
+    } finally {
+        errors.close()
     }
 }
 

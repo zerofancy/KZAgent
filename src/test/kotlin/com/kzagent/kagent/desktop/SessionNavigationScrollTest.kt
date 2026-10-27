@@ -63,9 +63,13 @@ class SessionNavigationScrollTest {
                 }
             }.use { scene ->
                 frames(scene)
-                // 紧凑模式先展开，以便通过文字定位控件并验证同一滚动行为。
+                // FontIcon 隐藏了实现用的字形文本；通过按钮公开的无障碍语义定位。
+                // 紧凑模式先展开，以便验证与宽窗口相同的滚动行为。
                 if (width < 1000) {
-                    val toggle = all(scene).first { text(it) == "\uE700" }
+                    val toggle = all(scene).firstOrNull {
+                        it.config.getOrNull(SemanticsProperties.ContentDescription)?.contains("Navigation") == true &&
+                            it.config.getOrNull(SemanticsActions.OnClick) != null
+                    } ?: error("Missing accessible navigation toggle at width=$width")
                     toggle.config[SemanticsActions.OnClick].action!!.invoke()
                     frames(scene)
                 }
