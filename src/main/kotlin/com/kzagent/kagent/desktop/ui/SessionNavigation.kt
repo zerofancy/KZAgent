@@ -208,11 +208,12 @@ internal fun KZAgentNavigationView(
 
                             is SessionEntryRow -> {
                                 val session = row.entry.session
-                                MenuItem(
+                                SessionNavigationItem(
+                                    session = session,
+                                    indicatorState = navigationState.indicatorState,
+                                    expanded = navigationState.expanded,
                                     selected = isSessionNavigationSelected(settingsSelected, activeIndex, row.entry.index, skillsSelected),
                                     onClick = { runDestinationAction { onSelectSession(row.entry.index) } },
-                                    text = { FluentText(session.name, maxLines = 1) },
-                                    icon = { FluentIcon(Icons.Default.Document, contentDescription = null) },
                                     badge = {
                                         SessionNavigationBadge(
                                             busy = session.isBusy,
