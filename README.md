@@ -128,6 +128,8 @@ Release 的通用依赖 keep 规则由 [ComposeDesktopKeepKit](https://github.co
 
 运行 `./gradlew verifyReleaseTerminal`（Windows 使用 `.\gradlew.bat verifyReleaseTerminal`）可构建优化后的 Release JAR，并通过 JVM 验证终端渲染类的字节码；此检查不依赖图形环境或 API Key，不替代实际终端交互验证。
 
+`jna-dependencies.pro` 保留 JNA 的 `Native.finalizer` 生命周期引用，避免垃圾回收提前释放仍在使用的原生回调。运行 `./gradlew verifyReleaseNativeCallbacks` 可检查优化后的 JNA 在垃圾回收后仍保持加载；macOS 还会反复执行目录选择器使用的 AppKit 主线程回调，需要图形环境。
+
 可运行 `.\gradlew.bat keepKitReport` 查看依赖匹配报告；插件生成的规则和报告存放在 Gradle 用户缓存中。
 
 Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本覆盖已安装版本：

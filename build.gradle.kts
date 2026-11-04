@@ -128,6 +128,7 @@ compose.desktop {
                 project.file("compose-fluent.pro"),
                 project.file("terminal-dependencies.pro"),
                 project.file("mcp-dependencies.pro"),
+                project.file("jna-dependencies.pro"),
             )
         }
     }
@@ -257,6 +258,16 @@ tasks.register<JavaExec>("verifyDesktopErrorWindow") {
 val releaseTest = sourceSets.create("releaseTest")
 val releaseJars = fileTree(layout.buildDirectory.dir("compose/tmp/main-release/proguard")) { include("*.jar") }
 val verificationJava = javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(17)) }
+
+tasks.register<JavaExec>("verifyReleaseNativeCallbacks") {
+    group = "verification"
+    description = "Verify JNA lifetime and macOS picker callbacks across GC in optimized Release jars."
+    dependsOn("proguardReleaseJars", releaseTest.classesTaskName)
+    classpath = releaseTest.output + releaseJars
+    mainClass.set("com.kzagent.verification.NativeCallbackReleaseVerification")
+    // Match the JDK used by the desktop packager and its multi-release dependencies.
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+}
 
 tasks.register<JavaExec>("verifyReleaseTerminal") {
     group = "verification"
