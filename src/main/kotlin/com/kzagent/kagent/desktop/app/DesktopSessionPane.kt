@@ -16,6 +16,7 @@ import com.kzagent.kagent.desktop.SessionData
 import com.kzagent.kagent.desktop.SessionManager
 import com.kzagent.kagent.desktop.terminal.SessionTerminalManager
 import com.kzagent.kagent.desktop.SettingsPanel
+import com.kzagent.kagent.desktop.McpPanel
 import com.kzagent.kagent.desktop.SkillsPanel
 import com.kzagent.kagent.desktop.chooseWorkspace
 import kotlinx.coroutines.CancellationException
@@ -33,7 +34,10 @@ internal fun DesktopSessionPane(
     terminalManager: SessionTerminalManager,
     onSend: (SessionData, String) -> Unit,
 ) {
-    if (state.showSkills) {
+    if (state.showMcp) {
+        val session = sessionManager.activeSessionOrNull()
+        McpPanel(session?.workspace ?: state.draft.workspace, session?.runtime?.mcp, session?.isBusy == true)
+    } else if (state.showSkills) {
         SkillsPanel(
             config = settingsState.savedConfig?.skills ?: com.kzagent.kagent.config.SkillsConfig(),
             configured = settingsState.savedConfig != null,

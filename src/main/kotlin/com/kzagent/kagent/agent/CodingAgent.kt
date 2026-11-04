@@ -8,6 +8,7 @@ import com.kzagent.kagent.tools.ToolRegistry
 import com.kzagent.kagent.tools.ToolResult
 import com.kzagent.kagent.todo.TodoStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -25,6 +26,8 @@ class CodingAgent(
     private val autoCompressionThresholdPercent: Int = DEFAULT_COMPRESSION_THRESHOLD_PERCENT,
     private val autoCompressionKeepLastN: Int = DEFAULT_COMPRESSION_KEEP_LAST_N,
     private val todoStore: TodoStore? = null,
+    private val prepareTools: (suspend () -> ToolRegistry)? = null,
+    private val toolNotice: () -> String? = { null },
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private var lastKnownContextTokens = 0
@@ -53,7 +56,9 @@ class CodingAgent(
         userPrompt: String,
         history: List<AgentMessage> = emptyList(),
     ): AgentRunResult {
-        var messages = history.filter { it !is AgentMessage.System }.toMutableList()
+        val turnTools = prepareTools?.invoke() ?: tools
+        val schemaTokens = turnTools.estimatedSchemaTokens()
+        var messages = completeToolResults(history.filter { it !is AgentMessage.System }).toMutableList()
         val system = AgentMessage.System(promptBuilder.build())
         val userMessage = AgentMessage.User(userPrompt)
         val prospectiveTokens = estimateContextTokens(
@@ -63,7 +68,7 @@ class CodingAgent(
                 add(userMessage)
             },
         )
-        val usageBeforeRun = maxOf(lastKnownContextTokens, prospectiveTokens)
+        val usageBeforeRun = maxOf(lastKnownContextTokens, prospectiveTokens + schemaTokens)
         if (
             isAboveAutoCompressionThreshold(usageBeforeRun) &&
             compressionSplitIndex(messages, autoCompressionKeepLastN) != null
@@ -88,7 +93,20 @@ class CodingAgent(
         }
         sessionWriter.append(messages.last())
         var contextTokens = 0
-        val answer = runInternal(system, messages) { contextTokens = it }
+        val answer = try {
+            runInternal(system, messages, turnTools, toolNotice()) { contextTokens = it }
+        } finally {
+            // A stop, failure or quota exit must not leave an Assistant without all its results.
+            val repaired = completeToolResults(messages)
+            val missing = repaired.filterIsInstance<AgentMessage.Tool>().filter { it !in messages }
+            if (missing.isNotEmpty()) withContext(NonCancellable) {
+                missing.forEach {
+                    sessionWriter.append(it)
+                    observer.onToolResult(it.name, ToolResult.error(it.content))
+                }
+            }
+            messages = repaired.toMutableList()
+        }
         lastKnownContextTokens = contextTokens
         return AgentRunResult(
             answer = answer,
@@ -101,6 +119,8 @@ class CodingAgent(
     private suspend fun runInternal(
         system: AgentMessage.System,
         messages: MutableList<AgentMessage>,
+        tools: ToolRegistry,
+        runtimeNotice: String?,
         onTokens: (Int) -> Unit = {},
     ): String {
         var contextTokens = 0
@@ -115,6 +135,7 @@ class CodingAgent(
                 messages = messages,
                 quotaWarning = buildQuotaWarning().takeIf { quota.isLow },
                 todoReminder = buildTodoReminder().takeIf { todoReminderInjected },
+                runtimeNotice = runtimeNotice,
             )
             val reply = model.chat(contextMessages, tools.toolSchemas())
             val todoToolCalled = reply.toolCalls.any { it.name == "todo_read" || it.name == "todo_write" }
@@ -122,14 +143,16 @@ class CodingAgent(
                 todoToolCalled = todoToolCalled,
                 reminderInjected = todoReminderInjected,
             )
-            val assistant = AgentMessage.Assistant(reply.content, reply.toolCalls, reply.reasoningContent)
+            val assistant = AgentMessage.Assistant(reply.content, reply.toolCalls.map { call ->
+                call.copy(argumentsJson = tools.get(call.name)?.sanitizeArguments?.invoke(call.argumentsJson) ?: call.argumentsJson)
+            }, reply.reasoningContent)
             val reportedTotalTokens = reply.totalTokens?.takeIf { it > 0 }
             val reportedPromptTokens = reply.promptTokens?.takeIf { it > 0 }
             val replyContextTokens = when {
                 reportedTotalTokens != null -> reportedTotalTokens
                 reportedPromptTokens != null ->
                     reportedPromptTokens + estimateContextTokens(listOf(assistant))
-                else -> estimateContextTokens(contextMessages + assistant)
+                else -> estimateContextTokens(contextMessages + assistant) + tools.estimatedSchemaTokens()
             }
             contextTokens = maxOf(contextTokens, replyContextTokens)
             onTokens(contextTokens)
@@ -149,7 +172,7 @@ class CodingAgent(
             val pendingInstructions = mutableListOf<LoadedAgentsInstruction>()
             for (toolCall in reply.toolCalls) {
                 val tool = tools.get(toolCall.name)
-                observer.onToolCallStarted(toolCall.name, toolCall.argumentsJson)
+                observer.onToolCallStarted(toolCall.name, tool?.sanitizeArguments?.invoke(toolCall.argumentsJson) ?: toolCall.argumentsJson)
 
                 val args = if (tool != null) {
                     try {
@@ -475,10 +498,12 @@ internal fun buildModelContextMessages(
     messages: List<AgentMessage>,
     quotaWarning: String? = null,
     todoReminder: String? = null,
+    runtimeNotice: String? = null,
 ): List<AgentMessage> {
     val notices = buildList {
         quotaWarning?.let { add(AgentMessage.System(it)) }
         todoReminder?.let { add(AgentMessage.System(it)) }
+        runtimeNotice?.let { add(AgentMessage.System(it)) }
     }
     if (notices.isEmpty()) return listOf(system) + messages
 

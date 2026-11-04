@@ -29,6 +29,7 @@ fun runCli(args: Array<String>): Int = runBlocking {
 
     try {
         when (command) {
+            "mcp" -> runMcpCommand(effectiveArgs.drop(1), workspace)
             "ask" -> {
                 val prompt = effectiveArgs.drop(1).joinToString(" ")
                 if (prompt.isBlank()) {
@@ -154,6 +155,7 @@ fun printUsage() {
         Commands:
           app   - Launch the desktop application in a new session using the current directory.
           ask   - Ask a single question and get an answer.
+          mcp   - Manage MCP servers: list/add/import/test/tools/enable/disable/remove.
           chat  - Interactive multi-turn chat. Provide an optional initial question.
                  After each answer, type your next question. Empty line to exit.
           (no command) - Same as chat.

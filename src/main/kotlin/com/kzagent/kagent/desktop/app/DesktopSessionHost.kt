@@ -24,7 +24,7 @@ internal fun KZAgentDesktopApp(
     val settingsState = rememberDesktopSessionSettingsState(
         sessionManager = sessionManager,
         scope = scope,
-        onDismiss = { state.showSettings = false; state.showSkills = false },
+        onDismiss = { state.showSettings = false; state.showSkills = false; state.showMcp = false },
         onConfigurationRequired = {},
         onSessionError = { message -> sessionManager.activeSessionOrNull()?.error = message },
     )

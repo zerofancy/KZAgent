@@ -63,7 +63,8 @@ internal fun isSessionNavigationSelected(
     activeIndex: Int,
     sessionIndex: Int,
     skillsSelected: Boolean = false,
-): Boolean = !settingsSelected && !skillsSelected && activeIndex == sessionIndex
+    mcpSelected: Boolean = false,
+): Boolean = !settingsSelected && !skillsSelected && !mcpSelected && activeIndex == sessionIndex
 
 internal fun shouldCollapseNavigationAfterDestination(displayMode: NavigationDisplayMode): Boolean =
     displayMode == NavigationDisplayMode.LeftCompact
@@ -110,6 +111,8 @@ internal fun KZAgentNavigationView(
     onSettings: () -> Unit,
     skillsSelected: Boolean = false,
     onSkills: () -> Unit = {},
+    mcpSelected: Boolean = false,
+    onMcp: () -> Unit = {},
     modifier: Modifier = Modifier,
     pane: @Composable () -> Unit,
 ) {
@@ -171,7 +174,7 @@ internal fun KZAgentNavigationView(
             title = { FluentText("KZAgent", maxLines = 1) },
             fixedHeader = {
                 SideNavItem(
-                    selected = activeIndex == -1 && !settingsSelected && !skillsSelected,
+                    selected = activeIndex == -1 && !settingsSelected && !skillsSelected && !mcpSelected,
                     onClick = { runDestinationAction(onAddSession) },
                     icon = { FluentIcon(Icons.Default.Add, contentDescription = null) },
                 ) {
@@ -212,7 +215,7 @@ internal fun KZAgentNavigationView(
                                     session = session,
                                     indicatorState = navigationState.indicatorState,
                                     expanded = navigationState.expanded,
-                                    selected = isSessionNavigationSelected(settingsSelected, activeIndex, row.entry.index, skillsSelected),
+                                    selected = isSessionNavigationSelected(settingsSelected, activeIndex, row.entry.index, skillsSelected, mcpSelected),
                                     onClick = { runDestinationAction { onSelectSession(row.entry.index) } },
                                     badge = {
                                         SessionNavigationBadge(
@@ -229,6 +232,12 @@ internal fun KZAgentNavigationView(
                 }
             },
             footerItems = {
+                MenuItem(
+                    selected = mcpSelected,
+                    onClick = { runDestinationAction(onMcp) },
+                    text = { FluentText("MCP", maxLines = 1) },
+                    icon = { FluentIcon(Icons.Default.Document, contentDescription = null) },
+                )
                 MenuItem(
                     selected = skillsSelected,
                     onClick = { runDestinationAction(onSkills) },

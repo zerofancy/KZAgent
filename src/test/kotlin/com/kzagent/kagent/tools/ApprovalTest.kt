@@ -54,6 +54,8 @@ class ApprovalTest {
             when (it) {
                 is ApprovalRequest.CommandExecution ->
                     ApprovalResult(ApprovalDecision.ASK_USER, ApprovalSource.APPROVAL_AGENT, "uncertain")
+                is ApprovalRequest.McpToolCall ->
+                    ApprovalResult(ApprovalDecision.ASK_USER, ApprovalSource.APPROVAL_AGENT, "external")
                 is ApprovalRequest.ExternalFileRead ->
                     ApprovalResult(ApprovalDecision.DENY, ApprovalSource.APPROVAL_AGENT, "outside")
             }

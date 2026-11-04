@@ -17,9 +17,13 @@ kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
 bossterm = "1.2.183"
 jvm-target = "17"
+mcp = "2.1.0"
 compose-desktop-keep-kit = "v0.2.3"
 
 [libraries]
+mcp-core = { module = "io.modelcontextprotocol.sdk:mcp-core", version.ref = "mcp" }
+mcp-json = { module = "io.modelcontextprotocol.sdk:mcp-json-jackson3", version.ref = "mcp" }
+kotlinx-coroutines-reactor = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-reactor", version.ref = "kotlinx-coroutines" }
 bossterm-compose = { module = "com.risaboss:bossterm-compose-desktop", version.ref = "bossterm" }
 bossterm-core = { module = "com.risaboss:bossterm-core-jvm", version.ref = "bossterm" }
 # NOTE: Compose Desktop's platform-aware dependency (compose.desktop.currentOs) is intentionally

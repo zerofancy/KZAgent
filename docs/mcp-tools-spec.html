@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP 工具注册与调用 · KZAgent Spec</title>
+<style>
+:root{color-scheme:light dark;--bg:#f4f6f9;--paper:#fff;--text:#202936;--muted:#647183;--line:#dce3ed;--accent:#1767b3;--soft:#edf5fd}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--text);background:var(--bg);font:16px/1.8 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:1120px;margin:auto;padding:48px 28px 96px}h1{font-size:38px;line-height:1.3;margin:12px 0 22px}h2{font-size:25px;margin:48px 0 18px;padding-top:8px;border-top:1px solid var(--line)}h3{font-size:19px;margin:26px 0 10px}p{margin:10px 0}a{color:var(--accent);text-underline-offset:3px}.meta,.small{color:var(--muted);font-size:14px}.lead{font-size:20px;max-width:940px}.card{padding:24px;background:var(--paper);border:1px solid var(--line);border-radius:12px;margin:20px 0}.decision{background:var(--soft);border-left:4px solid var(--accent)}nav{display:flex;gap:8px 22px;flex-wrap:wrap;margin:24px 0}nav a{font-size:14px}table{width:100%;border-collapse:collapse;margin:18px 0;font-size:14px}th,td{border:1px solid var(--line);text-align:left;vertical-align:top;padding:12px 14px}th{background:var(--soft)}code{font:13px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}pre{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:18px;overflow:auto;white-space:pre;line-height:1.6}li{margin:6px 0}.flow{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}.flow span{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 16px}.flow b{align-self:center;color:var(--muted)}.pill{display:inline-block;padding:2px 10px;border:1px solid var(--line);border-radius:20px;font-size:13px}.mock .bar{display:flex;justify-content:space-between;gap:15px;flex-wrap:wrap}.mock .item{border-top:1px solid var(--line);padding:16px 0}.mock .item:last-child{padding-bottom:0}.mock strong{margin-right:12px}.mock em{font-style:normal;color:var(--accent)}@media(max-width:720px){main{padding:28px 16px 64px}h1{font-size:30px}.card{padding:18px}table{display:block;overflow:auto}.flow{display:block}.flow span{display:block}.flow b{display:block;text-align:center}}@media(prefers-color-scheme:dark){:root{--bg:#171c24;--paper:#222a35;--text:#edf2f8;--muted:#aab6c7;--line:#3b4859;--accent:#7fbbf5;--soft:#21344a}}@media print{body{background:white;color:black}main{max-width:none;padding:0}nav{display:none}.card,pre,table{break-inside:avoid}a{color:inherit}h2{break-after:avoid}}
+</style>
+</head>
+<body><main>
+<p class="meta">KZAgent · 产品与实现 Spec · 实现规格 · 2026-11-04</p>
+<h1>MCP 工具注册与调用</h1>
+<p class="lead">用户注册 MCP Server 后，KZAgent 发现其工具，将工具交给当前模型选择，并通过现有 Agent loop 完成审批、调用和结果回传。CLI 与桌面端使用同一套实现。</p>
+<div class="card decision"><strong>推荐方案</strong><p>采用官方 Java SDK 2.1.0，接入共享运行时；首版提供用户级 Server 注册、stdio / Streamable HTTP、工具启停和连接诊断。以 MCP 2025-11-25 为协议基线，保留现有文字消息与 JSONL 格式，每轮固定工具快照。</p><p>注册只保存配置；“测试连接”会实际启动进程或访问服务；启用后的 Server 在会话下一轮开始前连接。MCP Server 属于用户授权的外部程序或服务，其权限由该程序或服务自身决定。</p></div>
+<nav><a href="#scope">范围</a><a href="#current">现状</a><a href="#sdk">协议与选型</a><a href="#ux">使用流程</a><a href="#config">配置</a><a href="#runtime">运行时</a><a href="#bridge">工具适配</a><a href="#approval">审批</a><a href="#failure">故障与生命周期</a><a href="#delivery">实施与验收</a><a href="#limits">Limitations</a><a href="#sources">依据</a></nav>
+
+<h2 id="scope">1. 目标与交付范围</h2>
+<p>这里的“注册 MCP”指向 KZAgent 注册一个 MCP Server，由客户端发现该 Server 的工具；用户无需手写每个工具的 function schema，也无需修改 Kotlin 代码。</p>
+<table><thead><tr><th>首版必须支持</th><th>具体行为</th></tr></thead><tbody>
+<tr><td>注册与管理</td><td>新增、编辑、删除 Server；Server 总开关；按原始工具名称禁用；表单与 <code>mcpServers</code> JSON 导入；用户级配置跨工作区复用。</td></tr>
+<tr><td>两种传输</td><td>stdio 启动本地程序；Streamable HTTP 连接本地或远端端点，兼容其 JSON 与 SSE 响应。</td></tr>
+<tr><td>发现和调用</td><td>协议协商、完整分页发现、schema 转换、名称隔离、审批、<code>tools/call</code>、文字及结构化结果回传。</td></tr>
+<tr><td>可用性</td><td>显示连接状态、实际可用工具数与逐工具不可用原因；单 Server 故障不影响其他 Server 和内置工具；提供测试连接、刷新和重连。</td></tr>
+<tr><td>双入口一致</td><td>桌面端可管理并使用；CLI 可管理、测试并在 <code>chat</code> / <code>ask</code> 中使用。</td></tr>
+</tbody></table>
+<p>首版范围外：Server 市场与自动安装、项目仓库配置自动执行、OAuth 登录、旧式 HTTP+SSE 独立端点、MCP resources/prompts 浏览、sampling、elicitation、Tasks、MCP Apps、多模态消息扩展。工具返回的资源链接仍以文字呈现。</p>
+
+<h2 id="current">2. 接入点与实现约束</h2>
+<p>MCP 在现有共享工具接口上扩展，以下接口同时服务 CLI 与桌面端。</p>
+<table><thead><tr><th>现有实现</th><th>对 MCP 的影响</th></tr></thead><tbody>
+<tr><td><a href="../src/main/kotlin/com/kzagent/kagent/AgentRuntimeFactory.kt"><code>AgentRuntimeFactory.create</code></a> 合并 Local、Todo、AskUser 与 Skill 工具，通过每轮 prepareTools 回调接入 MCP，创建 CLI / 桌面共享的 <code>CodingAgent</code>。</td><td>在同一入口合并 MCP registry；连接能力放在共享层。</td></tr>
+<tr><td><a href="../src/main/kotlin/com/kzagent/kagent/tools/Tool.kt"><code>ToolDefinition</code></a> 使用 <code>JsonObject</code> 参数 schema 和 suspend handler；<code>ToolResult.content</code> 为字符串。</td><td>MCP 输入可适配为现有工具；首版输出使用文字封装，保持消息格式。</td></tr>
+<tr><td><code>ToolRegistry</code> 使用名称索引，并在构造时拒绝重复名称。</td><td>MCP 必须分配独立别名；registry 构造与合并增加重复名称拒绝，防止覆盖内置工具。</td></tr>
+<tr><td><a href="../src/main/kotlin/com/kzagent/kagent/agent/CodingAgent.kt"><code>CodingAgent.runInternal</code></a> 每轮准备并冻结工具表，每次请求发送相同 schema，按返回顺序串行执行工具；先扣配额，再执行 handler。</td><td>沿用执行顺序与每次 1 积分的默认成本；每轮冻结 registry，结果仍跟随对应 Assistant 消息。</td></tr>
+<tr><td><code>requiresApproval</code> 未在 Agent loop 中执行审批。<a href="../src/main/kotlin/com/kzagent/kagent/tools/LocalTools.kt"><code>run_command</code></a> 在 handler 内调用审批策略。</td><td>仅设置 MCP 工具 <code>requiresApproval=true</code> 不足以生效；MCP handler 必须显式调用审批策略。</td></tr>
+<tr><td><a href="../src/main/kotlin/com/kzagent/kagent/tools/Approval.kt"><code>ApprovalRequest</code></a> 包含命令执行、受保护文件读取和 MCP 调用，支持 AUTO / MANUAL / FULL。</td><td>MCP 调用请求复用终端、桌面弹窗和审批 Agent 的描述分支。</td></tr>
+<tr><td><a href="../src/main/kotlin/com/kzagent/kagent/desktop/session/SessionManager.kt"><code>SessionManager</code></a> 持有每个会话的 runtime；技能变化可在下轮重建；invalidate、删除、退出会关闭 runtime。</td><td>复用下轮生效的机制；MCP 会话连接由对应 runtime 独占并关闭。</td></tr>
+<tr><td><a href="../src/main/kotlin/com/kzagent/kagent/config/AppConfig.kt"><code>AppDataDir</code></a> 使用 FileKit 跨平台路径。<a href="../src/main/kotlin/com/kzagent/kagent/desktop/app/DesktopSessionSettings.kt"><code>saveSettings</code></a> 对技能字段有专门合并逻辑。</td><td>MCP 使用独立 <code>mcp.json</code>，避免常规设置保存覆盖 Server 注册，也允许缺少模型配置时管理 MCP。</td></tr>
+<tr><td><code>estimateContextTokens</code> 估算消息文本；CodingAgent 在压缩判定与无 usage 的回退估算中额外计入工具 schema。</td><td>MCP 工具集另有 schema 预算，防止工具定义占满上下文。</td></tr>
+</tbody></table>
+
+<h2 id="sdk">3. 协议基线与 SDK 选择</h2>
+<h3>3.1 明确支持哪个协议</h3>
+<p>截至调研日，官网 latest 指向 <a href="https://modelcontextprotocol.io/specification/2026-07-28">2026-07-28</a>，基础协议改为无状态、自包含请求与逐请求能力协商。首版采用 <a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle">2025-11-25 的 initialize 生命周期</a>：协商版本与能力，发送 initialized，再发现和调用工具。两种生命周期不能混写成同一种实现。</p>
+<p>首版验收覆盖 2025-11-25、2025-06-18、2025-03-26，以及 stdio 的 2024-11-05（当前 open-browser-control 使用该版本）；请求优先使用 2025-11-25，仅接受这些已覆盖版本。不兼容时将该 Server 标为“协议不兼容”，保留其他工具。2026-07-28-only Server 暂不可接入；双协议 Server 可协商到上述版本。2024-11-05 只用于 stdio；旧式 HTTP+SSE 不列入首版支持承诺。</p>
+<h3>3.2 推荐 Java SDK 2.1.0</h3>
+<table><thead><tr><th>候选</th><th>源码证据与取舍</th><th>结论</th></tr></thead><tbody>
+<tr><td>官方 Kotlin SDK 0.16.0</td><td>协程与 kotlinx.serialization 接入自然，但 <code>ToolSchema</code> 根层仅定义 <code>$schema/properties/required/$defs/type</code>，不能无损表示 <code>additionalProperties</code>、根层 <code>oneOf</code> 等约束；其最新协议常量仍是 2025-11-25。</td><td>暂不采用。不能为方便接入而静默丢弃 schema 约束。<a href="https://github.com/modelcontextprotocol/kotlin-sdk/blob/0.16.0/kotlin-sdk-core/src/commonMain/kotlin/io/modelcontextprotocol/kotlin/sdk/types/Tools.kt">类型源码</a> · <a href="https://github.com/modelcontextprotocol/kotlin-sdk/blob/0.16.0/kotlin-sdk-core/src/commonMain/kotlin/io/modelcontextprotocol/kotlin/sdk/types/common.kt">版本常量</a></td></tr>
+<tr><td>官方 Java SDK 2.1.0</td><td><code>Tool.inputSchema</code> / <code>outputSchema</code> 使用 Map，可保留完整字段；目标 Java 17。提供异步客户端与 JDK Streamable HTTP transport；代价是引入 Reactor 与 Jackson，并处理协程桥接。</td><td>采用。schema 保真和现有 JVM 17 比语言一致性更关键。<a href="https://github.com/modelcontextprotocol/java-sdk/blob/v2.1.0/mcp-core/src/main/java/io/modelcontextprotocol/spec/McpSchema.java">工具类型</a> · <a href="https://github.com/modelcontextprotocol/java-sdk/blob/v2.1.0/pom.xml">构建配置</a></td></tr>
+<tr><td>自行实现完整 MCP 客户端</td><td>需要维护 JSON-RPC、版本协商、分页、HTTP/SSE 与通知处理。</td><td>不采用；本项目只实现工具适配、进程归属和必要的取消控制。</td></tr>
+</tbody></table>
+<p>依赖锁定 <code>io.modelcontextprotocol.sdk:mcp-core:2.1.0</code>、<code>mcp-json-jackson3:2.1.0</code>，显式创建 mapper；增加与现有协程版本一致的 <code>kotlinx-coroutines-reactor</code>。通过 <code>Mono.awaitSingle</code> / <code>awaitSingleOrNull</code> 桥接，不在 UI 线程 <code>block()</code>，不引入 Spring。</p>
+<p>HTTP 采用 SDK 的 JDK transport。stdio 采用项目持有 <code>Process</code> 的小型 <code>McpClientTransport</code>：复用 SDK 消息编解码与客户端协议层，只承担行读写、stderr、工作目录和进程关闭。原因是 SDK 内置 stdio 的进程字段私有，优雅关闭会等待进程退出；项目需要可控的强制终止入口。<a href="https://github.com/modelcontextprotocol/java-sdk/blob/v2.1.0/mcp-core/src/main/java/io/modelcontextprotocol/client/transport/StdioClientTransport.java">SDK stdio 实现</a></p>
+<p>Java SDK 2.1.0 的 Tool 类型也有明确缺口：没有 <code>execution.taskSupport</code> 字段。连接层必须在 SDK 将 tools/list 结果转换成 Tool 前，从 JSONRPCResponse 的原始 Map 中保留该字段，按原始工具名关联目录；不能把字段被忽略误判为“不要求 Tasks”。这与取消 ID 跟踪共用一个 transport 适配器，不另建协议层。</p>
+
+<h2 id="ux">4. 用户流程与桌面交互</h2>
+<h3>4.1 注册 → 测试 → 启用 → 使用</h3>
+<ol><li>进入侧栏“MCP”，选择“添加 Server”，填写 ID、显示名称和传输配置，或粘贴 JSON 导入。</li><li>保存后默认禁用，状态为“未连接”。保存不安装软件、不启动进程、不访问网络。</li><li>点击“测试连接”：本地显示将运行的程序、参数和目录，远端显示端点及将发送的 Header 名称。测试只执行连接、协商、发现，完成后关闭临时连接；不执行任何业务工具。</li><li>工具列表展示名称、描述、参数 schema 和可用性。用户启用 Server，可禁用不需要的工具；新发现工具默认可用，但仍按审批模式处理。</li><li>下一次发送消息前，会话准备 MCP 工具快照。模型根据工具描述选择调用；聊天中展示“Server / 原始工具名”、参数、审批状态和调用结果。</li></ol>
+<div class="card mock" aria-label="MCP 管理页面信息结构示意">
+<div class="bar"><strong>MCP</strong><span>添加 Server　　导入 JSON</span></div>
+<p class="small">更改在会话下一轮生效。测试连接会运行配置的程序或连接远端服务。</p>
+<div class="item"><div class="bar"><div><strong>项目检索</strong><span class="pill">stdio</span></div><em>当前会话：已连接 · 8 个可用工具</em></div><p class="small">ID: local-search · node /path/to/server.mjs</p><span>工具　测试连接　刷新当前会话　编辑　禁用　删除</span></div>
+<div class="item"><div class="bar"><div><strong>团队知识库</strong><span class="pill">Streamable HTTP</span></div><span>当前会话：需要凭据 · HTTP 401</span></div><p class="small">https://mcp.example.com/mcp</p><span>编辑　测试连接　重连当前会话　禁用　删除</span></div>
+</div>
+<p class="small">示意仅定义信息结构。桌面实现沿用 SkillsPanel、Fluent ContentDialog、TextField、Button、InfoBar 与 FluentTheme；表单、工具列表和 schema 详情均提供可拖拽滚动条。标题与长错误可换行，窄窗口下操作按钮换行；验证 Enter、组合键和多行输入。</p>
+<ul><li>状态按会话区分；测试结果显示“上次测试”，不将一次临时连接成功当作所有会话在线。显示 disabled、未连接、连接中、已连接、连接失败、协议不兼容、需要凭据；工具数区分“发现 / 启用 / 不可用”。</li><li>删除只移除注册与下轮工具；不删除 Server 程序及其数据。删除用 ContentDialog 确认。启用、编辑和禁用不额外增加确认弹窗。</li><li>运行中的轮次保持既有配置；保存后显示“下轮生效”。用户需要立即终止时使用当前会话的停止操作。刷新、重连仅作用于当前空闲会话；忙时禁用并说明。</li><li>编辑失败保留草稿；连接失败保留配置；缺少模型凭据不阻止 MCP 管理与测试。</li></ul>
+<h3>4.2 CLI 接口</h3>
+<pre><code>kza mcp list
+kza mcp add local-search --stdio -- node /path/to/server.mjs
+kza mcp add knowledge --http https://mcp.example.com/mcp
+kza mcp import /path/to/mcp-config.json
+kza mcp test local-search
+kza mcp tools local-search
+kza mcp enable local-search
+kza mcp disable local-search
+kza mcp remove local-search</code></pre>
+<p><code>list</code>、add、import、enable、disable、remove 仅访问配置；<code>test</code> 与 <code>tools</code> 会临时连接，结束后关闭。以上命令不要求模型 Provider 已配置。复杂 env、Header、工具筛选通过 JSON 导入或编辑文件设置；不提供把密钥放到 CLI 参数里的专用选项。</p>
+<p>CLI chat / ask 每轮开始前读取配置；发现配置变化时重连。运行期间不启动后台文件监视。正常完成返回 0；配置或命令失败返回 1；test 成功但无工具仍返回 0 并明确提示。chat / ask 中的单个 MCP Server 故障只打印诊断，不使整个任务退出。</p>
+
+<h2 id="config">5. 配置格式与注册语义</h2>
+<p>路径为 <code>AppDataDir.appDir().resolve("mcp.json")</code>，与模型配置处于同一平台数据目录。文件缺失等同空注册。使用独立 <code>McpConfigStore</code> 读写，临时文件写完后替换目标文件；多个桌面写入口由同一 Mutex 串行化。损坏文件必须报错并保留，不能用空配置覆盖。</p>
+<pre><code>{
+  "mcpServers": {
+    "local-search": {
+      "displayName": "项目检索",
+      "type": "stdio",
+      "enabled": false,
+      "command": "node",
+      "args": ["/absolute/path/to/server.mjs"],
+      "cwd": "${workspace}",
+      "env": { "SEARCH_TOKEN": "${env:SEARCH_TOKEN}" },
+      "disabledTools": [],
+      "connectTimeoutSeconds": 15,
+      "callTimeoutSeconds": 60
+    },
+    "knowledge": {
+      "displayName": "团队知识库",
+      "type": "streamable_http",
+      "enabled": false,
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${env:KNOWLEDGE_TOKEN}" },
+      "disabledTools": ["delete_document"],
+      "connectTimeoutSeconds": 15,
+      "callTimeoutSeconds": 60
+    }
+  }
+}</code></pre>
+<table><thead><tr><th>字段</th><th>约定</th></tr></thead><tbody>
+<tr><td>Server ID</td><td>JSON key 即稳定 ID，格式 <code>[a-z][a-z0-9-]{0,23}</code>。创建后不能直接改 ID；显示名称可编辑，默认等于 ID。禁用记录与工具别名绑定 ID。</td></tr>
+<tr><td><code>type / enabled</code></td><td>type 必填；enabled 缺省为 false。无配置时没有 MCP 工具。导入的新增条目统一保持禁用；现有条目冲突必须由用户选择替换或跳过，不自动覆盖。</td></tr>
+<tr><td><code>command / args</code></td><td>command 是单个可执行文件，args 为字符串数组；直接 ProcessBuilder，不拼成 Shell 命令。程序不在 PATH 时使用绝对路径；缺少 Node/Python 等运行环境时报可操作错误。</td></tr>
+<tr><td><code>cwd</code></td><td>stdio 专有，默认 <code>${workspace}</code>；可填绝对路径，启动前验证为现存目录。<code>${workspace}</code> 替换为当前会话工作区；临时测试在页面选择的工作区或 CLI 当前目录运行。</td></tr>
+<tr><td><code>env / headers</code></td><td>字符串值支持 <code>${env:NAME}</code>，在连接时解析；缺失引用使该 Server 不可用，错误只给变量名。stdio 继承宿主环境后覆盖显式 env；HTTP 不自动发送宿主环境，只发送配置 Header。注册前清楚说明该行为。</td></tr>
+<tr><td><code>url</code></td><td>HTTP 专有，必须是完整 MCP 端点，路径和非敏感查询参数原样使用。远端使用 HTTPS，本地 loopback 可用 HTTP；不允许 URL userinfo，不将密钥放入 URL。拒绝跨源重定向携带凭据；协议 Header 由 SDK 管理，用户不可覆盖。</td></tr>
+<tr><td><code>disabledTools</code></td><td>按大小写敏感的 Server 原始名称匹配。列表保留已消失工具的禁用偏好，重新出现后仍禁用。</td></tr>
+<tr><td>超时</td><td>connect 默认 15 秒，范围 1–120 秒，覆盖启动/协商/全量发现；call 默认 60 秒，范围 1–3600 秒，只从实际派发开始计时，不含用户审批等待。每个 Server 可调整。</td></tr>
+</tbody></table>
+<p>只在 env / headers 值解析环境引用，只有 cwd 支持 workspace 替换；不提供任意模板或 Shell 展开。示例中的路径与域名仅为占位。导入只接受本 spec 字段，逐项报告不支持字段；无 type 的条目可按 command → stdio、url → streamable_http 推断，二者冲突则拒绝。不宣称任意其他客户端配置均可直接兼容。</p>
+
+<h2 id="runtime">6. 共享运行时与工具快照</h2>
+<div class="flow" aria-label="调用路径"><span>McpConfigStore<br>用户注册</span><b>→</b><span>McpRuntime<br>连接与工具目录</span><b>→</b><span>ToolRegistry<br>本轮快照</span><b>→</b><span>CodingAgent<br>模型选择</span><b>→</b><span>审批 → tools/call<br>ToolResult → JSONL</span></div>
+<h3>6.1 组件职责</h3>
+<table><thead><tr><th>组件</th><th>职责与归属</th></tr></thead><tbody>
+<tr><td><code>McpConfigStore</code></td><td>配置解析、语义校验、注册增删改；不持有连接、不依赖 Provider 配置。</td></tr>
+<tr><td><code>McpRuntime : AutoCloseable</code></td><td>每个 AgentRuntime 独占；持有本会话的 Server 连接、工具目录、状态流与配置快照。Server 独立准备，用受监督协程并发，最多 4 个连接任务，避免逐个超时拖长首轮。</td></tr>
+<tr><td><code>McpServerConnection</code></td><td>一个 Server 的 SDK 异步客户端、transport、调用锁、状态。单连接一次只派发一个业务调用，符合当前 Agent loop 串行语义。</td></tr>
+<tr><td><code>McpToolAdapter</code></td><td>名称映射、schema 保真转换、审批、调用及文字输出裁剪，生成现有 <code>ToolDefinition</code>。</td></tr>
+<tr><td>临时测试连接</td><td>由测试命令或页面操作的作用域持有，使用相同连接实现；结果和错误都在 finally 关闭。离开页面取消测试。</td></tr>
+</tbody></table>
+<h3>6.2 一轮的工具表保持不变</h3>
+<ol><li><code>AgentRuntimeFactory.create</code> 负责本地构造，将 suspend <code>prepareTools</code> 回调交给 <code>CodingAgent.runConversation</code>，在双端每轮入口统一执行 MCP 准备及状态发布，不在 Factory 或 UI 内嵌套 runBlocking。</li><li>准备结束时只将可用且启用的工具合入本轮 registry，按 Server ID、原始工具名排序；<code>CodingAgent.runConversation</code> 从入口捕获快照，整个 loop 的 schema 与 handler 查找引用同一个 registry。</li><li>收到 <code>notifications/tools/list_changed</code> 后只更新待发布目录；本轮不变，下轮重新全量分页发现并发布。手动刷新采用相同路径。</li><li>每轮准备时读取 MCP 配置，与本会话的上一份配置比较；变化后先关闭该会话旧 MCP 连接，再应用新配置。保留模型客户端、历史、压缩摘要与 Todo，无须为 MCP 重建整个 AgentRuntime。</li><li>若本轮 Server 中途断开，工具别名仍留在快照；调用返回“服务已断开”，不会从其他 Server 猜测或替换。下轮自动尝试一次重连；手动重连也可触发。已派发调用不重放。</li></ol>
+<p>会话间不共享 MCP 连接与进程。相同 Server 被三个会话使用时会有三个连接，stdio 对应三个进程；这与 cwd、连接状态和关闭归属一致。首版不增加进程池或引用计数管理。</p>
+<h3>6.3 能力协商</h3>
+<p>仅使用服务端 tools 能力；提供 roots 时仅返回当前工作区 URI（<code>Path.toUri()</code>），不动态变化。未实现的 sampling / elicitation / tasks 不声明。没有 tools 能力或工具列表为空时，连接状态可成功但显示“无可用工具”。服务端 instructions 不自动追加为系统提示词。</p>
+
+<h2 id="bridge">7. 工具适配、上下文与会话记录</h2>
+<h3>7.1 名称与 schema</h3>
+<p>模型端函数名为 <code>mcp_&lt;serverId&gt;_&lt;toolAlias&gt;</code>，只使用 ASCII 字母、数字、下划线和连字符，最长 64 字符；内部始终保存 <code>(serverId, originalToolName)</code>，调用 Server 时使用原名。原名可直接使用且长度合适时以原名为 alias，否则使用 <code>t1/t2/…</code>。</p>
+<p>别名按原名排序后分配，先预留可直接使用的名称，再分配数字别名；冲突时递增编号。映射在 runtime 内保留，消失工具的 alias 不复用，防止目录刷新后误路由。恢复会话不根据旧 alias 重放工具，新的工具调用只查当前映射。聊天显示 Server 名与原名，历史正文携带同样来源信息。</p>
+<p><code>inputSchema</code> 通过 SDK mapper 转成 JSON，再解析为 kotlinx <code>JsonObject</code>，保持嵌套 schema、required、enum、additionalProperties、$defs/$ref 与组合约束。客户端只校验 schema 为 object 且根 type 为 object；无 type 时补 object，显式非 object 则禁用该工具。参数 JSON 必须为 object；完整参数校验由 Server 执行。</p>
+<p>不通过删除约束来兼容模型 Provider。Provider 拒绝某 schema 时显示请求错误和 MCP 来源，用户可禁用相关工具；实现阶段必须验证三个内置 Provider 的实际 schema 接受范围。需要 Tasks 的工具不可用；taskSupport=optional 时使用普通同步调用。</p>
+<h3>7.2 输出归一化</h3>
+<table><thead><tr><th>MCP 结果</th><th>传入 <code>ToolResult.content</code> 的形式</th></tr></thead><tbody>
+<tr><td>text</td><td>按 Server 顺序保留文本；首行标注 <code>[MCP server=… tool=…]</code>。</td></tr>
+<tr><td>structuredContent</td><td>独立的“structuredContent”JSON 区块，与 text 均保留，不把业务 JSON 拆成指令。</td></tr>
+<tr><td>resource_link / 嵌入文本资源</td><td>输出标题、URI、MIME；嵌入文本可作为文本输出。不自动访问链接或调用 resources/read。</td></tr>
+<tr><td>image / audio / blob</td><td>输出类型、MIME 和“此内容尚未展示”的标记；不把 Base64 放进模型上下文或 JSONL。只有这些内容时返回“结果包含暂不支持的内容”，并标 isError=true。</td></tr>
+<tr><td><code>isError=true</code></td><td>映射 <code>ToolResult.isError=true</code>，保留裁剪后的业务错误文本。协议错误、连接错误也转成工具错误，附本地分类与是否已派发。</td></tr>
+</tbody></table>
+<p>归一化结果上限默认 20,000 字符，超出部分在区块边界优先裁剪；标明原始长度与省略内容，避免半截 JSON 被当作完整 JSON。结构化块无法完整容纳时省略该整块并标明，而不是生成无效 JSON。结果不提供 <code>readPaths</code>：外部 Server 的文件读取不能冒充经过 PathGuard 的本地读取。</p>
+<p>首版不新增 AgentMessage 类型。归一化文本及 isError 沿用现有 Tool 消息、JSONL、Markdown 展示、压缩和恢复路径；调用详情显示来源。压缩摘要保留 Server/原名和结果的业务含义。恢复只恢复对话记录，不保存连接 ID、Header、env 或远端会话凭据。</p>
+<h3>7.3 schema 预算与缓存稳定性</h3>
+<p>给 MCP 工具 schema 设置每轮最多 <code>min(16,000, contextWindowSize × 10%)</code> 的估算 token 预算，使用与当前文本估算一致的字符近似法。内置工具预算独立计入上下文开销；MCP 目录超预算时，整个 MCP 工具集本轮不注入，桌面/CLI 明确给出原因和按 Server 的估算用量，让用户禁用工具后重试；不静默截断 schema 或任选前 N 个工具。</p>
+<p>工具 schema 估算纳入开始前的自动压缩判定与无 usage 时的回退估算；Provider 返回的 prompt/total usage 已含 schema，不重复相加。压缩只能减少历史，不把 schema 超预算反复转成压缩循环。</p>
+<p>Server 顺序、工具顺序和 schema 序列化保持确定性；正常轮次不往基础系统提示与历史之间插入连接状态。需要告诉模型某个启用 Server 不可用时，通过现有动态提示位置放在本轮最后 User 前，并避免拆开 Assistant/tool-results。目录变化只在下轮改变工具前缀，接受这次必要的缓存失效。</p>
+
+<h2 id="approval">8. 审批与权限</h2>
+<p>增加 <code>ApprovalRequest.McpToolCall</code>，包含工作区、Server ID、端点或可执行文件摘要、原始工具名、脱敏参数、描述和 annotations。MCP handler 在真正调用前使用现有 <code>ModeApprovalPolicy</code>；拒绝时返回错误工具结果，Server 不收到 tools/call。</p>
+<table><thead><tr><th>现有模式</th><th>MCP 行为</th></tr></thead><tbody>
+<tr><td>MANUAL</td><td>每次业务调用向用户审批；明确显示 Server、工具和脱敏参数。</td></tr>
+<tr><td>AUTO</td><td>调用审批 Agent 判断；无法判断则交给用户。不要把 MCP 调用套进命令静态白名单。审批 Agent 的提示词从“local operation”扩展为包含外部工具及其副作用。</td></tr>
+<tr><td>FULL</td><td>延续现有完全放行语义。仍尊重 Server 启用和工具禁用配置。</td></tr>
+</tbody></table>
+<p><code>readOnlyHint / destructiveHint / idempotentHint</code> 只作为显示与判断参考，不单独触发免审批或重试；这是 <a href="https://modelcontextprotocol.io/specification/2025-11-25/server/tools">Tools 规范</a> 对 annotations 的约束。测试连接、启用 Server 是用户在管理入口直接发起的操作，不依赖模型审批 Agent。</p>
+<p>注册界面明确说明：stdio 是以当前用户身份运行的外部进程，cwd 与 roots 不是操作系统沙箱；远端 Server 仅收到连接元数据与工具调用参数，不自动收到整段聊天。保留内置 PathGuard、敏感路径保护与命令审批；MCP 不能声称受同样文件边界保护。</p>
+<p>密钥通过 env 引用配置为主；界面按 Header/env 字段遮罩。诊断默认只记录 Server、工具、耗时、结果分类与退出码，不记录原始 Header、env、请求/响应全文。现有 SecretRedactor 主要识别特定 key/Bearer 模式，不能覆盖任意 MCP token；MCP 连接作用域额外收集已解析的凭据值，在审批显示、异常、stderr、工具输出与 JSONL 写入前替换。运行环境和模型凭据不复制到配置示例或日志。</p>
+
+<h2 id="failure">9. 超时、取消、故障与资源生命周期</h2>
+<h3>9.1 失败如何影响任务</h3>
+<table><thead><tr><th>情况</th><th>确定行为</th></tr></thead><tbody>
+<tr><td>文件损坏 / 单条配置不合法</td><td>文件损坏使 MCP 配置不可用并显示错误，内置工具仍可使用；能独立解析的无效条目按 Server 隔离，不阻断其他条目。禁止自动覆盖损坏文件。</td></tr>
+<tr><td>程序找不到 / 启动超时 / stdout 非协议文本</td><td>该 Server 连接失败，清理已启动进程和协程；提示 command/PATH、退出码或协议输出问题，stderr 仅显示脱敏短摘要。</td></tr>
+<tr><td>分页发现失败 / 同 Server 重名工具</td><td>不发布半份目录；保留旧目录时显示“刷新失败，下轮需重连”，不可误报刷新成功。单工具 schema 无效则只禁用该工具并说明原因。</td></tr>
+<tr><td>HTTP 401 / 403</td><td>标记需要凭据或无权限；保留配置与错误码，不打开浏览器做 OAuth，不自动循环登录。</td></tr>
+<tr><td>HTTP Session 失效 / 404</td><td>关闭当前连接；标记待重连，下一轮重新初始化。正在执行的调用结果标为未知，不重放。</td></tr>
+<tr><td>Server 返回业务错误 / JSON-RPC 错误</td><td>生成 isError 工具结果并让模型决定下一步；不自动重试业务调用。</td></tr>
+<tr><td>call 超时 / 用户停止 / 连接中断</td><td>记录“已派发，完成情况未知”或“未派发”；尝试发送取消通知，结束本地等待并使连接失效。超时或中断不等于 Server 已撤销副作用。</td></tr>
+</tbody></table>
+<h3>9.2 取消不是取消订阅就结束</h3>
+<p>Java SDK 2.1.0 的 <a href="https://github.com/modelcontextprotocol/java-sdk/blob/v2.1.0/mcp-core/src/main/java/io/modelcontextprotocol/spec/McpClientSession.java"><code>McpClientSession.sendRequest</code></a> 不能直接证明协程取消会发送协议取消通知。增加薄的 <code>McpCallTrackingTransport</code>，记录当前 tools/call 的 request ID 与是否已发送；在响应结束后清空。它也关联 tools/list 的请求与原始分页响应，保留 execution 元数据；发现失败时丢弃本次未完成目录。业务调用串行，因此无需另建通用任务调度系统。</p>
+<p>协程取消或 deadline 触发时，在有界清理作用域向该 ID 发送 <code>notifications/cancelled</code>（最多等待 1 秒），随后关闭并丢弃此连接，清掉 SDK 待响应状态；不得只取消 Mono 而继续复用连接。initialize 不发送取消通知，直接释放连接。取消后重新抛出 CancellationException，不将用户停止转换为普通成功。</p>
+<p>补齐本次 Assistant 已发起但尚无结果的工具消息：没有业务结果的调用统一标注中断、完成情况未确认，并持久化后结束轮次；进程异常退出后的会话恢复同样补齐未配对调用，明确不重放。这样下一轮与 JSONL 恢复不会留下孤立的 tool_calls。</p>
+<h3>9.3 谁创建，谁关闭</h3>
+<ul><li><code>AgentRuntime.close()</code> 先阻止新调用、取消 MCP 等待，再关闭所有 MCP 连接，最后关闭模型客户端。单项关闭失败继续清理其余资源；关闭幂等。</li><li>项目 stdio transport 持有 Process、流与专属 IO executor：先关闭 stdin，等待最多 2 秒；未退出则 destroy，再等 1 秒；仍未退出则对本次进程及其可枚举子进程 destroyForcibly；关闭 stdout/stderr、停止 executor。stdio stderr 必须单独持续消费，不能合并进 stdout。</li><li>在 Windows 直接支持可执行程序；<code>.cmd/.bat</code> 需要显式配置 <code>cmd.exe</code> 参数，编辑器提供提示。macOS 桌面 PATH 可能与登录终端不同，错误提示可执行文件绝对路径；不启动登录 Shell 猜环境。</li><li>HTTP 连接关闭时释放订阅、SSE 与请求；自建 executor 由连接持有并 shutdown。JVM 17 下不假定 JDK HttpClient 可 AutoCloseable，不添加悬空后台线程。</li><li>runtime 删除、切换、失效、窗口退出、CLI use 结束以及 Factory 部分构造失败都必须覆盖 MCP 清理。异步清理在 IO 调度器执行；同步 close 使用有界等待，不能在 Compose 主线程无限阻塞。</li></ul>
+
+<h2 id="delivery">10. 实施拆分与验收</h2>
+<p>按下列顺序交付；首版全部完成后，才将 README 标记为支持 MCP。</p>
+<table><thead><tr><th>阶段</th><th>主要变更</th><th>完成条件</th></tr></thead><tbody>
+<tr><td>1 · SDK 接入验证</td><td>version catalog、Java SDK mapper、协程桥、项目 stdio transport、HTTP transport、取消 ID 跟踪及原始目录元数据保留。</td><td>JVM 17 可编译运行；一组含 additionalProperties/oneOf/$defs 的 schema 无损；Tasks-required 工具正确识别并排除；两种传输完成发现和调用；取消与进程关闭可观测。若依赖冲突则锁定兼容依赖，不在全项目随意升级网络栈。</td></tr>
+<tr><td>2 · 共享运行时</td><td>新增 <code>mcp/</code> 包；config store、Server 连接、adapter、prepareTurn；ToolRegistry 重名拒绝；schema token 预算；审批请求及各展示分支。</td><td>CLI ask/chat 经现有 loop 调用 MCP；单 Server 失败可降级；下一轮更新；停止和恢复保持消息配对。</td></tr>
+<tr><td>3 · 管理入口</td><td>CLI mcp 子命令；桌面 MCP 页面与编辑/导入弹窗；状态流接入、刷新重连；与现有配置保存及会话准备衔接。</td><td>不依赖模型配置完成注册/测试；表单导入共用校验；运行中编辑下轮生效；测试连接不遗留进程。</td></tr>
+<tr><td>4 · 发布验证与说明</td><td>README 配置、审批、运行环境与限制；跨平台安装包和 Release 优化验证。</td><td>完整测试通过，三平台完成产品路径验收；Release 包中的 mapper/协议类型与服务加载资源可用。</td></tr>
+</tbody></table>
+<h3>10.1 有具体判定结果的测试</h3>
+<p>自动化测试覆盖以下行为；每项失败都对应明确修正。</p>
+<table><thead><tr><th>测试范围</th><th>需要检测的具体失败</th><th>失败后的动作</th></tr></thead><tbody>
+<tr><td>配置与导入</td><td>缺失文件改变旧行为；保存覆盖损坏文件；env 缺失泄露值；重复 ID/冲突导入被静默覆盖；无模型无法管理 MCP。</td><td>修正 store/导入和 CLI 路由，再交付管理入口。</td></tr>
+<tr><td>协议 fixture</td><td>initialize 顺序错误；不兼容版本被接受；分页遗漏；schema 约束丢失；工具重名覆盖；HTTP JSON/SSE 中一种解析失败；Session 失效循环重放。</td><td>修正 SDK 配置、transport 或 adapter，不以删 schema 约束绕过。</td></tr>
+<tr><td>审批与调用</td><td>MANUAL 拒绝后仍派发；AUTO 只凭只读注解放行；FULL 忽略禁用工具；失败重复扣费或重试；错误被记为成功。</td><td>修正 handler 的审批/派发边界；成本沿用现有先扣费规则，拒绝和失败均不额外补扣。</td></tr>
+<tr><td>取消与生命周期</td><td>协程停止仍等待到超时；未发取消通知；已派发调用被重放；关窗后 JVM 不退出；Server 子进程/IO executor 残留；部分构造失败漏关闭。</td><td>修正 ID 跟踪、有界终止与资源归属；该项未通过不得启用相应 transport。</td></tr>
+<tr><td>记录、恢复与压缩</td><td>tool_calls 缺结果导致后续 Provider 拒绝；恢复重放旧 MCP 调用；压缩丢来源；schema 预算重复计算；动态提示破坏历史稳定前缀。</td><td>修正补齐逻辑、恢复路径、token 估算和提示位置；保留 Assistant/results 的完整序列。</td></tr>
+<tr><td>桌面交互</td><td>保存中丢草稿；当前轮工具被替换；长列表无滚动条；输入法 Enter 误提交；某会话断开却显示全局在线。</td><td>修正状态作用域、下轮发布与 Fluent 布局/键盘逻辑。</td></tr>
+<tr><td>Provider 与安装包</td><td>DeepSeek/OpenRouter/MiMo Code 的真实模型请求拒绝已声明可用工具；Release 混淆后反序列化或 ServiceLoader 失败；三平台子进程启动/退出差异。</td><td>定位并修复 schema/mapper/打包规则；对不能支持的明确 schema 标注不可用，不把本地 fixture 当作产品成功。</td></tr>
+</tbody></table>
+<p>单元与集成测试使用受控 MCP fixture，不调用真实付费或写入业务工具。完整检查为 macOS/Linux <code>./gradlew test</code>、Windows <code>.\gradlew.bat test</code>；产品验收再使用用户准备的本地只读 Server、远端只读 Server 及测试账户完成实际对话调用、拒绝、停止、恢复和退出。</p>
+<h3>10.2 产品验收标准</h3>
+<ol><li>全新用户通过桌面或 CLI 注册一个本地、一个远端 Server；测试显示工具列表；启用后，现有模型能选中 MCP 工具并基于返回内容回答。</li><li>手动拒绝一次调用，Server 观测不到对应 tools/call；停用一个工具后下一轮 schema 中消失；内置工具仍正常。</li><li>一个 Server 连不上时，另一个 Server 和本地工具仍可完成任务；错误来源在桌面与 CLI 均清晰。</li><li>长调用中停止，界面结束等待；下一轮可继续；结果未知明确记录，Server 调用次数不因客户端自动重试增加。</li><li>关窗、退出 CLI、删除会话和临时测试结束后，本次拥有的进程及 executor 均结束；安装包进程正常退出。</li><li>重新打开会话能读取历史 MCP 结果并继续对话；自动压缩保留完整调用配对，无凭据落入日志或 JSONL。</li></ol>
+
+<h2 id="limits">11. Limitations</h2>
+<ul><li>本机 macOS / JVM 17 已通过完整 297 项测试。当前 Codex 注册的 open-browser-control 已添加并启用，协商 2024-11-05，发现 18 个工具；受控模型经 CodingAgent 读取真实浏览器页面信息，DOM 返回预期内容，测试会话已确认没有残留标签页。优化后的 Release 产物也已完成相同 Server 的实际连接与工具发现。HTTP JSON/SSE 路径由受控服务验证；尚未完成真实 Provider 自主选工具、Windows/Linux 运行与三平台桌面人工交互验收。</li><li>首版是 MCP 工具客户端，支持有界同步调用与文字结果；2026-07-28-only、OAuth-only、Tasks-required、依赖 sampling/elicitation 的工具，以及多模态结果的完整消费不在首版能力范围。</li><li>外部 MCP 程序可以自行访问文件与网络；应用层审批、cwd 和 roots 不提供操作系统沙箱。密钥引用依赖启动 KZAgent 的环境，桌面启动时未必包含终端 export 的变量。</li><li>工具很多时需要用户禁用一部分以满足 schema 预算。首版直接注入启用工具，不提供工具搜索、延迟发现或自动筛选。</li><li>stdio 每会话启动一份进程；同一账户/设备只允许单连接的 Server 可能拒绝并发会话，应在管理页显示该 Server 错误。取消不能保证远端业务回滚。</li><li>配置文件被外部 CLI/编辑器同时修改时，用户应先刷新再保存；首版不增加跨进程实时配置同步。受管理的桌面写入口内部串行。</li></ul>
+
+<h2 id="sources">12. 调研依据</h2>
+<p>仓库依据为第 2 节链接及 <a href="../src/main/kotlin/com/kzagent/kagent/cli/Main.kt">CLI Main</a>、<a href="../src/main/kotlin/com/kzagent/kagent/desktop/settings/SkillsPanel.kt">SkillsPanel</a>、<a href="../src/main/kotlin/com/kzagent/kagent/agent/AGENTS.md">Agent loop 缓存约定</a>、<a href="../gradle/libs.versions.toml">依赖锁定版本</a>。外部依据按调研日固定如下：</p>
+<ul><li><a href="https://modelcontextprotocol.io/specification/2026-07-28">MCP 2026-07-28 规范总览</a>：最新协议的无状态基础与能力协商。</li><li><a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle">MCP 2025-11-25 Lifecycle</a>：首版连接协商与终止基线。</li><li><a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/transports">MCP 2025-11-25 Transports</a>：stdio、Streamable HTTP、Session 与取消行为。</li><li><a href="https://modelcontextprotocol.io/specification/2025-11-25/server/tools">MCP 2025-11-25 Tools</a>：发现、分页、内容类型、结构化结果、注解与错误。</li><li><a href="https://github.com/modelcontextprotocol/kotlin-sdk/releases/tag/0.16.0">Kotlin SDK 0.16.0 Release</a>：实验性 discovery 类型及版本状态。</li><li><a href="https://github.com/modelcontextprotocol/java-sdk/releases/tag/v2.1.0">Java SDK 2.1.0 Release</a>：选定 SDK 版本。</li><li><a href="https://github.com/modelcontextprotocol/java-sdk/blob/v2.1.0/mcp-core/src/main/java/io/modelcontextprotocol/spec/McpSchema.java">Java SDK McpSchema</a>、<a href="https://github.com/modelcontextprotocol/java-sdk/blob/v2.1.0/mcp-core/src/main/java/io/modelcontextprotocol/client/McpAsyncClient.java">McpAsyncClient</a>、<a href="https://github.com/modelcontextprotocol/java-sdk/blob/v2.1.0/mcp-core/src/main/java/io/modelcontextprotocol/spec/McpClientSession.java">McpClientSession</a>：schema 数据结构、异步调用与取消边界。</li><li><a href="https://github.com/modelcontextprotocol/java-sdk/blob/v2.1.0/mcp-core/src/main/java/io/modelcontextprotocol/client/transport/HttpClientStreamableHttpTransport.java">JDK HTTP transport</a>、<a href="https://github.com/modelcontextprotocol/java-sdk/blob/v2.1.0/mcp-core/src/main/java/io/modelcontextprotocol/client/transport/StdioClientTransport.java">stdio transport</a>：连接、进程与资源关闭。</li></ul>
+<p class="meta">规范性“必须 / 不得”用于实现维护与验收。</p>
+</main></body></html>

@@ -91,7 +91,7 @@ class SessionReader(private val sessionsDir: Path) {
                 else -> sanitized += entry
             }
         }
-        return sanitized
+        return completeToolEntries(sanitized)
     }
 
     private fun parseObject(obj: JsonObject): AgentMessage {
@@ -163,4 +163,35 @@ class SessionReader(private val sessionsDir: Path) {
         }
         return lastTokens
     }
+}
+
+/** Repairs interrupted turns without repeating any operation on the external system. */
+internal fun completeToolResults(messages: List<AgentMessage>): List<AgentMessage> =
+    completeToolEntries(messages.map { SessionEntry(it, null) }).map { it.message }
+
+private fun completeToolEntries(entries: List<SessionEntry>): List<SessionEntry> {
+    // Keep original entries by position: equal messages may have different timestamps.
+    val result = mutableListOf<SessionEntry>()
+    val pending = linkedMapOf<String, ModelToolCall>()
+    fun finishPending() {
+        pending.values.forEach { call ->
+            result += SessionEntry(AgentMessage.Tool(call.id, call.name,
+                "操作中断，未记录业务结果；完成情况未知，不会自动重放。", true), null)
+        }
+        pending.clear()
+    }
+    entries.forEach { entry ->
+        val message = entry.message
+        if (message !is AgentMessage.Tool) finishPending()
+        when (message) {
+            is AgentMessage.Assistant -> {
+                result += entry
+                message.toolCalls.forEach { pending[it.id] = it }
+            }
+            is AgentMessage.Tool -> if (pending.remove(message.toolCallId) != null) result += entry
+            else -> result += entry
+        }
+    }
+    finishPending()
+    return result
 }

@@ -68,7 +68,7 @@ internal fun DesktopSessionEffects(
                 state.draft.workspace = workspace
                 state.hasDraft = true
                 state.showNewSession = true
-                state.showSettings = false; state.showSkills = false
+                state.showSettings = false; state.showSkills = false; state.showMcp = false
                 state.sessionLoadError = null
             } catch (error: CancellationException) {
                 throw error
@@ -94,7 +94,7 @@ internal fun DesktopSessionEffects(
     }
 
     // Ensure active session has a runtime
-    val activeSession = if (state.showNewSession || state.showSettings || state.showSkills) null else sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)
+    val activeSession = if (state.showNewSession || state.showSettings || state.showSkills || state.showMcp) null else sessionManager.sessions.getOrNull(sessionManager.activeSessionIndex)
     LaunchedEffect(sessionManager, activeSession?.id, activeSession?.workspace, activeSession?.runtime) {
         val session = activeSession ?: return@LaunchedEffect
         if (session.isBusy || session.runtime != null) return@LaunchedEffect

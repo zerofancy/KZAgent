@@ -13,6 +13,7 @@ data class ToolDefinition(
     val cost: Int = 1,
     /** Computes the debit after arguments have passed JSON parsing. */
     val costForArguments: (JsonObject) -> Int = { cost },
+    val sanitizeArguments: (String) -> String = { it },
     val handler: suspend (JsonObject) -> ToolResult,
 )
 
@@ -42,7 +43,10 @@ data class ToolResult(
 }
 
 class ToolRegistry(tools: List<ToolDefinition>) {
+    init { require(tools.map { it.name }.distinct().size == tools.size) { "Duplicate tool names" } }
     private val byName = tools.associateBy { it.name }
+
+    fun estimatedSchemaTokens(): Int = toolSchemas().sumOf { (it.toString().length + 2) / 3 }
 
     fun get(name: String): ToolDefinition? = byName[name]
 

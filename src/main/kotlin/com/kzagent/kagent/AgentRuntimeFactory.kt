@@ -1,5 +1,6 @@
 package com.kzagent.kagent
 
+import com.kzagent.kagent.mcp.McpRuntime
 import com.kzagent.kagent.agent.AgentObserver
 import com.kzagent.kagent.agent.AgentsInstructionsLoader
 import com.kzagent.kagent.agent.CodingAgent
@@ -37,6 +38,7 @@ class AgentRuntime(
     val contextWindowSize: Int,
     val modelSelection: ModelSelection,
     val todoState: StateFlow<TodoSnapshot>,
+    val mcp: McpRuntime? = null,
     private val closeAction: () -> Unit = {},
 ) : AutoCloseable {
     override fun close() = closeAction()
@@ -88,9 +90,13 @@ object AgentRuntimeFactory {
         val skillSummaries = skillRegistry?.summaries(skillsDir).orEmpty()
         val skillToolRegistry = skillRegistry?.let { ToolRegistry(listOf(it.readSkillTool())) }
             ?: ToolRegistry(emptyList())
+        val mcp = McpRuntime(pathGuard.root, effectiveApprovalPolicy)
+        val baseTools = localTools + TodoTools(todoStore).registry() + AskUserTools(userQuestionPrompter).registry() + skillToolRegistry
         val agent = CodingAgent(
             model = model,
-            tools = localTools + TodoTools(todoStore).registry() + AskUserTools(userQuestionPrompter).registry() + skillToolRegistry,
+            tools = baseTools,
+            prepareTools = { baseTools + mcp.prepareTurn(selection.contextWindowSize ?: config.contextWindowSize) },
+            toolNotice = { mcp.notice },
             promptBuilder = PromptBuilder(
                 workspace = pathGuard.root,
                 userPrompt = config.userPrompt,
@@ -110,7 +116,8 @@ object AgentRuntimeFactory {
             contextWindowSize = selection.contextWindowSize ?: config.contextWindowSize,
             modelSelection = selection,
             todoState = todoStore.state,
-            closeAction = model::close,
+            mcp = mcp,
+            closeAction = { try { mcp.close() } finally { model.close() } },
         )
     }
 }

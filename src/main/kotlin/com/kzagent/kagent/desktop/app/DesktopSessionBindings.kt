@@ -33,7 +33,7 @@ internal fun DesktopSessionNavigation(
             if (state.draft.submitting) return@KZAgentNavigationView
             state.showNewSession = false
             sessionManager.switchTo(index)
-            state.showSettings = false; state.showSkills = false
+            state.showSettings = false; state.showSkills = false; state.showMcp = false
         },
         onWorkspaceExpandedChanged = { key, expanded ->
             state.sessionWorkspaceExpandedState[key] = expanded
@@ -50,7 +50,7 @@ internal fun DesktopSessionNavigation(
                     state.hasDraft = true
                 }
                 state.showNewSession = true
-                state.showSettings = false; state.showSkills = false
+                state.showSettings = false; state.showSkills = false; state.showMcp = false
             }
         },
         onDeleteSession = { if (!state.draft.submitting) state.showDeleteConfirmIndex = it },
@@ -59,9 +59,11 @@ internal fun DesktopSessionNavigation(
             state.renameText = sessionManager.sessions[index].name
             state.showRenameDialogIndex = index
         },
-        onSettings = { if (!state.draft.submitting) { state.showSettings = true; state.showSkills = false } },
+        onSettings = { if (!state.draft.submitting) { state.showSettings = true; state.showSkills = false; state.showMcp = false } },
+        mcpSelected = state.showMcp,
+        onMcp = { if (!state.draft.submitting) { state.showMcp = true; state.showSkills = false; state.showSettings = false } },
         skillsSelected = state.showSkills,
-        onSkills = { if (!state.draft.submitting) { state.showSkills = true; state.showSettings = false } },
+        onSkills = { if (!state.draft.submitting) { state.showSkills = true; state.showSettings = false; state.showMcp = false } },
         modifier = Modifier.fillMaxSize(),
     ) {
         pane()

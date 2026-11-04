@@ -10,6 +10,7 @@
 - [快速开始](#快速开始)
 - [使用方式](#使用方式)
 - [Skills 管理](#skills-管理)
+- [MCP 工具](#mcp-工具)
 - [项目指令（AGENTS.md）](#项目指令agentsmd)
 - [核心架构](#核心架构)
 - [工具列表](#工具列表)
@@ -576,3 +577,68 @@ BossTerm 的结果与平台边界见 [PoC 验证记录](docs/bossterm-poc-valida
 - 默认目录中的用户技能可确认卸载，兼容 macOS `/var` 等祖先目录别名；内置、额外目录、技能根目录或技能目录本身的链接不可删除，卸载遇到内部链接也会拒绝继续。运行中有会话时不能卸载。
 - 页面修改自动保存到现有 `skills.enabled`、`skills.disabled`、`skills.extraDirectories` 配置。已有对话会在下一次发送前重建运行时，保留会话历史和压缩摘要，不中断正在运行的轮次。重建失败会保留输入以便重试。
 - CLI 继续在启动时读取技能快照；桌面外安装或编辑技能后请点击「刷新」。
+
+
+## MCP 工具
+
+侧栏 **MCP** 支持注册本地 stdio 和远端 Streamable HTTP Server。CLI、桌面端共享工具发现、审批和执行实现；配置独立保存在应用数据目录的 `mcp.json`，无需先配置模型即可添加或测试 Server。
+
+```sh
+kza mcp add browser --stdio -- node /absolute/path/to/server.js
+kza mcp test browser
+kza mcp enable browser
+kza mcp list
+kza mcp tools browser
+kza mcp disable browser
+kza mcp remove browser
+kza mcp add knowledge --http https://mcp.example.com/mcp
+kza mcp import /path/to/mcp-config.json
+```
+
+新增或导入的 Server 默认禁用。保存配置不会启动程序或连接网络；“测试连接”/`mcp test` 会实际连接、协商和完整发现工具，结束后关闭临时连接。启用后，在会话下一轮发送前准备工具；编辑、禁用、工具列表变化均在下轮生效，正在执行的轮次保持工具快照。桌面可查看当前会话状态与上次测试结果，按工具禁用、编辑及删除注册。
+
+`mcp.json` 示例（路径与域名为占位）：
+
+```json
+{
+  "mcpServers": {
+    "browser": {
+      "type": "stdio",
+      "enabled": false,
+      "command": "node",
+      "args": ["/absolute/path/to/server.js"],
+      "cwd": "${workspace}",
+      "env": { "SERVICE_TOKEN": "${env:SERVICE_TOKEN}" },
+      "disabledTools": [],
+      "connectTimeoutSeconds": 15,
+      "callTimeoutSeconds": 60
+    },
+    "knowledge": {
+      "type": "streamable_http",
+      "enabled": false,
+      "url": "https://mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer ${env:KNOWLEDGE_TOKEN}" }
+    }
+  }
+}
+```
+
+- ID 使用 1–24 位小写字母、数字或连字符，以字母开头。Server 的 `displayName` 可选，`disabledTools` 按原始工具名匹配。
+- stdio 直接运行可执行文件，参数为 JSON 数组；继承宿主环境后覆盖 `env`。工作目录默认当前会话工作区，也可设置绝对路径。Windows 的 `.cmd/.bat` 请显式配置 `cmd.exe` 参数；桌面启动缺少终端 PATH 时填写程序绝对路径。
+- `env` 和 `headers` 值支持 `${env:NAME}`，缺失变量会使该 Server 不可用。环境引用不会把凭据写进配置；不要将密钥放入 URL 或命令参数。远端需要 HTTPS，本地 loopback 可使用 HTTP。
+- 连接/发现默认超时 15 秒（1–120 秒），调用默认 60 秒（1–3600 秒）。单 Server 故障不影响内置工具及其他 Server。
+- 工具沿用 MANUAL / AUTO / FULL 审批语义；MANUAL 逐次询问，AUTO 由审批 Agent 判断，FULL 完全放行。Server 的只读等 annotations 仅供参考，不能自动免审批。每次调用沿用工具配额，默认 1 积分。
+- 模型函数名为 `mcp_<serverId>_<toolAlias>`；工具描述与结果包含 Server 和原始工具名。结果以文字及完整的 structuredContent JSON 回传，超长结果裁剪，二进制内容不写入聊天记录。
+- MCP 工具定义预算为 `min(16000, contextWindowSize × 10%)` 估算 tokens；超预算时整组 MCP 工具本轮暂停，禁用不需要的工具后再试。
+
+### MCP 限制
+
+支持 MCP 2025-11-25、2025-06-18、2025-03-26，以及 stdio 的 2024-11-05（适配当前 open-browser-control）；不支持 2026-07-28-only Server、旧式 HTTP+SSE、OAuth 登录、Tasks-required、sampling/elicitation、resources/prompts 浏览与完整多模态结果。stdio 是当前用户权限的外部进程，cwd/roots 不是文件沙箱；各会话连接独立。停止或超时会尝试取消并丢弃连接，但不保证远端副作用回滚，也不自动重放调用。
+
+使用当前已注册 Server 检查优化后的 Release 连接路径：
+
+```sh
+./gradlew verifyReleaseMcp -PmcpServerId=browser
+```
+
+可用 [MCP spec](docs/mcp-tools-spec.html) 查看协议选型、连接归属及验收约定。

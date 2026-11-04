@@ -31,6 +31,7 @@ internal class DesktopSessionUiState(initialWorkspace: Path) {
     var renameText by mutableStateOf("")
     var renameSuggesting by mutableStateOf(false)
     var showCompressConfirm by mutableStateOf(false)
+    var showMcp by mutableStateOf(false)
     var showSkills by mutableStateOf(false)
     var deletingSkill by mutableStateOf(false)
     var showSettings by mutableStateOf(false)

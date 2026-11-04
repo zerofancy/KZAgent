@@ -89,6 +89,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.swing)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.mcp.core)
+    implementation(libs.mcp.json)
+    implementation(libs.kotlinx.coroutines.reactor)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(kotlin("test"))
 }
@@ -124,6 +127,7 @@ compose.desktop {
                 // application-specific Fluent/Haze and terminal compatibility rules.
                 project.file("compose-fluent.pro"),
                 project.file("terminal-dependencies.pro"),
+                project.file("mcp-dependencies.pro"),
             )
         }
     }
@@ -262,4 +266,18 @@ tasks.register<JavaExec>("verifyReleaseTerminal") {
     mainClass.set("com.kzagent.verification.TerminalReleaseVerification")
     javaLauncher.set(verificationJava)
     jvmArgs("-Xverify:all")
+}
+
+
+tasks.register<JavaExec>("verifyReleaseMcp") {
+    group = "verification"
+    description = "Test a registered MCP server using optimized Release jars (requires -PmcpServerId=...)."
+    dependsOn("proguardReleaseJars")
+    classpath = releaseJars
+    mainClass.set("com.kzagent.kagent.MainKt")
+    javaLauncher.set(verificationJava)
+    jvmArgs("-Xverify:all")
+    doFirst {
+        args("mcp", "test", providers.gradleProperty("mcpServerId").get())
+    }
 }

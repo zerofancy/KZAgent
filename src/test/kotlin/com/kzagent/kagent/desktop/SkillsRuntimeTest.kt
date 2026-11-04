@@ -19,7 +19,7 @@ class SkillsRuntimeTest {
         return AgentRuntime(session.workspace,
             CodingAgent(model, ToolRegistry(emptyList()), PromptBuilder(session.workspace), SessionWriter(session.sessionFile)),
             SessionReader(session.sessionFile.parent), 100000, session.modelSelection,
-            MutableStateFlow(TodoSnapshot()), close)
+            MutableStateFlow(TodoSnapshot()), closeAction = close)
     }
 
     @Test fun refreshDefersUntilNextTurnAndPreservesCompressedHistory() = runBlocking {
