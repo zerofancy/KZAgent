@@ -45,16 +45,17 @@ fun platformDesktopJvmArgs(): List<String> = buildList {
     addAll(desktopRenderingJvmArgs())
 }
 
+val jvmVersion = libs.versions.jvm.target.get()
+
 kotlin {
-    jvmToolchain(17)
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
+        jvmTarget.set(JvmTarget.fromTarget(jvmVersion))
     }
 }
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(17))
+        languageVersion.set(JavaLanguageVersion.of(jvmVersion))
     }
 }
 
@@ -251,7 +252,7 @@ tasks.register<JavaExec>("verifyDesktopErrorWindow") {
 
 val releaseTest = sourceSets.create("releaseTest")
 val releaseJars = fileTree(layout.buildDirectory.dir("compose/tmp/main-release/proguard")) { include("*.jar") }
-val verificationJava = javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(17)) }
+val verificationJava = javaToolchains.launcherFor(java.toolchain)
 
 tasks.register<JavaExec>("verifyReleaseNativeCallbacks") {
     group = "verification"
@@ -259,8 +260,7 @@ tasks.register<JavaExec>("verifyReleaseNativeCallbacks") {
     dependsOn("proguardReleaseJars", releaseTest.classesTaskName)
     classpath = releaseTest.output + releaseJars
     mainClass.set("com.kzagent.verification.NativeCallbackReleaseVerification")
-    // Match the JDK used by the desktop packager and its multi-release dependencies.
-    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+    javaLauncher.set(verificationJava)
 }
 
 tasks.register<JavaExec>("verifyReleaseTerminal") {

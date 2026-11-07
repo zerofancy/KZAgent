@@ -16,7 +16,7 @@ jsoup = "1.22.2"
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
 bossterm = "1.2.183"
-jvm-target = "17"
+jvm-target = "21"
 mcp = "2.1.0"
 compose-desktop-keep-kit = "v0.2.6"
 

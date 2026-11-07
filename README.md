@@ -103,7 +103,7 @@ CLI 首次运行 `chat`（含无参数运行）或 `ask` 时，若缺少 Provide
 
 直接在终端运行且支持控制台时，API Key 输入不回显；通过 Gradle 等没有 Console 的环境运行时会提示可能回显。脚本或 CI 建议预先通过环境变量或配置文件提供凭据，避免交互提示。
 
-项目使用 Gradle 和 JVM 17+。如果系统默认 Java 不是 17+，请先设置 `JAVA_HOME`。
+项目使用 Gradle 和 JVM 21。开发时请安装 JDK 21，并在需要时设置 `JAVA_HOME`。
 
 ```bash
 # 交互式多轮对话（等同于 chat）
@@ -528,7 +528,7 @@ MIMOCODE_API_KEY=sk-mimo-xxxxxxxxxxxx   # JSON 中未配置 MiMo Code 时生效
 
 | 技术 | 用途 |
 |------|------|
-| **Kotlin 2.4.0** + **JVM 17+** | 开发语言与运行时 |
+| **Kotlin 2.4.0** + **JVM 21** | 开发语言与运行时 |
 | **Compose Desktop 1.12.1** | 桌面应用 UI 与原生打包 |
 | **BossTerm 1.2.183 / PTY4J 0.13.13** | 会话底部交互终端、VT 解析和原生 PTY |
 | **Gradle** | 构建工具 |
