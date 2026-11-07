@@ -124,13 +124,16 @@ CLI 首次运行 `chat`（含无参数运行）或 `ask` 时，若缺少 Provide
 
 ### 3. 打包桌面应用
 
-Release 的通用依赖 keep 规则由 [ComposeDesktopKeepKit](https://github.com/zerofancy/ComposeDesktopKeepKit) `v0.2.3` 按最终解析的依赖版本自动生成，通过 JitPack 加载插件。项目额外保留 `compose-fluent.pro` 中针对当前 Compose Fluent / Haze 二进制兼容性的警告抑制，以及 `terminal-dependencies.pro` 中的终端原生调用边界和兼容规则。BossTerm 1.2.183 的 `ProperTerminalKt` 使用局部 `-keep,includecode` 规则保护方法体，避免 ProGuard 转换终端指针处理代码后生成不一致的栈帧，导致点击终端时发生 `VerifyError`、界面停止重绘。其他类继续按原配置裁剪和优化。插件不改变 Compose 原有的优化和混淆开关。
+Release 通过 JitPack 加载 [ComposeDesktopKeepKit](https://github.com/zerofancy/ComposeDesktopKeepKit) `v0.2.6`。插件按最终解析的依赖版本生成规则，覆盖 MCP SDK 及其传递依赖、JNA 的原生调用和回调生命周期，以及 BossTerm 1.2.183 的 `ProperTerminalKt` 方法体保护。应用侧保留 `compose-fluent.pro` 中针对 Fluent / Haze 二进制兼容性的警告抑制。
 
-运行 `./gradlew verifyReleaseTerminal`（Windows 使用 `.\gradlew.bat verifyReleaseTerminal`）可构建优化后的 Release JAR，并通过 JVM 验证终端渲染类的字节码；此检查不依赖图形环境或 API Key，不替代实际终端交互验证。
+在 Linux 或 macOS 上运行以下命令。Windows 将 `./gradlew` 换成 `.\gradlew.bat`。
 
-`jna-dependencies.pro` 保留 JNA 的 `Native.finalizer` 生命周期引用，避免垃圾回收提前释放仍在使用的原生回调。运行 `./gradlew verifyReleaseNativeCallbacks` 可检查优化后的 JNA 在垃圾回收后仍保持加载；macOS 还会反复执行目录选择器使用的 AppKit 主线程回调，需要图形环境。
+```sh
+./gradlew test
+./gradlew verifyReleaseTerminal verifyReleaseNativeCallbacks keepKitReport
+```
 
-可运行 `.\gradlew.bat keepKitReport` 查看依赖匹配报告；插件生成的规则和报告存放在 Gradle 用户缓存中。
+`verifyReleaseTerminal` 检查优化后的终端渲染类字节码。实测 PTY 和桌面终端交互时，使用 Release 应用自带的 Java 21 运行时。`verifyReleaseNativeCallbacks` 检查 JNA 在垃圾回收后仍保持加载，并在 macOS 的图形环境中反复执行目录选择器使用的 AppKit 主线程回调。`keepKitReport` 输出依赖匹配报告及生成规则的位置。
 
 Windows 安装包使用固定的升级 UUID，并允许新构建的相同版本覆盖已安装版本：
 
