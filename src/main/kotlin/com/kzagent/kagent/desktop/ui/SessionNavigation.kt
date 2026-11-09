@@ -43,7 +43,8 @@ import io.github.composefluent.icons.regular.Add
 import io.github.composefluent.icons.regular.ArrowDown
 import io.github.composefluent.icons.regular.ArrowUp
 import io.github.composefluent.icons.regular.Delete
-import io.github.composefluent.icons.regular.Document
+import io.github.composefluent.icons.regular.PlugConnected
+import io.github.composefluent.icons.regular.PuzzlePiece
 import io.github.composefluent.icons.regular.Rename
 import io.github.composefluent.icons.regular.Settings
 import java.nio.file.Files
@@ -236,13 +237,13 @@ internal fun KZAgentNavigationView(
                     selected = mcpSelected,
                     onClick = { runDestinationAction(onMcp) },
                     text = { FluentText("MCP", maxLines = 1) },
-                    icon = { FluentIcon(Icons.Default.Document, contentDescription = null) },
+                    icon = { FluentIcon(Icons.Default.PlugConnected, contentDescription = null) },
                 )
                 MenuItem(
                     selected = skillsSelected,
                     onClick = { runDestinationAction(onSkills) },
                     text = { FluentText("Skills", maxLines = 1) },
-                    icon = { FluentIcon(Icons.Default.Document, contentDescription = null) },
+                    icon = { FluentIcon(Icons.Default.PuzzlePiece, contentDescription = null) },
                 )
                 MenuItem(
                     selected = settingsSelected,
