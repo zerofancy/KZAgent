@@ -25,8 +25,8 @@ kotlin {
 
 dependencies {
     implementation(compose.desktop.currentOs)
-    implementation("io.github.compose-fluent:fluent:v0.1.0")
-    implementation("io.github.compose-fluent:fluent-icons-extended:v0.1.0")
+    implementation("com.github.zerofancy.compose-fluent-ui:fluent:0.2.0-dev-20261114.1")
+    implementation("com.github.zerofancy.compose-fluent-ui:fluent-icons-extended:0.2.0-dev-20261114.1")
     implementation("org.jetbrains.compose.material3:material3:1.9.0")
     implementation("com.risaboss:bossterm-compose-desktop:$bossTermVersion") {
         exclude(group = "org.jetbrains.compose.desktop", module = "desktop-jvm-macos-arm64")

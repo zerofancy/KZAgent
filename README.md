@@ -105,6 +105,8 @@ CLI 首次运行 `chat`（含无参数运行）或 `ask` 时，若缺少 Provide
 
 项目使用 Gradle 和 JVM 21。开发时请安装 JDK 21，并在需要时设置 `JAVA_HOME`。
 
+桌面 UI 使用 [zerofancy/compose-fluent-ui fork](https://github.com/zerofancy/compose-fluent-ui)，通过 JitPack 固定依赖 `0.2.0-dev-20261114.1`（模块组名 `com.github.zerofancy.compose-fluent-ui`）。主项目和 BossTerm PoC 均使用该版本，源码包名仍为 `io.github.composefluent`。
+
 ```bash
 # 交互式多轮对话（等同于 chat）
 ./gradlew run
