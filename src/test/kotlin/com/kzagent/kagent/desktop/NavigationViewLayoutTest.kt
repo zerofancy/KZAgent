@@ -43,4 +43,13 @@ class NavigationViewLayoutTest {
         assertFalse(shouldCollapseNavigationAfterDestination(NavigationDisplayMode.LeftCollapsed))
         assertFalse(shouldCollapseNavigationAfterDestination(NavigationDisplayMode.Top))
     }
+
+    @Test
+    fun sessionEntryActionsRequireExpandedSidebarAndRowHover() {
+        assertTrue(shouldShowSessionEntryActions(expanded = true, hovered = true))
+        // 默认隐藏：侧栏展开但未悬停该行、以及折叠侧栏时不显示编辑和删除按钮。
+        assertFalse(shouldShowSessionEntryActions(expanded = true, hovered = false))
+        assertFalse(shouldShowSessionEntryActions(expanded = false, hovered = true))
+        assertFalse(shouldShowSessionEntryActions(expanded = false, hovered = false))
+    }
 }

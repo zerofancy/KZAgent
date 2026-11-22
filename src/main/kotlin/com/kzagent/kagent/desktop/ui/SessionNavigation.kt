@@ -70,6 +70,10 @@ internal fun isSessionNavigationSelected(
 internal fun shouldCollapseNavigationAfterDestination(displayMode: NavigationDisplayMode): Boolean =
     displayMode == NavigationDisplayMode.LeftCompact
 
+// 编辑/删除按钮默认隐藏：仅在侧栏展开且鼠标悬停该会话行时显示，
+// 避免常驻按钮挤占标题、也降低误触概率。
+internal fun shouldShowSessionEntryActions(expanded: Boolean, hovered: Boolean): Boolean = expanded && hovered
+
 private data class SessionSortEntry(
     val index: Int,
     val session: SessionData,
@@ -218,10 +222,10 @@ internal fun KZAgentNavigationView(
                                     expanded = navigationState.expanded,
                                     selected = isSessionNavigationSelected(settingsSelected, activeIndex, row.entry.index, skillsSelected, mcpSelected),
                                     onClick = { runDestinationAction { onSelectSession(row.entry.index) } },
-                                    badge = {
+                                    badge = { hovered ->
                                         SessionNavigationBadge(
                                             busy = session.isBusy,
-                                            showActions = navigationState.expanded,
+                                            showActions = shouldShowSessionEntryActions(navigationState.expanded, hovered),
                                             onRename = { onRenameSession(row.entry.index) },
                                             onDelete = { onDeleteSession(row.entry.index) },
                                         )

@@ -4,6 +4,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.requiredSize
@@ -53,10 +55,11 @@ internal fun SessionNavigationItem(
     indicatorState: IndicatorState?,
     selected: Boolean,
     onClick: () -> Unit,
-    badge: @Composable () -> Unit,
+    badge: @Composable (hovered: Boolean) -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
+    val hovered by interaction.collectIsHoveredAsState()
     val focusTooltip = rememberTooltipState()
     val description = "${session.name}\n项目：${workspaceProjectName(session.workspace)}\n${session.workspace}\n" +
         if (session.isBusy) "运行中" else "空闲"
@@ -74,10 +77,13 @@ internal fun SessionNavigationItem(
             onSelectedChanged = { onClick() },
             indicatorState = indicatorState,
             interactionSource = interaction,
-            modifier = Modifier.semantics {
-                contentDescription = description
-                this.selected = selected
-            },
+            modifier = Modifier
+                // 悬停整行时才显示编辑/删除按钮，避免常驻按钮挤占标题。
+                .hoverable(interaction)
+                .semantics {
+                    contentDescription = description
+                    this.selected = selected
+                },
             icon = {
                 if (expanded) {
                     Icon(Icons.Default.Document, contentDescription = null)
@@ -96,7 +102,7 @@ internal fun SessionNavigationItem(
                     }
                 }
             },
-            badge = badge,
+            badge = { badge(hovered) },
             text = { if (expanded) Text(session.name, maxLines = 1) else preview() },
         )
     }
