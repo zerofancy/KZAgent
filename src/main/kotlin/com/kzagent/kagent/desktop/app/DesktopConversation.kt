@@ -153,6 +153,7 @@ internal fun DesktopConversation(
         Column(modifier = Modifier.fillMaxSize()) {
             Header(
                 workspace = session.workspace,
+                projectName = sessionManager.projectById(session.projectId)?.name ?: "项目归属异常",
                 status = session.status,
                 isBusy = session.isBusy,
                 modelSelection = session.modelSelection,
@@ -195,7 +196,7 @@ internal fun DesktopConversation(
                             Composer(
                                 input = state.input,
                                 isBusy = session.isBusy,
-                                enabled = !state.deletingSkill,
+                                enabled = !state.deletingSkill && sessionManager.projectDataAvailable,
                                 onInputChange = { state.input = it },
                                 onSend = { onSend(session, state.input) },
                                 onTerminate = {

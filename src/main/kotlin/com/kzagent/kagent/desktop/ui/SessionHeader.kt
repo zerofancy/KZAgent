@@ -68,6 +68,7 @@ internal fun Header(
     onRefreshModels: () -> Unit,
     terminalVisible: Boolean = false,
     onToggleTerminal: () -> Unit = {},
+    projectName: String = workspaceProjectName(workspace),
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val useSingleRow = maxWidth >= 720.dp
@@ -77,7 +78,7 @@ internal fun Header(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                WorkspaceIdentity(workspace = workspace, modifier = Modifier.weight(1f))
+                WorkspaceIdentity(workspace = workspace, projectName = projectName, modifier = Modifier.weight(1f))
                 StatusPill(status = status, isBusy = isBusy)
                 HeaderActions(
                     modelSelection = modelSelection,
@@ -100,7 +101,7 @@ internal fun Header(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    WorkspaceIdentity(workspace = workspace, modifier = Modifier.weight(1f))
+                    WorkspaceIdentity(workspace = workspace, projectName = projectName, modifier = Modifier.weight(1f))
                     StatusPill(status = status, isBusy = isBusy)
                 }
                 Spacer(Modifier.height(8.dp))
@@ -135,22 +136,29 @@ internal fun Header(
     }
 }
 
+@OptIn(ExperimentalFluentApi::class, ExperimentalFoundationApi::class)
 @Composable
-internal fun WorkspaceIdentity(workspace: Path, modifier: Modifier = Modifier) {
-    Column(modifier = modifier) {
-        Text(
-            workspaceProjectName(workspace),
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            workspace.toString(),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+internal fun WorkspaceIdentity(
+    workspace: Path,
+    modifier: Modifier = Modifier,
+    projectName: String = workspaceProjectName(workspace),
+) {
+    TooltipBox(tooltip = { FluentText("项目：$projectName\n$workspace") }, modifier = modifier) {
+        Column {
+            FluentText(
+                projectName,
+                style = io.github.composefluent.FluentTheme.typography.subtitle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            FluentText(
+                workspace.toString(),
+                style = io.github.composefluent.FluentTheme.typography.caption,
+                color = io.github.composefluent.FluentTheme.colors.text.text.secondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

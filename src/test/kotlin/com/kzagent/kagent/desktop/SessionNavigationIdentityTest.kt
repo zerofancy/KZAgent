@@ -16,6 +16,7 @@ import io.github.composefluent.darkColors
 import io.github.composefluent.lightColors
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -37,6 +38,44 @@ class SessionNavigationIdentityTest {
         assertEquals("终", sessionNavigationShortLabel("终"))
     }
 
+    @Test
+    fun projectActionsAreVisibleWithoutHoverAndDoNotToggleGroups() = runBlocking(Dispatchers.Swing) {
+        val workspace = Path.of("build", "project-actions").toAbsolutePath()
+        val populated = Project("populated", "主线", workspace, Instant.EPOCH)
+        val empty = populated.copy(id = "empty", name = "研究")
+        val session = SessionData(id = "session", name = "任务", workspace = workspace,
+            sessionFile = workspace.resolve("session.jsonl"), messages = mutableStateListOf(), projectId = populated.id)
+        val additions = mutableListOf<String>()
+        val renames = mutableListOf<String>()
+        val deletions = mutableListOf<String>()
+        val toggles = mutableListOf<String>()
+        ImageComposeScene(1200, 700, coroutineContext = coroutineContext) {
+            KZAgentFluentTheme {
+                KZAgentNavigationView(sessions = listOf(session), projects = listOf(populated, empty),
+                    onCreateProject = {}, onRenameProject = { renames += it }, onDeleteProject = { deletions += it },
+                    onAddSessionInProject = { additions += it }, activeIndex = 0, sessionWorkspaceExpanded = emptyMap(),
+                    settingsSelected = false, onSelectSession = {}, onAddSession = {}, onDeleteSession = {},
+                    onRenameSession = {}, onWorkspaceExpandedChanged = { id, _ -> toggles += id }, onSettings = {}, pane = {})
+            }
+        }.use { scene ->
+            frames(scene)
+            fun button(label: String) = all(scene).first { node ->
+                node.config.getOrNull(SemanticsActions.OnClick) != null && nodes(node).any {
+                    it.config.getOrNull(SemanticsProperties.ContentDescription) == listOf(label)
+                }
+            }
+            assertTrue(all(scene).any { text(it) == "暂无会话" })
+            assertTrue(button("在项目 主线 中新建会话").config[SemanticsActions.OnClick].action!!.invoke())
+            assertTrue(button("重命名项目 研究").config[SemanticsActions.OnClick].action!!.invoke())
+            assertTrue(button("删除项目 研究").config[SemanticsActions.OnClick].action!!.invoke())
+            assertTrue(button("请先删除项目内的会话").config.contains(SemanticsProperties.Disabled))
+            assertEquals(listOf(populated.id), additions)
+            assertEquals(listOf(empty.id), renames)
+            assertEquals(listOf(empty.id), deletions)
+            assertTrue(toggles.isEmpty(), "独立项目操作不能切换展开状态")
+        }
+    }
+
     private fun nodes(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::nodes)
     private fun all(scene: ImageComposeScene) = scene.semanticsOwners.flatMap { nodes(it.unmergedRootSemanticsNode) }
     private fun text(node: SemanticsNode) = node.config.getOrNull(SemanticsProperties.Text)?.joinToString { it.text }.orEmpty()
@@ -47,8 +86,9 @@ class SessionNavigationIdentityTest {
     @Test
     fun compactLabelsRemainClickableAndFocusShowsFullIdentity() = runBlocking(Dispatchers.Swing) {
         val workspace = Path.of("build", "navigation-identity-workspace").toAbsolutePath()
+        val project = Project("test-project", "自定义项目名称", workspace, Instant.EPOCH)
         val sessions = listOf("登录修复", "登录测试", "新会话 12").mapIndexed { index, name ->
-            SessionData(id = "identity-$index", name = name, workspace = workspace,
+            SessionData(id = "identity-$index", name = name, workspace = workspace, projectId = project.id,
                 sessionFile = workspace.resolve("$index.jsonl"), messages = mutableStateListOf()).also {
                 it.isBusy = index == 0
             }
@@ -58,7 +98,8 @@ class SessionNavigationIdentityTest {
             ImageComposeScene(700, 500, coroutineContext = coroutineContext) {
                 KZAgentFluentTheme {
                     FluentTheme(colors = if (dark) darkColors() else lightColors(), useAcrylicPopup = false) {
-                        KZAgentNavigationView(sessions = sessions, activeIndex = 0,
+                        KZAgentNavigationView(sessions = sessions, projects = listOf(project),
+                            onCreateProject = {}, onRenameProject = {}, onDeleteProject = {}, onAddSessionInProject = {}, activeIndex = 0,
                             sessionWorkspaceExpanded = emptyMap(), settingsSelected = false,
                             onSelectSession = { selected = it }, onAddSession = {}, onDeleteSession = {},
                             onRenameSession = {}, onWorkspaceExpandedChanged = { _, _ -> }, onSettings = {}, pane = {})

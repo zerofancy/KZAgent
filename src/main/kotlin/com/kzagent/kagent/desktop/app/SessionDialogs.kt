@@ -210,8 +210,7 @@ internal fun handleDeleteSession(
     scope.launch {
         try {
             beforeDelete(sessionId)
-            val currentIndex = sessionManager.sessions.indexOfFirst { it.id == sessionId }
-            if (currentIndex >= 0 && !sessionManager.deleteSession(currentIndex)) {
+            if (sessionManager.sessions.any { it.id == sessionId } && !sessionManager.deleteSessionById(sessionId)) {
                 onDeleteFailed(sessionId)
                 return@launch
             }

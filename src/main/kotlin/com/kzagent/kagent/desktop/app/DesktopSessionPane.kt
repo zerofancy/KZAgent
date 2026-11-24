@@ -18,7 +18,6 @@ import com.kzagent.kagent.desktop.terminal.SessionTerminalManager
 import com.kzagent.kagent.desktop.SettingsPanel
 import com.kzagent.kagent.desktop.McpPanel
 import com.kzagent.kagent.desktop.SkillsPanel
-import com.kzagent.kagent.desktop.chooseWorkspace
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -88,7 +87,7 @@ internal fun DesktopSessionPane(
             if (state.sessionLoadError == null) {
                 CircularProgressIndicator()
             } else {
-                ErrorBanner(state.sessionLoadError!!)
+                io.github.composefluent.component.Text("项目数据暂不可用，请查看上方错误并重试加载。")
             }
         }
     } else if (state.showNewSession || sessionManager.sessions.isEmpty()) {
@@ -97,38 +96,33 @@ internal fun DesktopSessionPane(
         val approval = state.draft.approval ?: settingsState.savedConfig?.approvalMode ?: AppConfig.DEFAULT_APPROVAL_MODE
         NewSessionScreen(
             draft = state.draft,
-            workspaces = sessionManager.sessions.map { it.workspace },
+            projects = sessionManager.projects,
             selection = selection, approval = approval,
             models = settingsState.availableModels, modelsLoading = settingsState.modelsLoading,
             modelsError = settingsState.modelsError, configured = settingsState.savedConfig != null,
-            ready = sessionManager.initialized && !state.deletingSkill && !settingsState.settingsSaving,
+            ready = sessionManager.initialized && sessionManager.projectDataAvailable && !state.deletingSkill && !settingsState.settingsSaving,
             onRefreshModels = settingsState::refreshModels,
-            onChooseWorkspace = {
-                if (!state.draft.submitting) scope.launch {
-                    try {
-                        chooseWorkspace(state.draft.workspace)?.let { path ->
-                            state.draft.workspace = withContext(Dispatchers.IO) { requireReadableWorkspace(path) }
-                            state.draft.error = null
-                        }
-                    } catch (error: CancellationException) { throw error }
-                    catch (error: Exception) { state.draft.error = SecretRedactor.redact(error.message ?: error.toString()) }
-                }
+            onCreateProject = {
+                if (!state.draft.submitting) state.projectDialog = ProjectDialogState.create(state.draft.pendingWorkspace ?: state.draft.workspace)
             },
             onSettings = { state.showSettings = true },
             onSend = {
                 if (state.draft.beginSubmission()) {
                     val submittedDraft = state.draft
                     val prompt = submittedDraft.input.text.toString()
-                    val workspace = submittedDraft.workspace
+                    val submittedProject = com.kzagent.kagent.desktop.selectedDraftProject(submittedDraft, sessionManager.projects)
                     scope.launch {
                         try {
-                            val validated = withContext(Dispatchers.IO) { requireReadableWorkspace(workspace) }
+                            val snapshot = requireNotNull(submittedProject) { "请选择一个有效项目，并完成目录归属选择" }
+                            val project = requireNotNull(sessionManager.projectById(snapshot.id)) { "项目已不存在，请重新选择" }
+                            check(com.kzagent.kagent.desktop.projectWorkspaceKey(project.workspace) == com.kzagent.kagent.desktop.projectWorkspaceKey(snapshot.workspace)) { "项目路径已改变，请重新选择" }
+                            withContext(Dispatchers.IO) { requireReadableWorkspace(project.workspace) }
                             settingsState.commitNewSessionPreferences(selection, approval)
-                            val created = sessionManager.startNewSessionInWorkspace(validated, selection)
+                            val created = sessionManager.startNewSessionInProject(project.id, selection)
                             state.input = prompt
                             onSend(created, prompt)
                             state.showNewSession = false
-                            state.draft = NewSessionDraft(validated)
+                            state.draft = NewSessionDraft(project.workspace).also { it.selectProject(project) }
                             state.hasDraft = false
                         } catch (error: CancellationException) { throw error }
                         catch (error: Exception) { submittedDraft.error = SecretRedactor.redact(error.message ?: error.toString()) }

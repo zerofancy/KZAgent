@@ -1,5 +1,8 @@
 package com.kzagent.kagent.desktop.app
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -17,9 +20,14 @@ internal fun KZAgentDesktopApp(
 ) {
     val state = remember { DesktopSessionUiState(initialWorkspace) }
     val scope = rememberCoroutineScope()
-    val terminalManager = remember { SessionTerminalManager(factory = ::createDesktopTerminal) }
     val sessionManager = remember {
         SessionManager(state.approvalPolicy, userQuestionPrompter = state.userQuestionPrompter)
+    }
+    val terminalManager = remember {
+        SessionTerminalManager(factory = { workspace ->
+            check(sessionManager.projectDataAvailable) { "项目数据不可用，请修复后重试加载" }
+            createDesktopTerminal(workspace)
+        })
     }
     val settingsState = rememberDesktopSessionSettingsState(
         sessionManager = sessionManager,
@@ -36,10 +44,14 @@ internal fun KZAgentDesktopApp(
 
     KZAgentFluentTheme {
         DesktopSessionNavigation(state, sessionManager, scope, initialWorkspace) {
-            DesktopSessionPane(state, sessionManager, settingsState, scope, terminalManager) { session, text ->
-                sendDesktopSessionMessage(state, sessionManager, settingsState, scope, session, text)
+            Column(Modifier.fillMaxSize()) {
+                ProjectLoadStatus(state, sessionManager, scope, initialWorkspace)
+                DesktopSessionPane(state, sessionManager, settingsState, scope, terminalManager) { session, text ->
+                    sendDesktopSessionMessage(state, sessionManager, settingsState, scope, session, text)
+                }
             }
         }
+        DesktopSessionDialogs(state, sessionManager, scope, terminalManager)
+        ProjectDialogs(state, sessionManager, scope)
     }
-    DesktopSessionDialogs(state, sessionManager, scope, terminalManager)
 }

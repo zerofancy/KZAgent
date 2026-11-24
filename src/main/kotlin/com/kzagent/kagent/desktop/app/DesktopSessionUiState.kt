@@ -2,7 +2,6 @@ package com.kzagent.kagent.desktop.app
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.kzagent.kagent.desktop.NewSessionDraft
@@ -37,7 +36,8 @@ internal class DesktopSessionUiState(initialWorkspace: Path) {
     var showSettings by mutableStateOf(false)
     var showSessionSidePanel by mutableStateOf(false)
     var sessionLoadError by mutableStateOf<String?>(null)
-    val sessionWorkspaceExpandedState = mutableStateMapOf<String, Boolean>()
+    var projectDialog by mutableStateOf<ProjectDialogState?>(null)
+    var projectActionError by mutableStateOf<String?>(null)
 
     val approvalPolicy = ApprovalPolicy { request ->
         suspendCancellableCoroutine { continuation ->

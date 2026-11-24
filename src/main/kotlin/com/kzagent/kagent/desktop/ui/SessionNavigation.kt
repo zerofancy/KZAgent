@@ -1,10 +1,12 @@
 package com.kzagent.kagent.desktop
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
@@ -19,6 +21,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import io.github.composefluent.FluentTheme
 import io.github.composefluent.component.MenuItem
 import io.github.composefluent.component.NavigationDisplayMode
@@ -34,6 +39,7 @@ import io.github.composefluent.component.ProgressRing
 import io.github.composefluent.component.ProgressRingSize
 import io.github.composefluent.component.SideNavHeader
 import io.github.composefluent.component.SideNavItem
+import io.github.composefluent.component.TooltipBox
 import io.github.composefluent.component.SubtleButton
 import io.github.composefluent.component.rememberNavigationState
 import io.github.composefluent.component.Text as FluentText
@@ -48,7 +54,6 @@ import io.github.composefluent.icons.regular.PuzzlePiece
 import io.github.composefluent.icons.regular.Rename
 import io.github.composefluent.icons.regular.Settings
 import java.nio.file.Files
-import java.nio.file.Path
 
 internal val NavigationCompactBreakpoint = 1000.dp
 
@@ -74,37 +79,44 @@ internal fun shouldCollapseNavigationAfterDestination(displayMode: NavigationDis
 // 避免常驻按钮挤占标题、也降低误触概率。
 internal fun shouldShowSessionEntryActions(expanded: Boolean, hovered: Boolean): Boolean = expanded && hovered
 
-private data class SessionSortEntry(
+internal data class SessionSortEntry(
     val index: Int,
     val session: SessionData,
     val updatedAtMillis: Long,
 )
 
-private data class SessionGroup(
-    val workspace: Path,
+internal data class SessionProjectGroup(
+    val project: Project,
     val sessions: List<SessionSortEntry>,
     val updatedAtMillis: Long,
 )
 
-private sealed interface SessionNavigationRow {
-    val key: String
+/** Project IDs, not paths or display names, are the grouping and expansion identity. */
+internal fun sessionProjectGroups(
+    projects: List<Project>,
+    sessions: List<SessionData>,
+    updatedAtMillis: (SessionData) -> Long = { session ->
+        runCatching { Files.getLastModifiedTime(session.sessionFile).toMillis() }.getOrDefault(0L)
+    },
+): List<SessionProjectGroup> {
+    val entries = sessions.mapIndexed { index, session ->
+        SessionSortEntry(index, session, updatedAtMillis(session))
+    }.groupBy { it.session.projectId }
+    return projects.map { project ->
+        val ordered = entries[project.id].orEmpty()
+            .sortedWith(compareByDescending<SessionSortEntry> { it.updatedAtMillis }.thenBy { it.session.id })
+        SessionProjectGroup(project, ordered, ordered.firstOrNull()?.updatedAtMillis ?: project.createdAt.toEpochMilli())
+    }.sortedWith(compareByDescending<SessionProjectGroup> { it.updatedAtMillis }.thenBy { it.project.id })
 }
-
-private data class SessionWorkspaceHeader(
-    override val key: String,
-    val workspace: Path,
-    val expanded: Boolean,
-    val workspaceKey: String,
-) : SessionNavigationRow
-
-private data class SessionEntryRow(
-    override val key: String,
-    val entry: SessionSortEntry,
-) : SessionNavigationRow
 
 @Composable
 internal fun KZAgentNavigationView(
     sessions: List<SessionData>,
+    projects: List<Project>,
+    onCreateProject: () -> Unit,
+    onRenameProject: (String) -> Unit,
+    onDeleteProject: (String) -> Unit,
+    onAddSessionInProject: (String) -> Unit,
     activeIndex: Int,
     sessionWorkspaceExpanded: Map<String, Boolean>,
     settingsSelected: Boolean,
@@ -126,44 +138,7 @@ internal fun KZAgentNavigationView(
         val navigationState = rememberNavigationState(
             initialExpanded = displayMode == NavigationDisplayMode.Left,
         )
-        val sortedSessionGroups = sessions
-            .mapIndexed { index, session ->
-                val updatedAt = runCatching {
-                    Files.getLastModifiedTime(session.sessionFile).toMillis()
-                }.getOrDefault(0L)
-                SessionSortEntry(index, session, updatedAt)
-            }
-            .groupBy { it.session.workspace }
-            .map { (workspace, groupItems) ->
-                val orderedSessions = groupItems.sortedByDescending { it.updatedAtMillis }
-                SessionGroup(
-                    workspace = workspace,
-                    sessions = orderedSessions,
-                    updatedAtMillis = orderedSessions.firstOrNull()?.updatedAtMillis ?: 0L,
-                )
-            }
-            .sortedByDescending { it.updatedAtMillis }
-        val sortedRows = sortedSessionGroups.flatMap { group ->
-            val workspaceKey = sessionWorkspaceKey(group.workspace)
-            val expanded = sessionWorkspaceExpanded[workspaceKey] != false
-            buildList {
-                add(
-                    SessionWorkspaceHeader(
-                        "group-${workspaceKey}",
-                        workspace = group.workspace,
-                        expanded = expanded,
-                        workspaceKey = workspaceKey,
-                    ),
-                )
-                if (expanded) {
-                    addAll(
-                        group.sessions.map { entry ->
-                            SessionEntryRow("session-${entry.session.id}", entry = entry)
-                        },
-                    )
-                }
-            }
-        }
+        val sortedSessionGroups = sessionProjectGroups(projects, sessions)
 
         fun runDestinationAction(action: () -> Unit) {
             action()
@@ -185,52 +160,55 @@ internal fun KZAgentNavigationView(
                 ) {
                     FluentText("创建新会话", maxLines = 1)
                 }
-                SideNavHeader {
-                    FluentText("会话列表", maxLines = 1)
-                }
+                SideNavItem(
+                    selected = false,
+                    onClick = { runDestinationAction(onCreateProject) },
+                    icon = { FluentIcon(Icons.Default.Add, contentDescription = "新建项目") },
+                ) { FluentText("新建项目", maxLines = 1) }
+                SideNavHeader { FluentText("项目列表", maxLines = 1) }
             },
             menuItems = {
-                sortedRows.forEach { row ->
-                    key(row.key) {
-                        when (row) {
-                            is SessionWorkspaceHeader -> {
-                                SideNavHeader(
-                                    modifier = Modifier.clickable {
-                                        onWorkspaceExpandedChanged(row.workspaceKey, !row.expanded)
-                                    },
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        FluentText(workspaceProjectName(row.workspace), maxLines = 1)
-                                        FluentIcon(
-                                            imageVector = if (row.expanded) Icons.Default.ArrowUp else Icons.Default.ArrowDown,
-                                            contentDescription = if (row.expanded) "收起分组" else "展开分组",
-                                            modifier = Modifier.size(14.dp),
-                                        )
-                                    }
-                                }
+                sortedSessionGroups.forEach { group ->
+                    key("project-${group.project.id}") {
+                        val project = group.project
+                        val expanded = sessionWorkspaceExpanded[project.id] != false
+                        ProjectNavigationHeader(
+                            project = project,
+                            expanded = expanded,
+                            navigationExpanded = navigationState.expanded,
+                            empty = group.sessions.isEmpty(),
+                            onToggle = { onWorkspaceExpandedChanged(project.id, !expanded) },
+                            onExpandNavigation = { navigationState.expanded = true },
+                            onAdd = { runDestinationAction { onAddSessionInProject(project.id) } },
+                            onRename = { onRenameProject(project.id) },
+                            onDelete = { onDeleteProject(project.id) },
+                        )
+                        if (expanded) {
+                            if (group.sessions.isEmpty() && navigationState.expanded) {
+                                FluentText("暂无会话", modifier = Modifier.padding(start = 24.dp, bottom = 8.dp),
+                                    color = FluentTheme.colors.text.text.secondary,
+                                    style = FluentTheme.typography.caption)
                             }
-
-                            is SessionEntryRow -> {
-                                val session = row.entry.session
-                                SessionNavigationItem(
-                                    session = session,
-                                    indicatorState = navigationState.indicatorState,
-                                    expanded = navigationState.expanded,
-                                    selected = isSessionNavigationSelected(settingsSelected, activeIndex, row.entry.index, skillsSelected, mcpSelected),
-                                    onClick = { runDestinationAction { onSelectSession(row.entry.index) } },
-                                    badge = { hovered ->
-                                        SessionNavigationBadge(
-                                            busy = session.isBusy,
-                                            showActions = shouldShowSessionEntryActions(navigationState.expanded, hovered),
-                                            onRename = { onRenameSession(row.entry.index) },
-                                            onDelete = { onDeleteSession(row.entry.index) },
-                                        )
-                                    },
-                                )
+                            group.sessions.forEach { entry ->
+                                key("session-${entry.session.id}") {
+                                    val session = entry.session
+                                    SessionNavigationItem(
+                                        session = session,
+                                        projectName = project.name,
+                                        indicatorState = navigationState.indicatorState,
+                                        expanded = navigationState.expanded,
+                                        selected = isSessionNavigationSelected(settingsSelected, activeIndex, entry.index, skillsSelected, mcpSelected),
+                                        onClick = { runDestinationAction { onSelectSession(entry.index) } },
+                                        badge = { hovered ->
+                                            SessionNavigationBadge(
+                                                busy = session.isBusy,
+                                                showActions = shouldShowSessionEntryActions(navigationState.expanded, hovered),
+                                                onRename = { onRenameSession(entry.index) },
+                                                onDelete = { onDeleteSession(entry.index) },
+                                            )
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
@@ -258,6 +236,62 @@ internal fun KZAgentNavigationView(
             },
             pane = pane,
         )
+    }
+}
+
+@OptIn(ExperimentalFluentApi::class, ExperimentalFoundationApi::class)
+@Composable
+private fun ProjectNavigationHeader(
+    project: Project,
+    expanded: Boolean,
+    navigationExpanded: Boolean,
+    empty: Boolean,
+    onToggle: () -> Unit,
+    onExpandNavigation: () -> Unit,
+    onAdd: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val identity = "项目：${project.name}\n${project.workspace}\nID：${project.id}"
+    TooltipBox(tooltip = { FluentText(identity) }) {
+        if (navigationExpanded) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Only the title toggles the group. Independent action buttons never toggle it.
+                SubtleButton(onClick = onToggle, modifier = Modifier.weight(1f).semantics {
+                    contentDescription = "$identity\n${if (expanded) "收起项目" else "展开项目"}"
+                }) {
+                    FluentIcon(if (expanded) Icons.Default.ArrowUp else Icons.Default.ArrowDown,
+                        contentDescription = null, modifier = Modifier.size(12.dp))
+                    FluentText(project.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f))
+                }
+                ProjectAction("在项目 ${project.name} 中新建会话", Icons.Default.Add, onClick = onAdd)
+                ProjectAction("重命名项目 ${project.name}", Icons.Default.Rename, onClick = onRename)
+                ProjectAction(if (empty) "删除项目 ${project.name}" else "请先删除项目内的会话",
+                    Icons.Default.Delete, disabled = !empty, onClick = onDelete)
+            }
+        } else {
+            // Compact navigation keeps a keyboard-accessible route to all project actions.
+            SubtleButton(onClick = onExpandNavigation, modifier = Modifier.fillMaxWidth().semantics {
+                contentDescription = "$identity\n展开导航以管理项目"
+            }) { FluentText(sessionNavigationShortLabel(project.name), maxLines = 1,
+                style = FluentTheme.typography.caption) }
+        }
+    }
+}
+
+@OptIn(ExperimentalFluentApi::class, ExperimentalFoundationApi::class)
+@Composable
+private fun ProjectAction(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    disabled: Boolean = false,
+    onClick: () -> Unit,
+) {
+    TooltipBox(tooltip = { FluentText(label) }) {
+        SubtleButton(onClick = onClick, disabled = disabled, iconOnly = true, modifier = Modifier.size(28.dp)) {
+            FluentIcon(icon, contentDescription = label, modifier = Modifier.size(14.dp))
+        }
     }
 }
 

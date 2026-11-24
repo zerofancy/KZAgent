@@ -13,6 +13,7 @@ import io.github.composefluent.FluentTheme
 import io.github.composefluent.darkColors
 import io.github.composefluent.lightColors
 import java.nio.file.Path
+import java.time.Instant
 import java.nio.file.Files
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -42,9 +43,10 @@ class SessionNavigationScrollTest {
     @Test
     fun newSessionStaysFixedAndClickableWhileHistoryScrolls() = runBlocking(Dispatchers.Swing) {
         val workspace = Path.of("build", "navigation-scroll-workspace").toAbsolutePath()
+        val project = Project("test-project", "自定义项目名称", workspace, Instant.EPOCH)
         val sessions = List(40) { index ->
             SessionData(
-                id = "session-$index", name = "历史会话 $index", workspace = workspace,
+                id = "session-$index", name = "历史会话 $index", workspace = workspace, projectId = project.id,
                 sessionFile = workspace.resolve("session-$index.jsonl"), messages = mutableStateListOf(),
             )
         }
@@ -54,7 +56,8 @@ class SessionNavigationScrollTest {
                 KZAgentFluentTheme {
                     FluentTheme(colors = if (dark) darkColors() else lightColors(), useAcrylicPopup = false) {
                         KZAgentNavigationView(
-                            sessions = sessions, activeIndex = -1, sessionWorkspaceExpanded = emptyMap(),
+                            sessions = sessions, projects = listOf(project),
+                            onCreateProject = {}, onRenameProject = {}, onDeleteProject = {}, onAddSessionInProject = {}, activeIndex = -1, sessionWorkspaceExpanded = emptyMap(),
                             settingsSelected = false, onSelectSession = {}, onAddSession = { created++ },
                             onDeleteSession = {}, onRenameSession = {}, onWorkspaceExpandedChanged = { _, _ -> },
                             onSettings = {}, pane = {},
@@ -76,7 +79,7 @@ class SessionNavigationScrollTest {
                 val button = all(scene).firstOrNull { text(it) == "创建新会话" } ?: error("Missing new session at width=$width")
                 val initialBounds = button.boundsInRoot
                 val title = all(scene).first { text(it) == "KZAgent" }
-                val listHeader = all(scene).first { text(it) == "会话列表" }
+                val listHeader = all(scene).first { text(it) == "项目列表" }
                 val initialHeaderBounds = listHeader.boundsInRoot
                 assertTrue(title.boundsInRoot.bottom <= initialBounds.top, "新建按钮必须位于标题下方")
                 assertTrue(initialBounds.bottom <= listHeader.boundsInRoot.top, "新建按钮必须位于会话列表上方")
@@ -96,7 +99,7 @@ class SessionNavigationScrollTest {
                 assertNotEquals(before, range.value())
                 val fixedButton = all(scene).first { text(it) == "创建新会话" }
                 assertEquals(initialBounds, fixedButton.boundsInRoot)
-                val fixedHeader = all(scene).first { text(it) == "会话列表" }
+                val fixedHeader = all(scene).first { text(it) == "项目列表" }
                 assertEquals(initialHeaderBounds, fixedHeader.boundsInRoot, "会话列表标题不应随内容滚动")
                 assertTrue(fixedHeader.boundsInRoot.bottom <= scroll.boundsInRoot.top)
                 assertFalse(all(scene).any { text(it) == "切换工作区" })

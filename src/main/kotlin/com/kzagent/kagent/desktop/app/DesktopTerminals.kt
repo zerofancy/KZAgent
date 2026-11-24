@@ -7,6 +7,8 @@ import com.kzagent.kagent.desktop.terminal.TerminalSettingsProfile
 import java.nio.file.Path
 
 internal fun createDesktopTerminal(workspace: Path): BossTermTerminalHandle {
+    // Never fall back to a different shell directory when a stored project path disappears.
+    com.kzagent.kagent.desktop.readableProjectWorkspace(workspace)
     val settings = TerminalSettingsProfile.initialize(AppDataDir.appDir().resolve("terminal"))
     val platform = TerminalProcessPlatform(excludedEnvironmentKeys = setOf(
         "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "MIMOCODE_API_KEY", "OPENAI_API_KEY",

@@ -56,12 +56,13 @@ internal fun SessionNavigationItem(
     selected: Boolean,
     onClick: () -> Unit,
     badge: @Composable (hovered: Boolean) -> Unit,
+    projectName: String = workspaceProjectName(session.workspace),
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val hovered by interaction.collectIsHoveredAsState()
     val focusTooltip = rememberTooltipState()
-    val description = "${session.name}\n项目：${workspaceProjectName(session.workspace)}\n${session.workspace}\n" +
+    val description = "${session.name}\n项目：${projectName}\n${session.workspace}\n" +
         if (session.isBusy) "运行中" else "空闲"
     val preview: @Composable () -> Unit = {
         Column(Modifier.widthIn(max = 360.dp)) { Text(description) }

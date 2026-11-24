@@ -15,7 +15,7 @@ plugins {
 }
 
 group = "com.kzagent"
-version = "0.1.0"
+version = "1.0.1"
 
 tasks.withType<JavaExec>().configureEach {
     standardInput = System.`in`
@@ -23,7 +23,7 @@ tasks.withType<JavaExec>().configureEach {
 
 val isMacOs = System.getProperty("os.name").lowercase().contains("mac")
 val isWindows = System.getProperty("os.name").lowercase().contains("windows")
-val windowsPackageVersion = "1.0.0"
+val windowsPackageVersion = "1.0.1"
 val windowsUpgradeUuid = "ca802488-32a0-4ea6-9d9f-d0d6b7c30f64"
 
 fun desktopRenderingJvmArgs(): List<String> = buildList {

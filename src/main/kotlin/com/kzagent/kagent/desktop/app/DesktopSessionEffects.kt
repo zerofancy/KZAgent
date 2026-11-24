@@ -6,7 +6,6 @@ import androidx.compose.runtime.LaunchedEffect
 import com.kzagent.kagent.config.SecretRedactor
 import com.kzagent.kagent.desktop.SessionManager
 import com.kzagent.kagent.desktop.terminal.SessionTerminalManager
-import com.kzagent.kagent.desktop.loadSessionWorkspaceExpandState
 import java.nio.file.Path
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -24,11 +23,6 @@ internal fun DesktopSessionEffects(
     activateWindow: () -> Unit,
     terminalManager: SessionTerminalManager,
 ) {
-    LaunchedEffect(Unit) {
-        val loaded = withContext(Dispatchers.IO) { loadSessionWorkspaceExpandState() }
-        state.sessionWorkspaceExpandedState.putAll(loaded)
-    }
-
     LaunchedEffect(settingsState.savedConfig?.providers, state.draft.model) {
         val selected = state.draft.model ?: return@LaunchedEffect
         if (settingsState.savedConfig?.provider(selected.provider) == null) {
@@ -48,7 +42,10 @@ internal fun DesktopSessionEffects(
         if (!settingsState.configLoaded) return@LaunchedEffect
         settingsState.savedConfig?.let { sessionManager.updateDefaultModel(it.defaultModel) }
         try {
+            val firstLoad = !sessionManager.initialized
             sessionManager.loadSessions(initialWorkspace)
+            if (firstLoad) state.draft.resolveWorkspace(initialWorkspace, sessionManager.projects)
+            state.sessionLoadError = null
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -65,16 +62,18 @@ internal fun DesktopSessionEffects(
                     requireReadableWorkspace(request.workspace)
                 }
                 if (state.draft.submitting) return@collect
-                state.draft.workspace = workspace
+                state.draft.resolveWorkspace(workspace, sessionManager.projects)
                 state.hasDraft = true
                 state.showNewSession = true
                 state.showSettings = false; state.showSkills = false; state.showMcp = false
                 state.sessionLoadError = null
+                state.projectActionError = null
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 val message = SecretRedactor.redact(error.message ?: error.toString())
                 state.draft.error = message
+                state.projectActionError = message
                 sessionManager.activeSessionOrNull()?.error = message
             }
         }

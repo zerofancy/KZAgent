@@ -47,6 +47,7 @@ class SessionData(
         AppConfig.DEFAULT_MODEL,
         AppConfig.DEFAULT_CONTEXT_WINDOW_SIZE,
     ),
+    val projectId: String? = null,
 ) {
     var name by mutableStateOf(name)
     var titleRevision: Int = 0
@@ -95,8 +96,25 @@ class SessionManager internal constructor(
         questions.map { com.kzagent.kagent.tools.UserQuestionAnswer(null) }
     },
     private val createRuntime: ((SessionData, AgentObserver) -> AgentRuntime)? = null,
+    private val projectRepository: ProjectRepository = FileProjectRepository(
+        sessionsRoot.resolveSibling(if (sessionsRoot == AppDataDir.sessionsRoot()) "projects.json" else "${sessionsRoot.fileName}.projects.json"),
+    ),
+    private val projectExpandFile: Path = sessionsRoot.resolveSibling(
+        if (sessionsRoot == AppDataDir.sessionsRoot()) "session-project-collapses.json" else "${sessionsRoot.fileName}.project-collapses.json",
+    ),
+    private val legacyExpandFile: Path = sessionsRoot.resolveSibling("session-group-collapses.json"),
 ) : AutoCloseable {
     val sessions: SnapshotStateList<SessionData> = mutableStateListOf()
+    val projects: SnapshotStateList<Project> = mutableStateListOf()
+    val loadIssues: SnapshotStateList<String> = mutableStateListOf()
+    var projectExpanded by mutableStateOf<Map<String, Boolean>>(emptyMap())
+        private set
+    private var registry = ProjectRegistry()
+    // Project deletion, migration and session creation share ownership of references.
+    private val projectMutex = Mutex()
+    private var lastDefaultWorkspace: Path? = null
+    var projectDataAvailable by mutableStateOf(false)
+        private set
     var activeSessionIndex by mutableStateOf(-1)
         private set
     var initialized by mutableStateOf(false)
@@ -113,35 +131,163 @@ class SessionManager internal constructor(
     }
 
     /** Loads history without creating an empty session. */
-    suspend fun loadSessions(defaultWorkspace: Path) {
-        if (initialized) return
-        val stored = repository.loadAll(defaultWorkspace)
-        sessions.clear()
-        sessions.addAll(stored.map { storedSession ->
-            if (storedSession.modelSelection == null) {
-                repository.updateModel(storedSession.sessionFile, defaultModel)
+    suspend fun loadSessions(defaultWorkspace: Path) = projectMutex.withLock {
+        if (initialized) return@withLock
+        lastDefaultWorkspace = defaultWorkspace
+        loadProjectSessions(defaultWorkspace)
+    }
+
+    private suspend fun loadProjectSessions(defaultWorkspace: Path) {
+        projectDataAvailable = false
+        registry = projectRepository.load()
+        val stored = repository.loadAll(defaultWorkspace, registry.projects.map { it.workspace })
+        val issues = repository.loadIssues.toMutableList()
+        val loaded = mutableListOf<SessionData>()
+        val oldByFile = sessions.associateBy { it.sessionFile }
+        for (original in stored) {
+            try {
+                val project = if (original.projectId == null) legacyProject(original.workspace) else
+                    registry.projects.firstOrNull { it.id == original.projectId }
+                        ?: error("项目引用无效：${original.projectId}")
+                check(projectWorkspaceKey(project.workspace) == projectWorkspaceKey(original.workspace)) { "项目与会话工作区不一致" }
+                if (original.projectId == null) repository.updateProject(original.sessionFile, project.id)
+                if (original.modelSelection == null) repository.updateModel(original.sessionFile, defaultModel)
+                val existing = oldByFile[original.sessionFile]?.takeIf {
+                    it.projectId == project.id && projectWorkspaceKey(it.workspace) == projectWorkspaceKey(original.workspace)
+                }
+                loaded += existing ?: toSessionData(original.copy(projectId = project.id), original.modelSelection ?: defaultModel)
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                issues += "${original.sessionFile.fileName}：${error.message ?: "项目归属加载失败"}"
             }
-            toSessionData(storedSession, storedSession.modelSelection ?: defaultModel)
-        })
-        activeSessionIndex = if (sessions.isEmpty()) -1 else 0
+        }
+        val expanded = try {
+            val previous = loadProjectExpandState(projectExpandFile)
+            val current = previous.toMutableMap()
+            val legacy = loadSessionWorkspaceExpandState(legacyExpandFile)
+            registry.legacyDefaults.values.forEach { id ->
+                val project = registry.projects.first { it.id == id }
+                if (id !in current) current[id] = legacy[sessionWorkspaceKey(project.workspace)] != false
+            }
+            if (current != previous) {
+                try { saveProjectExpandState(current, projectExpandFile) }
+                catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    issues += "项目展开状态保存失败：${error.message}"
+                    current.clear()
+                    current.putAll(previous)
+                }
+            }
+            current.toMap()
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            issues += "项目展开状态：${error.message}"
+            emptyMap()
+        }
+        val activeId = activeSessionOrNull()?.id
+        sessions.filter { it !in loaded }.forEach {
+            it.currentJob?.cancelAndJoin()
+            it.titleJob?.cancelAndJoin()
+            it.runtime?.close()
+            it.runtime = null
+        }
+        sessions.clear()
+        sessions.addAll(loaded)
+        projects.clear()
+        projects.addAll(registry.projects)
+        projectExpanded = expanded
+        loadIssues.clear()
+        loadIssues.addAll(issues)
+        activeSessionIndex = sessions.indexOfFirst { it.id == activeId }.takeIf { it >= 0 } ?: if (sessions.isEmpty()) -1 else 0
+        projectDataAvailable = true
         initialized = true
     }
 
-    suspend fun addNewSession() {
-        val active = activeSession()
-        val stored = repository.create(active.workspace, "新会话 ${sessions.size + 1}", defaultModel)
-        sessions.add(0, toSessionData(stored, defaultModel))
-        activeSessionIndex = 0
+    /** Retry only while idle: preserve existing SessionData/runtime identities. */
+    suspend fun retryLoadIssues() = projectMutex.withLock {
+        check(sessions.none { it.isBusy }) { "请等待运行中的任务结束后重试" }
+        loadProjectSessions(requireNotNull(lastDefaultWorkspace))
     }
 
-    /** Creates and activates a fresh session even when [workspace] is already active. */
-    suspend fun startNewSessionInWorkspace(workspace: Path, selection: ModelSelection = defaultModel): SessionData {
-        val normalized = workspace.toAbsolutePath().normalize()
-        val stored = repository.create(normalized, "新会话 ${sessions.size + 1}", selection)
+    private suspend fun persistRegistry(next: ProjectRegistry) = withContext(NonCancellable) {
+        projectRepository.save(next)
+        registry = next
+        projects.clear()
+        projects.addAll(next.projects)
+    }
+
+    private suspend fun legacyProject(workspace: Path): Project {
+        val key = projectWorkspaceKey(workspace)
+        registry.legacyDefaults[key]?.let { id -> return registry.projects.first { it.id == id } }
+        val project = Project(java.util.UUID.randomUUID().toString(), projectDefaultName(workspace), workspace.toAbsolutePath().normalize(), java.time.Instant.now())
+        // Publish the mapping before sidecars, so interrupted migration is idempotent.
+        persistRegistry(registry.copy(projects = registry.projects + project, legacyDefaults = registry.legacyDefaults + (key to project.id)))
+        return project
+    }
+
+    fun projectById(id: String?): Project? = projects.firstOrNull { it.id == id }
+
+    suspend fun createProject(name: String, workspace: Path): Project = projectMutex.withLock {
+        check(initialized && projectDataAvailable && !closed) { "项目尚未成功加载或管理器已关闭" }
+        val normalized = withContext(ioDispatcher) { readableProjectWorkspace(workspace) }
+        val project = Project(java.util.UUID.randomUUID().toString(), validateProjectName(name), normalized, java.time.Instant.now())
+        persistRegistry(registry.copy(projects = registry.projects + project))
+        project
+    }
+
+    suspend fun renameProject(id: String, name: String) = projectMutex.withLock {
+        check(projectDataAvailable && !closed) { "项目数据不可用" }
+        val project = requireNotNull(projectById(id)) { "项目不存在" }
+        persistRegistry(registry.copy(projects = registry.projects.map { if (it.id == id) project.copy(name = validateProjectName(name)) else it }))
+    }
+
+    suspend fun deleteProject(id: String) = projectMutex.withLock {
+        check(projectDataAvailable && !closed) { "项目数据不可用" }
+        requireNotNull(projectById(id)) { "项目不存在" }
+        // Re-scan sidecars as well: a quarantined session still owns its reference.
+        val disk = repository.loadAll(requireNotNull(lastDefaultWorkspace), registry.projects.map { it.workspace })
+        check(sessions.none { it.projectId == id } && disk.none { it.projectId == id }) { "请先删除项目内的会话" }
+        check(repository.loadIssues.isEmpty()) { "存在未恢复会话，请先修复后再删除项目" }
+        persistRegistry(registry.copy(projects = registry.projects.filterNot { it.id == id }, legacyDefaults = registry.legacyDefaults.filterValues { it != id }))
+        projectExpanded = projectExpanded - id
+        try { saveProjectExpandState(projectExpanded, projectExpandFile) }
+        catch (error: Exception) { if (error is kotlinx.coroutines.CancellationException) throw error }
+    }
+
+    suspend fun setProjectExpanded(id: String, expanded: Boolean) = projectMutex.withLock {
+        check(projectDataAvailable && !closed) { "项目数据不可用" }
+        requireNotNull(projectById(id)) { "项目不存在" }
+        val next = projectExpanded + (id to expanded)
+        withContext(NonCancellable) {
+            saveProjectExpandState(next, projectExpandFile)
+            projectExpanded = next
+        }
+    }
+
+    suspend fun startNewSessionInProject(projectId: String, selection: ModelSelection = defaultModel): SessionData = projectMutex.withLock {
+        createProjectSession(requireNotNull(projectById(projectId)) { "项目不存在，请重新选择" }, selection)
+    }
+
+    private suspend fun createProjectSession(project: Project, selection: ModelSelection): SessionData {
+        check(projectDataAvailable && !closed) { "项目数据不可用" }
+        withContext(ioDispatcher) { readableProjectWorkspace(project.workspace) }
+        val stored = repository.createInProject(project.workspace, "新会话 ${sessions.size + 1}", selection, project.id)
         val created = toSessionData(stored, selection)
         sessions.add(0, created)
         activeSessionIndex = 0
         return created
+    }
+
+    suspend fun addNewSession() {
+        val active = activeSession()
+        startNewSessionInProject(requireNotNull(active.projectId))
+    }
+
+    /** Creates and activates a fresh session even when [workspace] is already active. */
+    internal suspend fun startNewSessionInWorkspace(workspace: Path, selection: ModelSelection = defaultModel): SessionData = projectMutex.withLock {
+        // Compatibility entry for existing callers/tests, never used by the desktop selector.
+        val normalized = withContext(ioDispatcher) { readableProjectWorkspace(workspace) }
+        createProjectSession(legacyProject(normalized), selection)
     }
 
     /**
@@ -217,7 +363,13 @@ class SessionManager internal constructor(
     }
 
     suspend fun deleteSession(index: Int): Boolean {
-        if (index !in sessions.indices) return false
+        val id = sessions.getOrNull(index)?.id ?: return false
+        return deleteSessionById(id)
+    }
+
+    suspend fun deleteSessionById(id: String): Boolean = projectMutex.withLock {
+        val index = sessions.indexOfFirst { it.id == id }
+        if (index < 0) return@withLock false
         val session = sessions[index]
         session.currentJob?.cancelAndJoin()
         session.titleJob?.cancelAndJoin()
@@ -229,7 +381,7 @@ class SessionManager internal constructor(
         } else if (activeSessionIndex > index) {
             activeSessionIndex--
         }
-        return true
+        true
     }
 
     fun activeSessionOrNull(): SessionData? = sessions.getOrNull(activeSessionIndex)
@@ -248,6 +400,10 @@ class SessionManager internal constructor(
 
     suspend fun ensureRuntime(session: SessionData, observer: AgentObserver, refreshSkills: Boolean = false) = session.runtimeMutex.withLock {
         check(!closed) { "会话管理器已关闭" }
+        check(projectDataAvailable) { "项目数据不可用，请修复后重试加载" }
+        val project = requireNotNull(projectById(session.projectId)) { "会话项目归属无效" }
+        check(projectWorkspaceKey(project.workspace) == projectWorkspaceKey(session.workspace)) { "项目与会话工作区不一致" }
+        withContext(ioDispatcher) { readableProjectWorkspace(session.workspace) }
         if (session.runtime != null && (!refreshSkills || session.skillsVersion == skillsVersion)) return@withLock
         session.titleJob?.cancelAndJoin()
         session.runtime?.close()
@@ -290,5 +446,12 @@ class SessionManager internal constructor(
         usedTokens = stored.usedTokens,
         status = "就绪",
         modelSelection = modelSelection,
+        projectId = stored.projectId,
     )
+}
+
+internal fun readableProjectWorkspace(workspace: Path): Path {
+    val path = workspace.toAbsolutePath().normalize()
+    require(java.nio.file.Files.isDirectory(path) && java.nio.file.Files.isReadable(path)) { "工作区目录不存在或不可读：$path" }
+    return path
 }

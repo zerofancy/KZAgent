@@ -8,7 +8,6 @@ import com.kzagent.kagent.desktop.KZAgentNavigationView
 import com.kzagent.kagent.desktop.NewSessionDraft
 import com.kzagent.kagent.desktop.SessionManager
 import com.kzagent.kagent.desktop.terminal.SessionTerminalManager
-import com.kzagent.kagent.desktop.saveSessionWorkspaceExpandState
 import java.nio.file.Path
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -26,8 +25,26 @@ internal fun DesktopSessionNavigation(
 ) {
     KZAgentNavigationView(
         sessions = sessionManager.sessions,
+        projects = sessionManager.projects,
+        onCreateProject = {
+            if (sessionManager.initialized && sessionManager.projectDataAvailable && !state.draft.submitting) state.projectDialog = ProjectDialogState.create(state.draft.pendingWorkspace ?: state.draft.workspace)
+        },
+        onRenameProject = { id ->
+            sessionManager.projectById(id)?.let { state.projectDialog = ProjectDialogState.rename(it) }
+        },
+        onDeleteProject = { id ->
+            sessionManager.projectById(id)?.let { state.projectDialog = ProjectDialogState.delete(it) }
+        },
+        onAddSessionInProject = { id ->
+            if (!state.draft.submitting) sessionManager.projectById(id)?.let {
+                state.draft.selectProject(it)
+                state.hasDraft = true
+                state.showNewSession = true
+                state.showSettings = false; state.showSkills = false; state.showMcp = false
+            }
+        },
         activeIndex = if (state.showNewSession || sessionManager.sessions.isEmpty()) -1 else sessionManager.activeSessionIndex,
-        sessionWorkspaceExpanded = state.sessionWorkspaceExpandedState,
+        sessionWorkspaceExpanded = sessionManager.projectExpanded,
         settingsSelected = state.showSettings,
         onSelectSession = { index ->
             if (state.draft.submitting) return@KZAgentNavigationView
@@ -36,17 +53,19 @@ internal fun DesktopSessionNavigation(
             state.showSettings = false; state.showSkills = false; state.showMcp = false
         },
         onWorkspaceExpandedChanged = { key, expanded ->
-            state.sessionWorkspaceExpandedState[key] = expanded
             scope.launch {
-                withContext(Dispatchers.IO) {
-                    saveSessionWorkspaceExpandState(state.sessionWorkspaceExpandedState.toMap())
-                }
+                try { sessionManager.setProjectExpanded(key, expanded) }
+                catch (error: kotlinx.coroutines.CancellationException) { throw error }
+                catch (error: Exception) { state.projectActionError = com.kzagent.kagent.config.SecretRedactor.redact(error.message ?: error.toString()) }
             }
         },
         onAddSession = {
             if (!state.draft.submitting) {
                 if (!state.hasDraft) {
                     state.draft = NewSessionDraft(sessionManager.activeSessionOrNull()?.workspace ?: initialWorkspace)
+                    val project = sessionManager.projectById(sessionManager.activeSessionOrNull()?.projectId)
+                    if (project != null) state.draft.selectProject(project)
+                    else state.draft.resolveWorkspace(initialWorkspace, sessionManager.projects)
                     state.hasDraft = true
                 }
                 state.showNewSession = true

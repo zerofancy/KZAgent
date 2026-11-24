@@ -29,21 +29,40 @@ internal data class StoredSession(
     val historyEntries: List<SessionEntry> = emptyList(),
     val usedTokens: Int = 0,
     val modelSelection: ModelSelection? = null,
+    val projectId: String? = null,
 )
 
 internal interface SessionRepository {
     suspend fun loadAll(defaultWorkspace: Path): List<StoredSession>
+    suspend fun loadAll(defaultWorkspace: Path, knownWorkspaces: List<Path>): List<StoredSession> = loadAll(defaultWorkspace)
     suspend fun create(workspace: Path, name: String, modelSelection: ModelSelection? = null): StoredSession
     suspend fun updateName(sessionFile: Path, name: String)
     suspend fun updateModel(sessionFile: Path, selection: ModelSelection)
     suspend fun delete(sessionFile: Path)
+    val loadIssues: List<String> get() = emptyList()
+    suspend fun updateProject(sessionFile: Path, projectId: String) = Unit
+    suspend fun createInProject(workspace: Path, name: String, modelSelection: ModelSelection?, projectId: String): StoredSession {
+        val stored = create(workspace, name, modelSelection)
+        try {
+            updateProject(stored.sessionFile, projectId)
+            return stored.copy(projectId = projectId)
+        } catch (failure: Throwable) {
+            withContext(NonCancellable) { runCatching { delete(stored.sessionFile) }.exceptionOrNull()?.let(failure::addSuppressed) }
+            throw failure
+        }
+    }
 }
 
 internal class FileSessionRepository(
     private val sessionsRoot: Path,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : SessionRepository {
-    override suspend fun loadAll(defaultWorkspace: Path): List<StoredSession> =
+    override var loadIssues: List<String> = emptyList()
+        private set
+
+    override suspend fun loadAll(defaultWorkspace: Path): List<StoredSession> = loadAll(defaultWorkspace, emptyList())
+
+    override suspend fun loadAll(defaultWorkspace: Path, knownWorkspaces: List<Path>): List<StoredSession> =
         withContext(ioDispatcher) {
             Files.createDirectories(sessionsRoot)
             if (!Files.isDirectory(sessionsRoot)) return@withContext emptyList()
@@ -53,12 +72,27 @@ internal class FileSessionRepository(
                     .sorted(compareByDescending { Files.getLastModifiedTime(it).toMillis() })
                     .collect(Collectors.toList())
             }
-            files.mapNotNull { file ->
-                runCatching { load(defaultWorkspace, file) }.getOrNull()
+            val issues = mutableListOf<String>()
+            val result = files.mapNotNull { file ->
+                try {
+                    load((listOf(defaultWorkspace) + knownWorkspaces).distinct(), file)
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    issues += "${file.fileName}：${error.message ?: "会话读取失败"}"
+                    null
+                }
             }
+            loadIssues = issues
+            result
         }
 
-    override suspend fun create(workspace: Path, name: String, modelSelection: ModelSelection?): StoredSession {
+    override suspend fun create(workspace: Path, name: String, modelSelection: ModelSelection?): StoredSession =
+        createStored(workspace, name, modelSelection, null)
+
+    override suspend fun createInProject(workspace: Path, name: String, modelSelection: ModelSelection?, projectId: String): StoredSession =
+        createStored(workspace, name, modelSelection, projectId)
+
+    private suspend fun createStored(workspace: Path, name: String, modelSelection: ModelSelection?, projectId: String?): StoredSession {
         var createdFile: Path? = null
         try {
             return withContext(ioDispatcher) {
@@ -71,12 +105,14 @@ internal class FileSessionRepository(
                     workspace = workspace.toAbsolutePath().normalize(),
                     sessionFile = file,
                     modelSelection = modelSelection,
+                    projectId = projectId,
                 )
                 Files.createFile(file)
                 createdFile = file
                 writeMetadata(nameFile(file), stored.name)
                 writeMetadata(workspaceFile(file), stored.workspace.toString())
                 modelSelection?.let { writeModel(modelFile(file), it) }
+                projectId?.let { writeMetadata(projectFile(file), it) }
                 stored
             }
         } catch (failure: Throwable) {
@@ -84,7 +120,7 @@ internal class FileSessionRepository(
             // were written. Keep rollback outside withContext to cover that boundary.
             withContext(NonCancellable + ioDispatcher) {
                 createdFile?.let { file ->
-                    listOf(file, nameFile(file), workspaceFile(file), modelFile(file)).forEach { path ->
+                    listOf(file, nameFile(file), workspaceFile(file), modelFile(file), projectFile(file)).forEach { path ->
                         runCatching { Files.deleteIfExists(path) }.exceptionOrNull()?.let(failure::addSuppressed)
                     }
                 }
@@ -103,22 +139,28 @@ internal class FileSessionRepository(
         withContext(ioDispatcher) { writeModel(modelFile(sessionFile), selection) }
     }
 
+    override suspend fun updateProject(sessionFile: Path, projectId: String) {
+        withContext(ioDispatcher) { atomicWriteMetadata(projectFile(sessionFile), projectId) }
+    }
+
     override suspend fun delete(sessionFile: Path) {
         withContext(ioDispatcher) {
             Files.deleteIfExists(sessionFile)
             Files.deleteIfExists(nameFile(sessionFile))
             Files.deleteIfExists(workspaceFile(sessionFile))
             Files.deleteIfExists(modelFile(sessionFile))
+            Files.deleteIfExists(projectFile(sessionFile))
             Files.deleteIfExists(TodoFiles.forSession(sessionFile))
         }
     }
 
-    private fun load(defaultWorkspace: Path, file: Path): StoredSession? {
-        val workspace = readWorkspace(file)
-            ?: defaultWorkspace.takeIf {
-                file.parent.fileName.toString() == AppDataDir.workspaceKey(it)
-            }
-            ?: return null
+    private fun load(knownWorkspaces: List<Path>, file: Path): StoredSession {
+        val workspace = if (!Files.notExists(workspaceFile(file))) {
+            requireNotNull(readWorkspace(file)) { "工作区元数据损坏" }
+        } else {
+            knownWorkspaces.firstOrNull { file.parent.fileName.toString() == AppDataDir.workspaceKey(it) }
+                ?.toAbsolutePath()?.normalize() ?: error("无法恢复工作区路径")
+        }
         val reader = SessionReader(file.parent)
         val historyEntries = reader.loadEntries(file).filter { it.message !is AgentMessage.System }
         val history = historyEntries.map { it.message }
@@ -131,9 +173,11 @@ internal class FileSessionRepository(
             historyEntries = historyEntries,
             usedTokens = reader.loadTokenCount(file),
             modelSelection = readModel(file),
+            // Empty/invalid explicit references must not be treated as unassigned legacy data.
+            projectId = if (!Files.notExists(projectFile(file))) Files.readString(projectFile(file), StandardCharsets.UTF_8).trim() else null,
         )
         // Older sessions located in workspace-specific directories did not have sidecar metadata.
-        writeMetadata(workspaceFile(file), stored.workspace.toString())
+        if (Files.notExists(workspaceFile(file))) atomicWriteMetadata(workspaceFile(file), stored.workspace.toString())
         return stored
     }
 
@@ -144,9 +188,9 @@ internal class FileSessionRepository(
     }.getOrNull()
 
     private fun readWorkspace(sessionFile: Path): Path? = runCatching {
-        Path.of(Files.readString(workspaceFile(sessionFile), StandardCharsets.UTF_8).trim())
-            .toAbsolutePath()
-            .normalize()
+        val raw = Files.readString(workspaceFile(sessionFile), StandardCharsets.UTF_8).trim()
+        require(raw.isNotEmpty()) { "工作区路径为空" }
+        Path.of(raw).also { require(it.isAbsolute) { "工作区路径必须为绝对路径" } }.normalize()
     }.getOrNull()
 
     private fun writeMetadata(path: Path, value: String) {
@@ -204,6 +248,9 @@ internal class FileSessionRepository(
 
     private fun workspaceFile(sessionFile: Path): Path =
         sessionFile.resolveSibling("${sessionFile.fileName}.workspace")
+
+    private fun projectFile(sessionFile: Path): Path =
+        sessionFile.resolveSibling("${sessionFile.fileName}.project")
 
     private fun modelFile(sessionFile: Path): Path =
         sessionFile.resolveSibling("${sessionFile.fileName}.model")
